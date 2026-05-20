@@ -1,0 +1,37 @@
+<!--
+  9-grid bg + 透明标题栏 frame —— 与 main.cpp 里 frame_codeThemed 的
+  C++ 调用一一对应：
+
+    frame.SetTitle             (_T("9-grid bg / XML"));
+    frame.SetTitleBarHeight    (40);                    // = bg dst.top
+    frame.SetTitleBarTransparent(true);
+    frame.SetTitleTextColor    (RGB(255, 255, 255));
+    frame.SetCaptionGlyphColor (RGB(255, 255, 255));
+    frame.SetButtons (true, true, true);
+    frame.SetMinSize (320, 240);
+    frame.SetResizable(true);
+    frame.LoadBgImageFromFile(<exe_dir>\BuddyInfoDlgBg.png,
+                              {10, 69, 10, 10},   // src
+                              {10, 40, 10, 10});  // dst
+
+  bg-image 用相对路径 BuddyInfoDlgBg.png —— ResolveAssetPath 会拼到
+  exe 所在目录（= Bin/），所以 PNG 必须也在 Bin/（vcxproj post-build
+  从 DemoNinePatchBg/ 拷过去）。
+
+  client-border-color 不写 —— DuiFrameWindow 构造时已经设了默认
+  RGB(200,200,200)，但有 bg-image 时 OnPaint 会自动跳过，等价于
+  client-border-color="none"。两边都同行为。
+-->
+<frame-window title="9-grid bg / XML"
+              title-bar-height="40"
+              title-bar-transparent="true"
+              title-text-color="255,255,255"
+              caption-glyph-color="255,255,255"
+              has-min-button="true"
+              has-max-button="true"
+              has-close-button="true"
+              min-w="320" min-h="240"
+              resizable="true"
+              bg-image="BuddyInfoDlgBg.png"
+              bg-src-insets="10,69,10,10"
+              bg-dst-insets="10,40,10,10"/>

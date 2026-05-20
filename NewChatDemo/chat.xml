@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WeChat-style single-chat dialog layout.
+  Reference: docs/wechat-demo/screen-chat.jsx + styles.css
+
+  Note: this XML produces only the *body* of the window. The window
+  frame (caption + min/max/close) is owned by DuiFrameWindow on the
+  C++ side, so there is no <titlebar/> tag here.
+
+  Tags:
+    vbox / hbox            - DuiLayout containers from the kernel
+    rail-item              - 40x40 left-rail nav button (custom paint)
+    rail-spacer            - flexible filler in the rail
+    search-box             - styled search input (custom paint, mock)
+    conv-row               - one row in the conversation list (custom paint)
+    header-bar             - 52px main-panel header (custom paint)
+    chat-thread            - scrollable bubble area; children = bubbles (custom layout)
+    day-pill               - centered date pill (custom paint)
+    msg-row                - one chat message row: avatar + bubble (custom layout)
+    chat-bubble            - text bubble, side="in"|"out" (custom paint)
+    image-bubble           - image-preview bubble (custom paint)
+    file-card-bubble       - file attachment bubble (custom paint)
+    typing-dots            - typing indicator bubble (custom paint)
+    composer               - bottom input panel (custom paint)
+    info-panel             - 240px right sidebar (custom paint)
+-->
+<hbox weight="1">
+    <!-- Left rail (60px) -->
+    <vbox fixedWidth="60" padding="16,16,16,16" gap="6">
+        <rail-item kind="profile" hue="165" initial="陆" fixedHeight="36"/>
+        <rail-item kind="chat"     glyph="C" badge="12" active="true"  fixedHeight="40"/>
+        <rail-item kind="contacts" glyph="P"                            fixedHeight="40"/>
+        <rail-item kind="moments"  glyph="M" badge="0"                  fixedHeight="40"/>
+        <rail-item kind="files"    glyph="F"                            fixedHeight="40"/>
+        <rail-item kind="favs"     glyph="S"                            fixedHeight="40"/>
+        <rail-item kind="calls"    glyph="T"                            fixedHeight="40"/>
+        <rail-spacer weight="1"/>
+        <rail-item kind="plus"     glyph="+"                            fixedHeight="40"/>
+        <rail-item kind="settings" glyph="G"                            fixedHeight="40"/>
+    </vbox>
+
+    <!-- Conversation list (260px) -->
+    <vbox fixedWidth="260">
+        <search-box fixedHeight="48" placeholder="搜索"/>
+        <vbox weight="1" id="100">
+            <conv-row name="苏文嘉"   msg="好的，我下午把方案发给你，记得查收一下" time="14:32"
+                      hue="165" initial="苏" unread="2" active="true" pinned="true" status="1"
+                      fixedHeight="58"/>
+            <conv-row name="设计周会" msg="陈聪：v3 的 spec 我推到 figma 了"        time="14:18"
+                      hue="200" initial="周" unread="5" pinned="true" group="true"
+                      fixedHeight="58"/>
+            <conv-row name="李静"     msg="[图片]"                                 time="13:50"
+                      hue="320" initial="李"
+                      fixedHeight="58"/>
+            <conv-row name="前端基础设施" msg="李航：发布完成，可以测试了"           time="12:44"
+                      hue="240" initial="F" muted="true" group="true"
+                      fixedHeight="58"/>
+            <conv-row name="陈聪 (Mgr)" msg="明天三点 review，准备一下"              time="11:20"
+                      hue="75"  initial="陈" status="1"
+                      fixedHeight="58"/>
+            <conv-row name="文件传输助手" msg="你: spec-v3.fig"                    time="10:02"
+                      hue="145" initial="📁"
+                      fixedHeight="58"/>
+            <conv-row name="周韵琳"   msg="草稿状态…"                              time="09:45"
+                      hue="25"  initial="周" draft="true"
+                      fixedHeight="58"/>
+            <conv-row name="公司全员" msg="HR：请大家完成年度问卷"                  time="昨天"
+                      hue="240" initial="全" unread="99" muted="true" group="true"
+                      fixedHeight="58"/>
+            <conv-row name="Du Guo"   msg="Voice message · 0:42"                    time="昨天"
+                      hue="300" initial="D" status="2"
+                      fixedHeight="58"/>
+        </vbox>
+    </vbox>
+
+    <!-- Main panel (flex) -->
+    <vbox weight="1">
+        <header-bar fixedHeight="52" title="苏文嘉" sub="在线 · 设计中心 / 体验设计组" online="true"/>
+
+        <chat-thread weight="1" padding="16,16,16,16">
+            <day-pill text="今天 · 14:21" fixedHeight="22"/>
+            <msg-row side="in"  hue="165" initial="苏" time="14:21" tick="read">
+                <chat-bubble side="in"
+                    text="嗨，刚看到你昨晚发的 v3 草图，整体方向我觉得可以！"/>
+            </msg-row>
+            <msg-row side="in"  hue="165" initial="苏" time="14:22" tick="read" hideAvatar="true">
+                <chat-bubble side="in" text="尤其是 Tabbar 那一段的处理"/>
+            </msg-row>
+            <msg-row side="out" hue="240" initial="我" time="14:24" tick="read">
+                <chat-bubble side="out"
+                    text="谢谢！其实纠结过要不要做底部固定，最后还是放浮层了"/>
+            </msg-row>
+            <msg-row side="in"  hue="165" initial="苏" time="14:28" tick="read">
+                <image-bubble width="240" imgHeight="160"
+                              caption="这种漂浮感的 tabbar 我之前在 Linear 见过"/>
+            </msg-row>
+            <msg-row side="out" hue="240" initial="我" time="14:30" tick="read">
+                <file-card-bubble kind="fig" name="FlamingoNewUI-v3.fig" size="4.2 MB · 已上传"/>
+            </msg-row>
+            <msg-row side="in"  hue="165" initial="苏" time="14:32" tick="read">
+                <chat-bubble side="in" text="好的，我下午把方案发给你，记得查收一下"/>
+            </msg-row>
+        </chat-thread>
+
+        <composer fixedHeight="120"
+                  content="发现还可以继续优化卡片层级"
+                  footer="Markdown 已启用 · @ 提及成员"/>
+    </vbox>
+
+    <!-- Right info panel (240px) -->
+    <info-panel fixedWidth="240" name="苏文嘉" sub="设计中心 · 体验设计组" hue="165" initial="苏"/>
+</hbox>

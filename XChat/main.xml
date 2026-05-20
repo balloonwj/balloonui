@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  main.xml —— XChat 主窗。匹配 third_party/wechat/{主面板,单聊,群聊,公众号}.png。
+
+  布局总览：
+    左 75 px  深色 nav（avatar + 7 上排 nav-icon + spacer + 2 下排）
+    中 290 px 浅白会话栏（搜索行 + session list）
+    右 fill   动态 view —— 内含 vbox 套 3 个候选 pane，按当前选中 session 的
+              pageType 切显隐：
+                pane id=200 chat 区（单聊 + 群聊共用）
+                  内含 id=210 info-panel-wrapper（separator + 270px 群信息栏）
+                pane id=202 公众号 view（常看的号 + 文章 list）
+
+  切换逻辑：MainFrame 监听 session-list (id=50) 的 DUIN_VALUECHANGED：
+    Page_Single   → 200 visible，210 hidden，202 hidden
+    Page_Group    → 200 visible，210 visible，202 hidden
+    Page_Publics  → 200 hidden，202 visible
+
+  chat-title (id=300) 跟着会话名变；publics 视图的 header 写死"公众号"。
+-->
+<frame-window
+    min-w="800" min-h="540"
+    resizable="true"
+    has-min-button="true"
+    has-max-button="true"
+    has-close-button="true">
+  <hbox padding="0" gap="0">
+
+    <!-- 左 nav 栏。glyph 名 → WxIcons::ParseWxIconKind 解析。 -->
+    <color-panel color="46,46,46" fixedWidth="75" padding="0,15,0,15" gap="6">
+      <hbox fixedHeight="48">
+        <control weight="1"/>
+        <user-avatar fixedWidth="38" fixedHeight="38"/>
+        <control weight="1"/>
+      </hbox>
+      <nav-icon fixedHeight="52" id="90" selected="true" glyph="chat-bubble"/>
+      <nav-icon fixedHeight="52" id="92" glyph="people"/>
+      <nav-icon fixedHeight="52" glyph="box"/>
+      <nav-icon fixedHeight="52" glyph="aperture"/>
+      <nav-icon fixedHeight="52" glyph="video-bookmark"/>
+      <nav-icon fixedHeight="52" glyph="eye-look"/>
+      <nav-icon fixedHeight="52" glyph="mini-prog"/>
+      <control weight="1"/>
+      <nav-icon fixedHeight="52" glyph="phone"/>
+      <nav-icon fixedHeight="52" id="91" glyph="hamburger"/>
+    </color-panel>
+
+    <!-- 中栏：搜索行 + 12px spacer + session list。
+         spacer 必须显式给（panel gap=0；不加的话 session-list 第一行 selected
+         底色会紧贴搜索行底部，视觉上像两块元素重叠）。
+         id=50 是 session-list 的 ctrl id，MainFrame WM_DUI_NOTIFY 路由用。 -->
+    <color-panel color="245,245,245" fixedWidth="290" padding="0,16,0,0" gap="0">
+      <hbox fixedHeight="32" gap="8" padding="12,0,12,0">
+        <!-- 真 EDIT。id=60 让 LoadMainXml 末尾 EnsureCreated(m_hWnd)。
+             placeholder="搜索" 在 EDIT 为空且失焦时灰显（DuiEditHost 自己画）。 -->
+        <edit id="60" placeholder="搜索" weight="1"/>
+        <icon-button glyph="plus" fixedWidth="32"/>
+      </hbox>
+      <control fixedHeight="12"/>
+      <session-list weight="1" id="50"/>
+    </color-panel>
+
+    <!-- 右栏：3 个候选 pane 的容器 -->
+    <vbox weight="1" padding="0" gap="0">
+
+      <!-- ── pane 200 ：chat 区（单聊 / 群聊共用） ──────────────────── -->
+      <hbox id="200" weight="1" padding="0" gap="0">
+
+        <!-- chat content（左半） -->
+        <color-panel color="255,255,255" weight="1" padding="0">
+          <hbox fixedHeight="60" gap="4" padding="24,0,16,0">
+            <chat-title id="300" weight="1"/>
+            <icon-button glyph="emoji"      fixedWidth="32"/>
+            <icon-button glyph="phone-call" fixedWidth="32"/>
+            <icon-button glyph="dots"       fixedWidth="32"/>
+          </hbox>
+          <color-panel color="232,232,232" fixedHeight="1"/>
+
+          <chat-message-list weight="1"/>
+
+          <!-- 输入区上方 toolbar：5 个工具 icon + 弹性 spacer。 -->
+          <hbox fixedHeight="38" gap="4" padding="10,4,10,4">
+            <icon-button glyph="emoji"     fixedWidth="32"/>
+            <icon-button glyph="folder"    fixedWidth="32"/>
+            <icon-button glyph="scissors"  fixedWidth="32"/>
+            <icon-button glyph="mic"       fixedWidth="32"/>
+            <icon-button glyph="phone-call" fixedWidth="32"/>
+            <control weight="1"/>
+          </hbox>
+          <!-- 输入框：DuiEditHost (HWND-hosted) 多行 EDIT。
+               id=400 让 LoadMainXml 末尾找到并 EnsureCreated(m_hWnd) —— builder
+               不会自动 create HWND。 -->
+          <edit id="400" multiline="true" fixedHeight="92"/>
+          <hbox fixedHeight="48" gap="0" padding="14,4,14,12">
+            <icon-button glyph="phone" fixedWidth="32"/>
+            <control weight="1"/>
+            <send-button text="发送" fixedWidth="64" fixedHeight="30"/>
+          </hbox>
+        </color-panel>
+
+        <!-- info-panel-wrapper (id=210)：separator + 群信息栏。Single 时
+             整块隐藏；Group 时显示 -->
+        <hbox id="210" fixedWidth="271" gap="0" padding="0">
+          <color-panel color="232,232,232" fixedWidth="1"/>
+          <color-panel color="255,255,255" fixedWidth="270" padding="14,18,14,14" gap="14">
+            <color-panel color="240,240,240" fixedHeight="30"/>
+            <!-- 成员 grid 由 group-members 控件动态根据 sessionIdx 取数据画。
+                 id=220 让 ApplySessionView 切群时通过 FindCtrlById 灌入 idx。
+                 fixedHeight=152 = 2×72 cell + 8 gap，原 124 太矮 name 字底被裁。 -->
+            <group-members id="220" fixedHeight="152"/>
+            <info-field label="群聊名称" value="张小黑上学群" fixedHeight="46"/>
+            <info-field label="群公告"   value="发布后会通知全部群成员" fixedHeight="46"/>
+            <info-field label="备注"     value="群聊的备注仅自己可见" fixedHeight="46"/>
+            <info-field label="我在本群的昵称" value="范鑫" fixedHeight="46"/>
+            <info-field label="查找聊天内容" value="" fixedHeight="46"/>
+            <info-mute-row label="消息免打扰" fixedHeight="32"/>
+            <control weight="1"/>
+          </color-panel>
+        </hbox>
+      </hbox>
+
+      <!-- ── pane 202 ：公众号 view ────────────────────────────────── -->
+      <color-panel id="202" color="255,255,255" weight="1" padding="0">
+        <hbox fixedHeight="60" gap="4" padding="24,0,16,0">
+          <chat-title weight="1" text="公众号"/>
+          <icon-button glyph="emoji"      fixedWidth="32"/>
+          <icon-button glyph="phone-call" fixedWidth="32"/>
+          <icon-button glyph="dots"       fixedWidth="32"/>
+        </hbox>
+        <color-panel color="232,232,232" fixedHeight="1"/>
+        <freq-contacts fixedHeight="84"/>
+        <color-panel color="232,232,232" fixedHeight="1"/>
+        <article-list weight="1"/>
+      </color-panel>
+
+      <!-- ── pane 204 ：空 chat 水印 view（--empty CLI 启用） ─────────── -->
+      <watermark id="204" weight="1"/>
+
+    </vbox>
+  </hbox>
+</frame-window>

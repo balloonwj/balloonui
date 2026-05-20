@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  main_contacts.xml —— 联系人页（Phase 6）。匹配 third_party/wechat/联系人.png：
+    左 nav      ：第二项 (idx=1) 选中（联系人 icon 绿色）
+    中栏 290    ：搜索 + "通讯录管理" 大按钮 + 7 项 contact-tree
+    右栏 fill   ：浅灰背景 + 居中 logo（同 Phase 2 空状态）
+
+  没有右侧 info panel（Phase 5 那个是群聊上下文专属）。
+  通过 main.cpp `--contacts` CLI arg 切换到本 xml。
+-->
+<frame-window
+    min-w="800" min-h="540"
+    resizable="true"
+    has-min-button="true"
+    has-max-button="true"
+    has-close-button="true">
+  <hbox padding="0" gap="0">
+
+    <!-- 左 nav 栏（与 main.xml 对齐；这里 idx=1 联系人 selected）。
+         id=90 聊天 / id=92 联系人 / id=91 汉堡 → MainFrame OnDuiNotify_ 路由。 -->
+    <color-panel color="46,46,46" fixedWidth="75" padding="0,15,0,15" gap="6">
+      <hbox fixedHeight="48">
+        <control weight="1"/>
+        <user-avatar fixedWidth="38" fixedHeight="38"/>
+        <control weight="1"/>
+      </hbox>
+      <nav-icon fixedHeight="52" id="90" glyph="chat-bubble"/>
+      <nav-icon fixedHeight="52" id="92" glyph="people" selected="true"/>
+      <nav-icon fixedHeight="52" glyph="box"/>
+      <nav-icon fixedHeight="52" glyph="aperture"/>
+      <nav-icon fixedHeight="52" glyph="video-bookmark"/>
+      <nav-icon fixedHeight="52" glyph="eye-look"/>
+      <nav-icon fixedHeight="52" glyph="mini-prog"/>
+      <control weight="1"/>
+      <nav-icon fixedHeight="52" glyph="phone"/>
+      <nav-icon fixedHeight="52" id="91" glyph="hamburger"/>
+    </color-panel>
+
+    <!-- 中栏：搜索 + 通讯录管理按钮 + tree -->
+    <color-panel color="245,245,245" fixedWidth="290" padding="14,16,14,0" gap="14">
+      <!-- 搜索框占位 -->
+      <color-panel color="232,232,232" fixedHeight="32"/>
+
+      <!-- 通讯录管理按钮 -->
+      <contact-mgmt-button fixedHeight="44"/>
+
+      <!-- 分类 tree —— weight=1 撑满中栏剩余高度，给展开后的子项留空间。
+           原 fixedHeight=308 (7×44) 锁死高度，展开后子项被截掉看不到。 -->
+      <contact-tree weight="1"/>
+    </color-panel>
+
+    <!-- 右栏：与 Phase 2 空状态一样 -->
+    <color-panel color="238,238,238" weight="1" padding="0">
+      <logo-image src="wechat_logo_gray.png" weight="1"/>
+    </color-panel>
+  </hbox>
+</frame-window>

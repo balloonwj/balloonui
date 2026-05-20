@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  login_loading.xml —— XChat 登录窗 loading view（Phase 1 阶段 1.2）。
+  匹配 third_party/wechat/登录中.png：同 360×500 窗、同标题栏，中央换成
+  圆角矩形头像（DuiAvatar fallback 缩写 'B'）+ spinner + "正在进入"。
+-->
+<frame-window
+    title="XChat"
+    min-w="360" min-h="500"
+    has-min-button="false" has-max-button="false" has-close-button="true"
+    resizable="false">
+  <vbox padding="0,60,0,60" gap="24">
+    <!-- 头像。圆角矩形 + 缩写 fallback；110×110 与截图比例一致。 -->
+    <hbox fixedHeight="110">
+      <control weight="1"/>
+      <login-avatar fixedWidth="110" fixedHeight="110"/>
+      <control weight="1"/>
+    </hbox>
+
+    <!-- spinner + "正在进入" 横排。两侧 spacer 实现整体居中。 -->
+    <hbox fixedHeight="32" gap="10">
+      <control weight="1"/>
+      <spinner color="7,193,96" thickness="2"
+               fixedWidth="22" fixedHeight="22"/>
+      <label text="正在进入"
+             textColor="7,193,96"
+             fixedWidth="100"/>
+      <control weight="1"/>
+    </hbox>
+
+    <control weight="1"/>
+  </vbox>
+</frame-window>

@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{A8C0F2D1-3E4B-4F25-9C77-DBC0A3B5D101}</ProjectGuid>
+    <RootNamespace>DuiGallery</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings"></ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <OutDir>..\Bin\</OutDir>
+    <IntDir>.\Debug\</IntDir>
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <OutDir>..\Bin\</OutDir>
+    <IntDir>$(Configuration)\</IntDir>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <OutDir>..\Bin\x64\</OutDir>
+    <IntDir>.\Debug_x64\</IntDir>
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutDir>..\Bin\x64\</OutDir>
+    <IntDir>Release_x64\</IntDir>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <AdditionalIncludeDirectories>.;..\balloonui;..\wtl9.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_CRT_SECURE_NO_WARNINGS;_CRT_NON_CONFORMING_SWPRINTFS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <MinimalRebuild>false</MinimalRebuild>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <PrecompiledHeader />
+      <WarningLevel>Level3</WarningLevel>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <OutputFile>..\Bin\$(ProjectName).exe</OutputFile>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+      <TargetMachine>MachineX86</TargetMachine>
+      <AdditionalDependencies>gdiplus.lib;comctl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <AdditionalIncludeDirectories>.;..\balloonui;..\wtl9.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_CRT_SECURE_NO_WARNINGS;_CRT_NON_CONFORMING_SWPRINTFS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <PrecompiledHeader />
+      <WarningLevel>Level3</WarningLevel>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <TargetMachine>MachineX86</TargetMachine>
+      <AdditionalDependencies>gdiplus.lib;comctl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <AdditionalIncludeDirectories>.;..\balloonui;..\wtl9.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_CRT_SECURE_NO_WARNINGS;_CRT_NON_CONFORMING_SWPRINTFS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <MinimalRebuild>false</MinimalRebuild>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <PrecompiledHeader />
+      <WarningLevel>Level3</WarningLevel>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <OutputFile>..\Bin\x64\$(ProjectName).exe</OutputFile>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+      <TargetMachine>MachineX64</TargetMachine>
+      <AdditionalDependencies>gdiplus.lib;comctl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <AdditionalIncludeDirectories>.;..\balloonui;..\wtl9.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_CRT_SECURE_NO_WARNINGS;_CRT_NON_CONFORMING_SWPRINTFS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <PrecompiledHeader />
+      <WarningLevel>Level3</WarningLevel>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <OutputFile>..\Bin\x64\$(ProjectName).exe</OutputFile>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <TargetMachine>MachineX64</TargetMachine>
+      <AdditionalDependencies>gdiplus.lib;comctl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <!-- DuiGallery own sources -->
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="GalleryFrame.cpp" />
+    <ClCompile Include="Pages.cpp" />
+    <ClCompile Include="CaptureMode.cpp" />
+    <!-- Kernel — DuiGallery still statically embeds (test harness with
+         direct access to internals). -->
+    <ClCompile Include="..\balloonui\DuiControl.cpp" />
+    <ClCompile Include="..\balloonui\DuiAnimation.cpp" />
+    <ClCompile Include="..\balloonui\DuiTheme.cpp" />
+    <ClCompile Include="..\balloonui\DuiMnemonic.cpp" />
+    <ClCompile Include="..\balloonui\DuiFocusVisual.cpp" />
+    <ClCompile Include="..\balloonui\DuiInspector.cpp" />
+    <ClCompile Include="..\balloonui\DuiGolden.cpp" />
+    <ClCompile Include="..\balloonui\DuiAsyncImage.cpp" />
+    <ClCompile Include="..\balloonui\DuiDropTarget.cpp" />
+    <ClCompile Include="..\balloonui\DuiXmlBuilder.cpp" />
+    <ClCompile Include="..\balloonui\DuiDpi.cpp" />
+    <ClCompile Include="..\balloonui\DuiHost.cpp" />
+    <ClCompile Include="..\balloonui\DuiNinePatch.cpp" />
+    <ClCompile Include="..\balloonui\DuiPaintAA.cpp" />
+    <ClCompile Include="..\balloonui\DuiResMgr.cpp" />
+    <ClCompile Include="..\balloonui\HwndHostControl.cpp" />
+    <!-- Kernel tests (live in balloonui/Tests/ but compiled into the
+         gallery exe per project policy: tests aren't in the DLL). -->
+    <ClCompile Include="..\balloonui\Tests\DuiNinePatchTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiButtonTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiSwitchTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiAvatarTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiSplitterTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiTabPageTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiTreeViewTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiPopupHostTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiEmojiPanelTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiFrameWindowTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiDpiTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiImageOleTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiDockTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiAnimationTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiAsyncImageTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiGifTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiDropTargetTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiXmlBuilderTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiCtlColorTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiTier3Tests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiThemeTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiListBoxTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiMenuTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiMenuBarTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiTabTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiMnemonicTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiTier4Tests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiInspectorGoldenTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiRichEditHostTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiComboBoxTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiLabelTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiEditHostTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiSearchBoxTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiLayoutTests.cpp" />
+    <!-- Controls / Layout -->
+    <ClCompile Include="..\balloonui\Controls\Layout\DuiLayout.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Layout\DuiSplitter.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Layout\DuiDock.cpp" />
+    <!-- Controls / Basic -->
+    <ClCompile Include="..\balloonui\Controls\Basic\DuiLabel.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Basic\DuiButton.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Basic\DuiBadge.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Basic\DuiAvatar.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Basic\DuiSeparator.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Basic\DuiGroupBox.cpp" />
+    <!-- Controls / Input -->
+    <ClCompile Include="..\balloonui\Controls\Input\DuiEditHost.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Input\DuiRichEditHost.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Input\DuiSearchBox.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Input\DuiSpinBox.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Input\DuiSlider.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Input\DuiSwitch.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Input\DuiComboBox.cpp" />
+    <!-- Controls / List -->
+    <ClCompile Include="..\balloonui\Controls\List\DuiListBox.cpp" />
+    <ClCompile Include="..\balloonui\Controls\List\DuiTreeView.cpp" />
+    <ClCompile Include="..\balloonui\Controls\List\DuiTab.cpp" />
+    <ClCompile Include="..\balloonui\Controls\List\DuiTabPage.cpp" />
+    <ClCompile Include="..\balloonui\Controls\List\DuiMenu.cpp" />
+    <ClCompile Include="..\balloonui\Controls\List\DuiMenuBar.cpp" />
+    <!-- Controls / Feedback -->
+    <ClCompile Include="..\balloonui\Controls\Feedback\DuiPopupHost.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Feedback\DuiToolTip.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Feedback\DuiProgressBar.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Feedback\DuiEmojiPanel.cpp" />
+    <!-- Controls / Media -->
+    <ClCompile Include="..\balloonui\Controls\Media\DuiGif.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Media\DuiImageOle.cpp" />
+    <!-- Controls / Window -->
+    <ClCompile Include="..\balloonui\Controls\Window\DuiFrameWindow.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Window\DuiScrollBar.cpp" />
+    <!-- Skin manager + utility deps -->
+    <ClCompile Include="..\balloonui\SkinManager.cpp" />
+    <ClCompile Include="..\balloonui\ImageEx.cpp" />
+    <ClCompile Include="..\balloonui\XmlDocument.cpp" />
+    <ClCompile Include="..\balloonui\Path.cpp" />
+    <ClCompile Include="..\balloonui\File.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="stdafx.h" />
+    <ClInclude Include="GalleryFrame.h" />
+    <ClInclude Include="Pages.h" />
+    <ClInclude Include="CaptureMode.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="app.rc" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets"></ImportGroup>
+</Project>

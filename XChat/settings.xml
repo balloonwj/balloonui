@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  settings.xml —— 设置弹窗（Phase 8）。匹配 third_party/wechat/设置详情.png：
+    左 140 px 竖向 tab list（6 项，第 0 项 "账号与存储" 选中）
+    右 fill   浅灰底 + 两张白卡：
+      Card 1：账号信息（avatar+昵称+退出登录） + 登录方式 + 保留聊天记录开关
+      Card 2：存储空间 / 存储位置 / 自动下载小于 N MB 文件开关 / 清空记录
+
+  标题栏只 ✕ close（无 min/max），无 title 文字 —— 设置详情.png 同样。
+-->
+<frame-window
+    title=""
+    min-w="800" min-h="680"
+    resizable="true"
+    has-min-button="false"
+    has-max-button="false"
+    has-close-button="true">
+  <hbox padding="0" gap="0">
+
+    <!-- 左 tab list（fixedWidth=140，浅白底） -->
+    <settings-tab fixedWidth="140"/>
+
+    <!-- 右内容区：浅灰底 + 16px gap 堆叠两张卡 -->
+    <settings-bg weight="1" padding="24,24,24,24" gap="16">
+
+      <!-- ── Card 1：账号 / 登录方式 / 保留聊天记录 ──────────────────── -->
+      <settings-card fixedHeight="220" padding="20" gap="14">
+        <!-- avatar + 昵称 + 退出登录 row -->
+        <hbox fixedHeight="56" gap="12">
+          <settings-user-avatar fixedWidth="48" fixedHeight="48"/>
+          <vbox weight="1" padding="0" gap="2">
+            <info-field label="范蠡" value="Balloonwj" fixedHeight="48"/>
+          </vbox>
+          <settings-btn text="退出登录" fixedWidth="80" fixedHeight="32" margin="12"/>
+        </hbox>
+
+        <!-- 登录方式 + 下拉占位 row -->
+        <hbox fixedHeight="50" gap="12">
+          <vbox weight="1" padding="0" gap="2">
+            <info-field label="登录方式" value="在本机登录某信需手机确认或扫码登录。" fixedHeight="48"/>
+          </vbox>
+          <settings-btn text="在手机某信中确认 ▾" fixedWidth="160" fixedHeight="32" margin="8"/>
+        </hbox>
+
+        <!-- 保留聊天记录 + DuiSwitch row -->
+        <hbox fixedHeight="32" gap="12">
+          <info-field label="保留聊天记录" value="" weight="1" fixedHeight="32"/>
+          <settings-switch on="true" fixedWidth="44" fixedHeight="22" alignCross="center"/>
+        </hbox>
+      </settings-card>
+
+      <!-- ── Card 2：存储空间 / 存储位置 / 自动下载 / 清空 ──────────── -->
+      <settings-card fixedHeight="240" padding="20" gap="14">
+        <!-- 存储空间 + 管理 -->
+        <hbox fixedHeight="32" gap="12">
+          <info-field label="存储空间" value="" weight="1" fixedHeight="32"/>
+          <settings-btn text="管理" fixedWidth="64" fixedHeight="32"/>
+        </hbox>
+
+        <!-- 存储位置 + 更改 -->
+        <hbox fixedHeight="50" gap="12">
+          <vbox weight="1" padding="0" gap="2">
+            <info-field label="存储位置" value="D:\xwechat_files" fixedHeight="48"/>
+          </vbox>
+          <settings-btn text="更改" fixedWidth="64" fixedHeight="32" margin="8"/>
+        </hbox>
+
+        <!-- 自动下载小于 [N] MB 文件 + DuiSwitch -->
+        <hbox fixedHeight="32" gap="12">
+          <info-field label="自动下载小于 20 MB 的文件" value="" weight="1" fixedHeight="32"/>
+          <settings-switch on="true" fixedWidth="44" fixedHeight="22" alignCross="center"/>
+        </hbox>
+
+        <!-- 清空全部聊天记录（右对齐） -->
+        <hbox fixedHeight="32" gap="0">
+          <control weight="1"/>
+          <settings-btn text="清空全部聊天记录" fixedWidth="140" fixedHeight="32"/>
+        </hbox>
+      </settings-card>
+
+      <!-- 底部 spacer 把卡推到顶 -->
+      <control weight="1"/>
+    </settings-bg>
+  </hbox>
+</frame-window>

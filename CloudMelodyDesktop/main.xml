@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  main.xml —— 方Music 主窗（M0 占位版）
+
+  布局：
+    顶 48px  TopBar 占位      —— surface-container-low #f3f3f4
+    中 fill 横向：
+      左 220px Sidebar 占位   —— surface-container-low #f3f3f4
+      右 fill  ContentHost    —— surface #ffffff
+    底 80px  PlayerBar 占位   —— 近白 + 顶部 1px 分隔线（玻璃感近似）
+
+  M1 起：每块占位 ColorPanel 内部填真控件（TopBar / Sidebar / PlayerBar
+  各自由 C++ 类内部 build 子树并 AddChild 到对应 panel）。
+-->
+<frame-window
+    min-w="900" min-h="640"
+    resizable="true"
+    has-min-button="true"
+    has-max-button="true"
+    has-close-button="true">
+  <vbox padding="0" gap="0">
+
+    <!-- 顶栏 -->
+    <top-bar id="10" fixedHeight="48"/>
+
+    <!-- 中部：侧栏 + 内容区 -->
+    <hbox weight="1" padding="0" gap="0">
+      <sidebar id="20" fixedWidth="220"/>
+      <content-router id="30" weight="1"/>
+    </hbox>
+
+    <!-- 播放栏 -->
+    <player-bar id="40" fixedHeight="80"/>
+
+  </vbox>
+</frame-window>
