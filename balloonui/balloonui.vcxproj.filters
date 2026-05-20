@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Kernel">
+      <UniqueIdentifier>{2A1F4B11-3C8E-4D90-9F11-BD6A1A1A0001}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Controls">
+      <UniqueIdentifier>{2A1F4B11-3C8E-4D90-9F11-BD6A1A1A0002}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Controls\Layout">
+      <UniqueIdentifier>{2A1F4B11-3C8E-4D90-9F11-BD6A1A1A0021}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Controls\Basic">
+      <UniqueIdentifier>{2A1F4B11-3C8E-4D90-9F11-BD6A1A1A0022}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Controls\Input">
+      <UniqueIdentifier>{2A1F4B11-3C8E-4D90-9F11-BD6A1A1A0023}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Controls\List">
+      <UniqueIdentifier>{2A1F4B11-3C8E-4D90-9F11-BD6A1A1A0024}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Controls\Feedback">
+      <UniqueIdentifier>{2A1F4B11-3C8E-4D90-9F11-BD6A1A1A0025}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Controls\Media">
+      <UniqueIdentifier>{2A1F4B11-3C8E-4D90-9F11-BD6A1A1A0026}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Controls\Window">
+      <UniqueIdentifier>{2A1F4B11-3C8E-4D90-9F11-BD6A1A1A0027}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Skin">
+      <UniqueIdentifier>{2A1F4B11-3C8E-4D90-9F11-BD6A1A1A0003}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- ============== Kernel ============== -->
+    <ClInclude Include="DuiAnimation.h">      <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiAnimation.cpp">    <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiAsyncImage.h">     <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiAsyncImage.cpp">   <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiControl.h">        <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiControl.cpp">      <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiDpi.h">            <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiDpi.cpp">          <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiDropTarget.h">     <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiDropTarget.cpp">   <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiFocusVisual.h">    <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiFocusVisual.cpp">  <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiGolden.h">         <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiGolden.cpp">       <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiHost.h">           <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiHost.cpp">         <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiInspector.h">      <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiInspector.cpp">    <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiMnemonic.h">       <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiMnemonic.cpp">     <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiNinePatch.h">      <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiNinePatch.cpp">    <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiNotify.h">         <Filter>Kernel</Filter></ClInclude>
+    <ClInclude Include="DuiPaintAA.h">        <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiPaintAA.cpp">      <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiResMgr.h">         <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiResMgr.cpp">       <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiTheme.h">          <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiTheme.cpp">        <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="DuiXmlBuilder.h">     <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="DuiXmlBuilder.cpp">   <Filter>Kernel</Filter></ClCompile>
+    <ClInclude Include="HwndHostControl.h">   <Filter>Kernel</Filter></ClInclude>
+    <ClCompile Include="HwndHostControl.cpp"> <Filter>Kernel</Filter></ClCompile>
+
+    <!-- ============== Controls / Layout ============== -->
+    <ClInclude Include="Controls\Layout\DuiLayout.h">      <Filter>Controls\Layout</Filter></ClInclude>
+    <ClCompile Include="Controls\Layout\DuiLayout.cpp">    <Filter>Controls\Layout</Filter></ClCompile>
+    <ClInclude Include="Controls\Layout\DuiSplitter.h">    <Filter>Controls\Layout</Filter></ClInclude>
+    <ClCompile Include="Controls\Layout\DuiSplitter.cpp">  <Filter>Controls\Layout</Filter></ClCompile>
+    <ClInclude Include="Controls\Layout\DuiDock.h">        <Filter>Controls\Layout</Filter></ClInclude>
+    <ClCompile Include="Controls\Layout\DuiDock.cpp">      <Filter>Controls\Layout</Filter></ClCompile>
+
+    <!-- ============== Controls / Basic ============== -->
+    <ClInclude Include="Controls\Basic\DuiLabel.h">        <Filter>Controls\Basic</Filter></ClInclude>
+    <ClCompile Include="Controls\Basic\DuiLabel.cpp">      <Filter>Controls\Basic</Filter></ClCompile>
+    <ClInclude Include="Controls\Basic\DuiButton.h">       <Filter>Controls\Basic</Filter></ClInclude>
+    <ClCompile Include="Controls\Basic\DuiButton.cpp">     <Filter>Controls\Basic</Filter></ClCompile>
+    <ClInclude Include="Controls\Basic\DuiBadge.h">        <Filter>Controls\Basic</Filter></ClInclude>
+    <ClCompile Include="Controls\Basic\DuiBadge.cpp">      <Filter>Controls\Basic</Filter></ClCompile>
+    <ClInclude Include="Controls\Basic\DuiAvatar.h">       <Filter>Controls\Basic</Filter></ClInclude>
+    <ClCompile Include="Controls\Basic\DuiAvatar.cpp">     <Filter>Controls\Basic</Filter></ClCompile>
+    <ClInclude Include="Controls\Basic\DuiSeparator.h">    <Filter>Controls\Basic</Filter></ClInclude>
+    <ClCompile Include="Controls\Basic\DuiSeparator.cpp">  <Filter>Controls\Basic</Filter></ClCompile>
+    <ClInclude Include="Controls\Basic\DuiGroupBox.h">     <Filter>Controls\Basic</Filter></ClInclude>
+    <ClCompile Include="Controls\Basic\DuiGroupBox.cpp">   <Filter>Controls\Basic</Filter></ClCompile>
+
+    <!-- ============== Controls / Input ============== -->
+    <ClInclude Include="Controls\Input\DuiEditHost.h">     <Filter>Controls\Input</Filter></ClInclude>
+    <ClCompile Include="Controls\Input\DuiEditHost.cpp">   <Filter>Controls\Input</Filter></ClCompile>
+    <ClInclude Include="Controls\Input\DuiRichEditHost.h"> <Filter>Controls\Input</Filter></ClInclude>
+    <ClCompile Include="Controls\Input\DuiRichEditHost.cpp"><Filter>Controls\Input</Filter></ClCompile>
+    <ClInclude Include="Controls\Input\DuiSearchBox.h">    <Filter>Controls\Input</Filter></ClInclude>
+    <ClCompile Include="Controls\Input\DuiSearchBox.cpp">  <Filter>Controls\Input</Filter></ClCompile>
+    <ClInclude Include="Controls\Input\DuiSpinBox.h">      <Filter>Controls\Input</Filter></ClInclude>
+    <ClCompile Include="Controls\Input\DuiSpinBox.cpp">    <Filter>Controls\Input</Filter></ClCompile>
+    <ClInclude Include="Controls\Input\DuiSlider.h">       <Filter>Controls\Input</Filter></ClInclude>
+    <ClCompile Include="Controls\Input\DuiSlider.cpp">     <Filter>Controls\Input</Filter></ClCompile>
+    <ClInclude Include="Controls\Input\DuiComboBox.h">     <Filter>Controls\Input</Filter></ClInclude>
+    <ClCompile Include="Controls\Input\DuiComboBox.cpp">   <Filter>Controls\Input</Filter></ClCompile>
+
+    <!-- ============== Controls / List ============== -->
+    <ClInclude Include="Controls\List\DuiListBox.h">       <Filter>Controls\List</Filter></ClInclude>
+    <ClCompile Include="Controls\List\DuiListBox.cpp">     <Filter>Controls\List</Filter></ClCompile>
+    <ClInclude Include="Controls\List\DuiTreeView.h">      <Filter>Controls\List</Filter></ClInclude>
+    <ClCompile Include="Controls\List\DuiTreeView.cpp">    <Filter>Controls\List</Filter></ClCompile>
+    <ClInclude Include="Controls\List\DuiTab.h">           <Filter>Controls\List</Filter></ClInclude>
+    <ClCompile Include="Controls\List\DuiTab.cpp">         <Filter>Controls\List</Filter></ClCompile>
+    <ClInclude Include="Controls\List\DuiTabPage.h">       <Filter>Controls\List</Filter></ClInclude>
+    <ClCompile Include="Controls\List\DuiTabPage.cpp">     <Filter>Controls\List</Filter></ClCompile>
+    <ClInclude Include="Controls\List\DuiMenu.h">          <Filter>Controls\List</Filter></ClInclude>
+    <ClCompile Include="Controls\List\DuiMenu.cpp">        <Filter>Controls\List</Filter></ClCompile>
+
+    <!-- ============== Controls / Feedback ============== -->
+    <ClInclude Include="Controls\Feedback\DuiPopupHost.h"> <Filter>Controls\Feedback</Filter></ClInclude>
+    <ClCompile Include="Controls\Feedback\DuiPopupHost.cpp"><Filter>Controls\Feedback</Filter></ClCompile>
+    <ClInclude Include="Controls\Feedback\DuiToolTip.h">   <Filter>Controls\Feedback</Filter></ClInclude>
+    <ClCompile Include="Controls\Feedback\DuiToolTip.cpp"> <Filter>Controls\Feedback</Filter></ClCompile>
+    <ClInclude Include="Controls\Feedback\DuiProgressBar.h"><Filter>Controls\Feedback</Filter></ClInclude>
+    <ClCompile Include="Controls\Feedback\DuiProgressBar.cpp"><Filter>Controls\Feedback</Filter></ClCompile>
+    <ClInclude Include="Controls\Feedback\DuiEmojiPanel.h"><Filter>Controls\Feedback</Filter></ClInclude>
+    <ClCompile Include="Controls\Feedback\DuiEmojiPanel.cpp"><Filter>Controls\Feedback</Filter></ClCompile>
+
+    <!-- ============== Controls / Media ============== -->
+    <ClInclude Include="Controls\Media\DuiGif.h">          <Filter>Controls\Media</Filter></ClInclude>
+    <ClCompile Include="Controls\Media\DuiGif.cpp">        <Filter>Controls\Media</Filter></ClCompile>
+    <ClInclude Include="Controls\Media\DuiImageOle.h">     <Filter>Controls\Media</Filter></ClInclude>
+    <ClCompile Include="Controls\Media\DuiImageOle.cpp">   <Filter>Controls\Media</Filter></ClCompile>
+
+    <!-- ============== Controls / Window ============== -->
+    <ClInclude Include="Controls\Window\DuiFrameWindow.h"> <Filter>Controls\Window</Filter></ClInclude>
+    <ClCompile Include="Controls\Window\DuiFrameWindow.cpp"><Filter>Controls\Window</Filter></ClCompile>
+    <ClInclude Include="Controls\Window\DuiScrollBar.h">   <Filter>Controls\Window</Filter></ClInclude>
+    <ClCompile Include="Controls\Window\DuiScrollBar.cpp"> <Filter>Controls\Window</Filter></ClCompile>
+
+    <!-- ============== Skin ============== -->
+    <ClInclude Include="File.h">         <Filter>Skin</Filter></ClInclude>
+    <ClCompile Include="File.cpp">       <Filter>Skin</Filter></ClCompile>
+    <ClInclude Include="ImageEx.h">      <Filter>Skin</Filter></ClInclude>
+    <ClCompile Include="ImageEx.cpp">    <Filter>Skin</Filter></ClCompile>
+    <ClInclude Include="Path.h">         <Filter>Skin</Filter></ClInclude>
+    <ClCompile Include="Path.cpp">       <Filter>Skin</Filter></ClCompile>
+    <ClInclude Include="SkinManager.h">  <Filter>Skin</Filter></ClInclude>
+    <ClCompile Include="SkinManager.cpp"><Filter>Skin</Filter></ClCompile>
+    <ClInclude Include="XmlDocument.h">  <Filter>Skin</Filter></ClInclude>
+    <ClCompile Include="XmlDocument.cpp"><Filter>Skin</Filter></ClCompile>
+  </ItemGroup>
+</Project>

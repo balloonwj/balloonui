@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DemoTaskManager 主框架。结构（从上到下）：
+    · menu bar (hbox)         —— 文件 / 选项 / 查看 三个按钮（Phase 5 接 DuiMenu::TrackPopup 弹下拉）
+    · tab-page                —— 7 个 tab，每个 tab 内容由 XmlFactory 按 page-tag 注入
+    · status bar (hbox)       —— 进程数 / CPU% / 内存 数字（由 main.cpp 的 WM_TIMER 200ms 刷新）
+
+  <tab-page> / <tab-page-item> 是业务侧 CustomFactory 接住的 tag。每个
+  <tab-page-item> 在阶段 1 暂塞 DuiLabel("TODO: <page-tag>")，后续阶段
+  按 page-tag 替换为各自页面。
+-->
+<frame-window
+    title="任务管理器"
+    title-bar-height="36"
+    has-min-button="true" has-max-button="true" has-close-button="true"
+    min-w="800" min-h="600"
+    resizable="true">
+  <!-- 主 vbox 给左右 8px / 上 4px / 下 4px 内边距，让数据区与窗口边框留呼吸空间。 -->
+  <vbox padding="8,4,8,4" gap="2">
+    <!-- 真 DuiMenuBar：栏目 hover/active 着色、Alt 助记符路由、激活态下
+         mouse-move 切换栏目。dropdown 由 main.cpp 在 BindOuts 时 SetDropdown
+         绑定到 m_fileMenu / m_optionsMenu / m_viewMenu。 -->
+    <menu-bar id="100" item-height="24" fixedHeight="24">
+      <menu-item id="110" text="文件(&amp;F)"/>
+      <menu-item id="120" text="选项(&amp;O)"/>
+      <menu-item id="140" text="查看(&amp;V)"/>
+    </menu-bar>
+    <tab-page id="200" weight="1">
+      <tab-page-item title="进程"          page-tag="processes"/>
+      <tab-page-item title="性能"          page-tag="performance"/>
+      <tab-page-item title="应用历史记录"  page-tag="appHistory"/>
+      <tab-page-item title="启动"          page-tag="startup"/>
+      <tab-page-item title="用户"          page-tag="users"/>
+      <tab-page-item title="详细信息"      page-tag="details"/>
+      <tab-page-item title="服务"          page-tag="services"/>
+    </tab-page>
+    <hbox id="300" fixedHeight="22" gap="16" padding="0,2,0,2">
+      <status-label which="proc" text="进程数: --"     fixedWidth="100"/>
+      <status-label which="cpu"  text="CPU 使用率: --" fixedWidth="140"/>
+      <status-label which="mem"  text="内存: --"        fixedWidth="180"/>
+    </hbox>
+  </vbox>
+</frame-window>

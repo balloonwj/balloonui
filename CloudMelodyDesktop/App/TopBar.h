@@ -1,0 +1,39 @@
+#pragma once
+
+// =============================================================================
+// TopBar —— 方Music 顶部 48px 工具条
+//
+// 视觉（参考 music_1 / music_2 / music_8 顶部）：
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  ‹ ›   [🔍 搜索音乐、视频、播客…       ]    👤 张小方   ⚙   │
+//   └─────────────────────────────────────────────────────────────┘
+//
+// 组件 → balloonui 控件：
+//   ‹ / ›       IconButton (glyph "‹" / "›")
+//   搜索框       DuiSearchBox（库内置）
+//   头像        DuiAvatar（库内置）
+//   用户名      DuiLabel
+//   ⚙          IconButton (glyph "⚙")
+//
+// 通知：所有 IconButton 携带 ctrl id 发 DUIN_CLICK；搜索框 enter 发
+//      DUIN_CLICK / 文字变化发 DUIN_VALUECHANGED。MainFrame 路由。
+// =============================================================================
+
+#include "DuiControl.h"
+#include <memory>
+
+namespace cloudmelody {
+
+// TopBar 内 ctrl id —— 200 起避免与 NavId（100s）冲突。
+enum TopBarId
+{
+    TopBarId_Back     = 200,
+    TopBarId_Forward  = 201,
+    TopBarId_Search   = 202,
+    TopBarId_Avatar   = 203,    // 头像点击 → 个人中心
+    TopBarId_Settings = 204
+};
+
+std::unique_ptr<balloonwjui::DuiControl> BuildTopBar();
+
+} // namespace cloudmelody

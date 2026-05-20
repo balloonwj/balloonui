@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  main_publics.xml —— 公众号页（Phase 7）。匹配 third_party/wechat/公众号.png：
+    左 nav      ：第一项 (chat) 仍选中（公众号页本质是 chat 视图的特殊会话）
+    中栏 290    ：会话列表（同 main.xml）
+    右栏 fill   ：公众号 header + 常看的号 + 文章卡列表
+
+  通过 main.cpp `--publics` CLI arg 切换到本 xml。
+-->
+<frame-window
+    min-w="800" min-h="540"
+    resizable="true"
+    has-min-button="true"
+    has-max-button="true"
+    has-close-button="true">
+  <hbox padding="0" gap="0">
+
+    <!-- 左 nav 栏（与 main.xml 一致） -->
+    <color-panel color="46,46,46" fixedWidth="75" padding="0,15,0,15" gap="6">
+      <hbox fixedHeight="48">
+        <control weight="1"/>
+        <user-avatar fixedWidth="38" fixedHeight="38"/>
+        <control weight="1"/>
+      </hbox>
+      <nav-icon fixedHeight="52" id="90" glyph="chat-bubble" selected="true"/>
+      <nav-icon fixedHeight="52" id="92" glyph="people"/>
+      <nav-icon fixedHeight="52" glyph="box"/>
+      <nav-icon fixedHeight="52" glyph="aperture"/>
+      <nav-icon fixedHeight="52" glyph="video-bookmark"/>
+      <nav-icon fixedHeight="52" glyph="eye-look"/>
+      <nav-icon fixedHeight="52" glyph="mini-prog"/>
+      <control weight="1"/>
+      <nav-icon fixedHeight="52" glyph="phone"/>
+      <nav-icon fixedHeight="52" id="91" glyph="hamburger"/>
+    </color-panel>
+
+    <!-- 中栏：搜索行 + session-list（同 main.xml） -->
+    <color-panel color="245,245,245" fixedWidth="290" padding="0,16,0,0" gap="0">
+      <hbox fixedHeight="32" gap="8" padding="12,0,12,0">
+        <color-panel color="232,232,232" weight="1"/>
+        <color-panel color="220,220,220" fixedWidth="32"/>
+      </hbox>
+      <session-list weight="1"/>
+    </color-panel>
+
+    <!-- 右栏：公众号视图 -->
+    <color-panel color="255,255,255" weight="1" padding="0">
+
+      <!-- Header（fixedHeight=60）：左 "公众号" + 右 3 个按钮占位 -->
+      <hbox fixedHeight="60" gap="0" padding="24,0,16,0">
+        <chat-title weight="1" text="公众号"/>
+        <color-panel color="240,240,240" fixedWidth="32" margin="0"/>
+        <color-panel color="240,240,240" fixedWidth="32" margin="0"/>
+        <color-panel color="240,240,240" fixedWidth="32" margin="0"/>
+      </hbox>
+      <color-panel color="232,232,232" fixedHeight="1"/>
+
+      <!-- 常看的号（fixedHeight=84） -->
+      <freq-contacts fixedHeight="84"/>
+      <color-panel color="232,232,232" fixedHeight="1"/>
+
+      <!-- 文章卡 list（weight=1 吃剩余高度，内部画 3 张固定卡） -->
+      <article-list weight="1"/>
+    </color-panel>
+  </hbox>
+</frame-window>

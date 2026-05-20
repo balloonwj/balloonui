@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  login.xml —— XChat 登录窗 QR view（Phase 1 阶段 1.1）。
+  匹配 third_party/wechat/登录前.png：360×500 固定窗，标题"某信"，
+  只剩 ✕ close（无 min/max），中央占位二维码 + 绿色"扫码登录" + 底部蓝
+  色"仅传输文件"链接。
+-->
+<frame-window
+    title="XChat"
+    min-w="360" min-h="500"
+    has-min-button="false" has-max-button="false" has-close-button="true"
+    resizable="false">
+  <vbox padding="0,30,0,30" gap="0">
+    <!-- 二维码：靠 hbox + 两侧 weight=1 spacer 实现水平居中。 -->
+    <hbox fixedHeight="220">
+      <control weight="1"/>
+      <qr-image src="qr_placeholder.png" fixedWidth="210" fixedHeight="210"/>
+      <control weight="1"/>
+    </hbox>
+
+    <!-- 状态文字。textColor 走 7,193,96 = 某信品牌绿。
+         id=11 让 LoginFrame 加载后调 SetTextAlign(DT_CENTER) 居中。 -->
+    <label id="11" text="扫码登录"
+           textColor="7,193,96"
+           fixedHeight="40"/>
+
+    <control weight="1"/>
+
+    <!-- 底部链接：50px 距底，浅蓝 57,97,222。
+         id=12 同上，让代码侧把它居中。 -->
+    <label id="12" text="仅传输文件"
+           textColor="57,97,222"
+           fixedHeight="30"/>
+  </vbox>
+</frame-window>

@@ -1,0 +1,18 @@
+<!--
+  默认样式 frame —— 不设 bg image，标题栏不透明。
+  与 main.cpp 里 frame_codeDefault 的 C++ 调用一一对应：
+
+    frame.SetTitle  (_T("默认样式 / XML"));
+    frame.SetButtons(true, true, true);
+    frame.SetMinSize(320, 240);
+    frame.SetResizable(true);
+
+  其它属性（title-bar-height=36 / border-px=8 / client-border-color=
+  RGB(200,200,200)）走 DuiFrameWindow 构造时的默认值，所以 XML 不写。
+-->
+<frame-window title="默认样式 / XML"
+              has-min-button="true"
+              has-max-button="true"
+              has-close-button="true"
+              min-w="320" min-h="240"
+              resizable="true"/>
