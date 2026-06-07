@@ -196,6 +196,76 @@ static Result Test_IncToggleResets()
     return OK(_T("IncToggleResets"));
 }
 
+// ---- 下拉箭头颜色(AA 抗锯齿 + 颜色可配)---------------------------------
+
+// 默认箭头色 = kArrowEnabled = RGB(80, 100, 140)。
+static Result Test_ArrowColorDefault()
+{
+    DuiComboBox c;
+    EXPECT_INT((int)c.GetArrowColor(), (int)RGB(80, 100, 140), _T("Arr/def"));
+    return OK(_T("ArrowColorDefault"));
+}
+
+// SetArrowColor / GetArrowColor 往返;切几个典型色后 getter 一致。
+static Result Test_ArrowColorRoundTrip()
+{
+    DuiComboBox c;
+    c.SetArrowColor(RGB(45, 108, 223));         // 品牌蓝
+    EXPECT_INT((int)c.GetArrowColor(), (int)RGB(45, 108, 223),  _T("Arr/blue"));
+
+    c.SetArrowColor(RGB(220, 60, 60));          // 红
+    EXPECT_INT((int)c.GetArrowColor(), (int)RGB(220, 60, 60),   _T("Arr/red"));
+
+    c.SetArrowColor(RGB(0, 0, 0));              // 纯黑
+    EXPECT_INT((int)c.GetArrowColor(), (int)RGB(0, 0, 0),       _T("Arr/black"));
+
+    c.SetArrowColor(RGB(80, 100, 140));         // 回默认
+    EXPECT_INT((int)c.GetArrowColor(), (int)RGB(80, 100, 140),  _T("Arr/back_def"));
+    return OK(_T("ArrowColorRoundTrip"));
+}
+
+// 与 ShowArrow / BgColor / ShowBorder 等其它属性正交,互不影响。
+static Result Test_ArrowColorOrthogonal()
+{
+    DuiComboBox c;
+    c.SetBgColor(RGB(245, 246, 248));
+    c.SetShowBorder(false);
+    c.SetShowArrow(true);
+    c.SetArrowColor(RGB(45, 108, 223));
+
+    EXPECT_INT((int)c.GetBgColor(),    (int)RGB(245, 246, 248), _T("Orth/bg"));
+    EXPECT_BOOL(c.IsShowBorder(),       false,                   _T("Orth/border"));
+    EXPECT_BOOL(c.IsShowArrow(),        true,                    _T("Orth/showArrow"));
+    EXPECT_INT((int)c.GetArrowColor(), (int)RGB(45, 108, 223),  _T("Orth/arrow"));
+
+    // 切 ShowArrow=false 不应清掉 ArrowColor。
+    c.SetShowArrow(false);
+    EXPECT_INT((int)c.GetArrowColor(), (int)RGB(45, 108, 223),  _T("Orth/arrow_after_hide"));
+    return OK(_T("ArrowColorOrthogonal"));
+}
+
+// 与 SetEditable / Items / CurSel 等业务状态共存:setter 不应破坏数据 model。
+static Result Test_ArrowColorWithDataModel()
+{
+    DuiComboBox c;
+    c.AddString(_T("Foo"));
+    c.AddString(_T("Bar"));
+    c.SetCurSel(1, /*notify=*/false);
+    c.SetArrowColor(RGB(220, 60, 60));
+
+    EXPECT_INT(c.GetCount(),                            2,  _T("Data/count"));
+    EXPECT_INT(c.GetCurSel(),                           1,  _T("Data/sel"));
+    EXPECT_INT((int)c.GetArrowColor(), (int)RGB(220, 60, 60), _T("Data/arrow"));
+
+    // 反向:换数据 / 改选不影响 arrow color。
+    c.AddString(_T("Baz"));
+    c.SetCurSel(2, /*notify=*/false);
+    EXPECT_INT(c.GetCount(),                            3,  _T("Data/countAfter"));
+    EXPECT_INT(c.GetCurSel(),                           2,  _T("Data/selAfter"));
+    EXPECT_INT((int)c.GetArrowColor(), (int)RGB(220, 60, 60), _T("Data/arrowAfter"));
+    return OK(_T("ArrowColorWithDataModel"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_BOOL
 #undef EXPECT_SIZE
@@ -215,7 +285,12 @@ CString RunAll()
         { _T("IncSubstringCaseInsensitive"),&Test_IncSubstringCaseInsensitive },
         { _T("IncSubstringCaseSensitive"), &Test_IncSubstringCaseSensitive },
         { _T("IncEmptyItemList"),          &Test_IncEmptyItemList          },
-        { _T("IncToggleResets"),           &Test_IncToggleResets           }
+        { _T("IncToggleResets"),           &Test_IncToggleResets           },
+        // ---- 下拉箭头颜色 ----
+        { _T("ArrowColorDefault"),         &Test_ArrowColorDefault         },
+        { _T("ArrowColorRoundTrip"),       &Test_ArrowColorRoundTrip       },
+        { _T("ArrowColorOrthogonal"),      &Test_ArrowColorOrthogonal      },
+        { _T("ArrowColorWithDataModel"),   &Test_ArrowColorWithDataModel   }
     };
 
     CString out;

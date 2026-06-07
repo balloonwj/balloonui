@@ -137,14 +137,56 @@ public:
     bool    IsVisited() const               { return m_visited; }
     void    SetVisited(bool b)              { m_visited = b; Invalidate(); }
 
+    // ---- 可选中（只读拖选 + Ctrl+C 复制） ----
+
+    // 开启 / 关闭可选中模式；默认关。开启后本控件可获焦点，鼠标拖选高亮
+    // 文字、Ctrl+C 复制选中（空选区时复制整段）、Ctrl+A 全选。**仅单行模式
+    // 有效**：与 SetWordWrap(true) 共存时本能力自动失效（以 word-wrap 为准）。
+    void    SetSelectable(bool b);
+    bool    IsSelectable() const            { return m_selectable; }
+
+    // 设置 / 读取选区高亮色。默认 RGB(217, 232, 252) 淡蓝。
+    void    SetSelectionColor(COLORREF c)   { m_clrSel = c; Invalidate(); }
+    COLORREF GetSelectionColor() const      { return m_clrSel; }
+
+    // ---- 静态纯函数（暴露便于单测） ----
+
+    // 给定 cumulative 字符宽度数组（dx[i] = 前 i+1 个字符的累计像素宽，
+    // 语义同 GetTextExtentExPoint 的 lpnDx 输出），返回 xRelative 命中的字符
+    // 索引 [0, len]。x<=0 返回 0；x 大于最末累计宽返回 len；其余取距离最近
+    // 的字符边界。dx 为空 / len<=0 时返回 0。
+    static int CharIndexFromCumulativeWidths(const int* dx, int len, int xRelative);
+
+    // 选区规范化：把 (anchor, caret) 化为 [lo, hi)，lo <= hi。
+    static void NormalizeSelection(int anchor, int caret, int& lo, int& hi);
+
+    // 由文本 + 选区 (anchor, caret) 构造剪贴板内容。选区为空 (lo == hi)
+    // 时返回整段文本（常见 Ctrl+C 行为）。
+    static CString BuildCopyText(const CString& text, int anchor, int caret);
+
     // ---- DuiControl 覆写 ----
     void    OnPaint(HDC hdc, const RECT& rcDirty) override;
+    bool    OnLButtonDown(POINT pt, UINT mkFlags) override;
+    bool    OnMouseMove (POINT pt, UINT mkFlags) override;
     bool    OnLButtonUp (POINT pt, UINT mkFlags) override;
+    bool    OnKeyDown   (UINT vk, UINT flags) override;
     bool    OnSetCursor (POINT pt) override;
 
 private:
     COLORREF EffectiveColor() const;
     HFONT    EffectiveFont (HDC hdc) const;     // 返回 m_hFont，或为 link 模式构建下划线版本
+
+    // ---- 选中模式内部辅助 ----
+
+    // 把 client 坐标点命中到字符索引 [0, len]。考虑当前字体 + DT_LEFT/CENTER/RIGHT
+    // 对齐。失败 / 空文本返回 0。
+    int  HitTestCharIndex(POINT pt) const;
+
+    // 在 OnPaint 已 SelectObject 字体的 HDC 上，画 [lo, hi) 区间的高亮矩形。
+    void PaintSelectionHighlight(HDC hdc, int lo, int hi);
+
+    // 把 text 写入剪贴板（CF_UNICODETEXT）。Open/Close 失败时静默忽略。
+    static void CopyToClipboard(const CString& text);
 
 private:
     Mode        m_mode      = ModeText;
@@ -164,6 +206,13 @@ private:
     // 缓存的下划线字体（持有所有权）。m_hFont 改变时重建。
     mutable HFONT m_hFontUnderline = nullptr;
     mutable HFONT m_lastBaseFont   = nullptr;   // 记录 m_hFontUnderline 是从哪个 base 构出的
+
+    // ---- 选中模式状态（m_selectable=false 时不被读写）----
+    bool        m_selectable   = false;          // 是否启用拖选 + Ctrl+C 复制
+    int         m_selAnchor    = 0;              // 鼠标按下时的字符索引
+    int         m_selCaret     = 0;              // 当前拖到 / 复制截止的字符索引；选区 = [min, max)
+    bool        m_selDragging  = false;          // 鼠标正在拖选
+    COLORREF    m_clrSel       = RGB(217, 232, 252);  // 选区高亮背景色
 };
 
 } // namespace balloonwjui

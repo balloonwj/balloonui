@@ -9,7 +9,6 @@
 #include "../../DuiResMgr.h"
 #include "../../DuiNotify.h"
 #include "../../DuiPaintAA.h"
-#include "../../DuiPaintAA.h"
 
 namespace balloonwjui {
 
@@ -475,11 +474,23 @@ void DuiComboBox::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
         return;
     }
 
-    // Combo body: rounded white box, 1px border that brightens on hover/focus.
-    COLORREF bgClr   = m_bEnabled ? RGB(255, 255, 255) : kBgDisabled;
-    COLORREF brdClr  = (!m_bEnabled) ? kBorderDisabled
-                                     : ((m_bHover || m_popupOpen) ? kBorderActive
-                                                                  : kBorderNormal);
+    // Combo body: rounded box filled with m_bgColor, 1px border that
+    // brightens on hover/focus. When m_showBorder is false the border pen
+    // tracks the fill color so RoundRect's stroke is effectively invisible.
+    COLORREF bgClr   = m_bEnabled ? m_bgColor : kBgDisabled;
+    COLORREF brdClr;
+    if (!m_showBorder)
+    {
+        brdClr = bgClr;
+    }
+    else if (!m_bEnabled)
+    {
+        brdClr = kBorderDisabled;
+    }
+    else
+    {
+        brdClr = (m_bHover || m_popupOpen) ? kBorderActive : kBorderNormal;
+    }
     HBRUSH br = ::CreateSolidBrush(bgClr);
     HPEN   pn = ::CreatePen(PS_SOLID, 1, brdClr);
     HBRUSH ob = (HBRUSH)::SelectObject(hdc, br);
@@ -496,21 +507,20 @@ void DuiComboBox::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
     int arrowH = kArrowHPx;
     int ax = m_rcItem.right - arrowW - kArrowPadRPx;
     int ay = (m_rcItem.top + m_rcItem.bottom - arrowH) / 2;
-    POINT pts[3] = {
-        { ax,           ay },
-        { ax + arrowW,  ay },
-        { ax + arrowW / 2, ay + arrowH }
-    };
-    COLORREF arrowClr = m_bEnabled ? kArrowEnabled : kArrowDisabled;
-    HBRUSH ab = ::CreateSolidBrush(arrowClr);
-    HPEN   ap = ::CreatePen(PS_SOLID, 1, arrowClr);
-    HBRUSH oab = (HBRUSH)::SelectObject(hdc, ab);
-    HPEN   oap = (HPEN)  ::SelectObject(hdc, ap);
-    ::Polygon(hdc, pts, 3);
-    ::SelectObject(hdc, oab);
-    ::SelectObject(hdc, oap);
-    ::DeleteObject(ab);
-    ::DeleteObject(ap);
+    if (m_showArrow)
+    {
+        POINT pts[3] = {
+            { ax,           ay },
+            { ax + arrowW,  ay },
+            { ax + arrowW / 2, ay + arrowH }
+        };
+        // enabled 态走 m_arrowColor(默认 kArrowEnabled, 业务可 SetArrowColor 改);
+        // disabled 态沿用 kArrowDisabled 不变。三角形走 DuiAA::FillPolygon
+        // 抗锯齿绘制 —— 斜边在屏上不再有阶梯像素。
+        // 不画 outline(实心小三角形 outline 会显得粗糙),outlineRgb 留 CLR_INVALID。
+        COLORREF arrowClr = m_bEnabled ? m_arrowColor : kArrowDisabled;
+        DuiAA::FillPolygon(hdc, pts, 3, arrowClr);
+    }
 
     if (m_style == StyleReadOnly)
     {
@@ -551,6 +561,42 @@ void DuiComboBox::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
 // ---------------------------------------------------------------------------
 // Editable-mode plumbing
 // ---------------------------------------------------------------------------
+
+void DuiComboBox::SetBgColor(COLORREF c)
+{
+    m_bgColor = c;
+    if (m_edit)
+    {
+        m_edit->SetBgColor(c);
+    }
+    Invalidate();
+}
+
+void DuiComboBox::SetShowBorder(bool b)
+{
+    m_showBorder = b;
+    if (m_edit)
+    {
+        m_edit->SetShowBorder(b);
+    }
+    Invalidate();
+}
+
+void DuiComboBox::SetShowArrow(bool b)
+{
+    m_showArrow = b;
+    Invalidate();
+}
+
+void DuiComboBox::SetArrowColor(COLORREF c)
+{
+    if (m_arrowColor == c)
+    {
+        return;
+    }
+    m_arrowColor = c;
+    Invalidate();
+}
 
 void DuiComboBox::SetEditable(bool b)
 {
@@ -706,6 +752,9 @@ void DuiComboBox::EnsureEditChild()
         auto e = std::unique_ptr<DuiComboEdit>(new DuiComboEdit());
         e->SetCombo(this);
         e->SetCtrlId(GetCtrlId() + 0x1000);   // sub-id offset; not used by parent
+        // Keep the embedded EDIT visually consistent with the combo body.
+        e->SetBgColor(m_bgColor);
+        e->SetShowBorder(m_showBorder);
         m_edit = e.get();
         DuiControl::AddChild(std::unique_ptr<DuiControl>(e.release()));
     }

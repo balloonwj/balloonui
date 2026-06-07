@@ -527,6 +527,154 @@ static Result Test_Grid_Desired_NoChildren()
     return MakeOK(_T("Grid_Desired_NoChildren"));
 }
 
+// ===== DuiVBox 卡片样式 ==================================================
+
+// 默认 4 个 setter 全关闭:bg/border = CLR_INVALID; radius = 0; width = 1.0。
+static Result Test_VBoxCard_Defaults()
+{
+    DuiVBox v;
+    if ((int)v.GetBgColor()     != (int)CLR_INVALID) return MakeFail(_T("VBoxCard/def_bg"),     _T("bg should default to CLR_INVALID"));
+    if ((int)v.GetBorderColor() != (int)CLR_INVALID) return MakeFail(_T("VBoxCard/def_border"), _T("border should default to CLR_INVALID"));
+    if (v.GetCornerRadius() != 0)                    return MakeFail(_T("VBoxCard/def_radius"), _T("radius should default to 0"));
+    if (v.GetBorderWidth()  != 1.0f)                 return MakeFail(_T("VBoxCard/def_width"),  _T("width should default to 1.0"));
+    return MakeOK(_T("VBoxCard_Defaults"));
+}
+
+// 4 个 setter 往返:set → getter 一致。
+static Result Test_VBoxCard_SettersRoundTrip()
+{
+    DuiVBox v;
+
+    v.SetBgColor(RGB(255, 255, 255));
+    if ((int)v.GetBgColor() != (int)RGB(255, 255, 255)) return MakeFail(_T("VBoxCard/bg"), _T("bg roundtrip"));
+    v.SetBgColor(CLR_INVALID);
+    if ((int)v.GetBgColor() != (int)CLR_INVALID) return MakeFail(_T("VBoxCard/bg_clear"), _T("bg clear"));
+
+    v.SetCornerRadius(8);
+    if (v.GetCornerRadius() != 8) return MakeFail(_T("VBoxCard/r8"), _T("radius roundtrip"));
+    v.SetCornerRadius(0);
+    if (v.GetCornerRadius() != 0) return MakeFail(_T("VBoxCard/r0"), _T("radius 0"));
+
+    v.SetBorderColor(RGB(232, 236, 240));
+    if ((int)v.GetBorderColor() != (int)RGB(232, 236, 240)) return MakeFail(_T("VBoxCard/border"), _T("border roundtrip"));
+
+    v.SetBorderWidth(2.0f);
+    if (v.GetBorderWidth() != 2.0f) return MakeFail(_T("VBoxCard/w2"), _T("width roundtrip"));
+    return MakeOK(_T("VBoxCard_SettersRoundTrip"));
+}
+
+// 负值钳零:CornerRadius / BorderWidth 都不接受负值。
+static Result Test_VBoxCard_NegativeClamp()
+{
+    DuiVBox v;
+
+    v.SetCornerRadius(-5);
+    if (v.GetCornerRadius() != 0) return MakeFail(_T("VBoxCard/r_neg"), _T("radius<0 should clamp to 0"));
+    v.SetCornerRadius(-1);
+    if (v.GetCornerRadius() != 0) return MakeFail(_T("VBoxCard/r_neg1"), _T("radius<0 should clamp to 0"));
+
+    v.SetBorderWidth(-1.5f);
+    if (v.GetBorderWidth() != 0.0f) return MakeFail(_T("VBoxCard/w_neg"), _T("width<0 should clamp to 0"));
+    v.SetBorderWidth(-0.1f);
+    if (v.GetBorderWidth() != 0.0f) return MakeFail(_T("VBoxCard/w_negSmall"), _T("width<0 should clamp to 0"));
+    return MakeOK(_T("VBoxCard_NegativeClamp"));
+}
+
+// 静态 PaintBackground 可不构造实例直接调,不依赖 DC 也能进入函数体
+// (实际不画因 hdc=nullptr 会被 GDI+ 拒绝, 我们只验"接口可达 + 不崩")。
+static Result Test_VBoxCard_PaintBackgroundCallable()
+{
+    RECT rc = { 0, 0, 100, 60 };
+    // 走默认参数 + 显式参数两条路径:
+    DuiVBox::PaintBackground(nullptr, rc, RGB(255, 255, 255), 8);
+    DuiVBox::PaintBackground(nullptr, rc, RGB(255, 255, 255), 8,
+                             RGB(232, 236, 240), 1.0f);
+    // CLR_INVALID bg + CLR_INVALID border:DuiAA 内部该跳过两者。
+    DuiVBox::PaintBackground(nullptr, rc, CLR_INVALID, 0, CLR_INVALID, 0);
+    // borderWidth <= 0 → border 应被静态 helper 视作 CLR_INVALID(等同不描边);
+    // 这里只能验"调用不崩",最终视觉效果由 DuiAA 保证。
+    DuiVBox::PaintBackground(nullptr, rc, RGB(0, 0, 0), 0, RGB(255, 0, 0), 0.0f);
+    return MakeOK(_T("VBoxCard_PaintBackgroundCallable"));
+}
+
+// 设了卡片样式不影响 Layout 行为:子控件位置 / 大小与默认 DuiVBox 一致。
+static Result Test_VBoxCard_LayoutUnchangedByStyle()
+{
+    // 基准 v0:不设任何卡片样式。
+    DuiVBox v0;
+    StubChild* a0;
+    StubChild* b0;
+    v0.AddChild(std::unique_ptr<DuiControl>(a0 = new StubChild()),
+                DuiLayout::Hint().Fixed(20));
+    v0.AddChild(std::unique_ptr<DuiControl>(b0 = new StubChild()),
+                DuiLayout::Hint().Fixed(30));
+    v0.Layout(RECT{ 0, 0, 100, 100 });
+
+    // 对照 v1:同样布局, 但加满 4 项卡片样式 setter。
+    DuiVBox v1;
+    v1.SetBgColor(RGB(255, 255, 255));
+    v1.SetCornerRadius(8);
+    v1.SetBorderColor(RGB(232, 236, 240));
+    v1.SetBorderWidth(1.0f);
+    StubChild* a1;
+    StubChild* b1;
+    v1.AddChild(std::unique_ptr<DuiControl>(a1 = new StubChild()),
+                DuiLayout::Hint().Fixed(20));
+    v1.AddChild(std::unique_ptr<DuiControl>(b1 = new StubChild()),
+                DuiLayout::Hint().Fixed(30));
+    v1.Layout(RECT{ 0, 0, 100, 100 });
+
+    // 子控件矩形必须一致:卡片样式与布局正交。
+    EXPECT_RECT(a1, a0->GetRect().left,  a0->GetRect().top,
+                    a0->GetRect().right, a0->GetRect().bottom,
+                _T("VBoxCard/layoutA"));
+    EXPECT_RECT(b1, b0->GetRect().left,  b0->GetRect().top,
+                    b0->GetRect().right, b0->GetRect().bottom,
+                _T("VBoxCard/layoutB"));
+    return MakeOK(_T("VBoxCard_LayoutUnchangedByStyle"));
+}
+
+// GetDesiredSize 不被卡片样式影响:cx/cy 与默认 DuiVBox 一致。
+static Result Test_VBoxCard_DesiredSizeUnaffected()
+{
+    DuiVBox v0;
+    StubChild* a0;
+    v0.AddChild(std::unique_ptr<DuiControl>(a0 = new StubChild()),
+                DuiLayout::Hint().Fixed(40));
+    SIZE s0 = v0.GetDesiredSize();
+
+    DuiVBox v1;
+    v1.SetBgColor(RGB(245, 246, 248));
+    v1.SetCornerRadius(8);
+    v1.SetBorderColor(RGB(232, 236, 240));
+    StubChild* a1;
+    v1.AddChild(std::unique_ptr<DuiControl>(a1 = new StubChild()),
+                DuiLayout::Hint().Fixed(40));
+    SIZE s1 = v1.GetDesiredSize();
+
+    if (s1.cx != s0.cx || s1.cy != s0.cy)
+    {
+        CString d;
+        d.Format(_T("expected (%d,%d) got (%d,%d)"),
+                 (int)s0.cx, (int)s0.cy, (int)s1.cx, (int)s1.cy);
+        return MakeFail(_T("VBoxCard/desired"), d);
+    }
+    (void)a1;
+    return MakeOK(_T("VBoxCard_DesiredSizeUnaffected"));
+}
+
+// CLR_INVALID + 显式 BorderWidth>0 的边界:静态 helper 仍然不描边。
+// 防 BorderWidth 不为 0 时, 误以为 border 会被画(CLR_INVALID 应优先生效)。
+static Result Test_VBoxCard_InvalidBorderSkipsRegardlessOfWidth()
+{
+    RECT rc = { 0, 0, 50, 50 };
+    // border = CLR_INVALID, width = 3.0 → DuiAA 应跳过描边(width 被 helper 忽略)。
+    // 视觉验证由 DuiAA 保证, 此处验"调用不崩"。
+    DuiVBox::PaintBackground(nullptr, rc, RGB(255, 255, 255), 8,
+                             CLR_INVALID, 3.0f);
+    return MakeOK(_T("VBoxCard_InvalidBorderSkipsRegardlessOfWidth"));
+}
+
 #undef EXPECT_DESIRED
 #undef EXPECT_RECT
 
@@ -564,6 +712,14 @@ CString RunAll()
         { _T("Grid_Desired_FixedCellSize"),          &Test_Grid_Desired_FixedCellSize          },
         { _T("Grid_Desired_GapPadding"),             &Test_Grid_Desired_GapPadding             },
         { _T("Grid_Desired_NoChildren"),             &Test_Grid_Desired_NoChildren             },
+        // ---- DuiVBox 卡片样式 ----
+        { _T("VBoxCard_Defaults"),                       &Test_VBoxCard_Defaults                       },
+        { _T("VBoxCard_SettersRoundTrip"),               &Test_VBoxCard_SettersRoundTrip               },
+        { _T("VBoxCard_NegativeClamp"),                  &Test_VBoxCard_NegativeClamp                  },
+        { _T("VBoxCard_PaintBackgroundCallable"),        &Test_VBoxCard_PaintBackgroundCallable        },
+        { _T("VBoxCard_LayoutUnchangedByStyle"),         &Test_VBoxCard_LayoutUnchangedByStyle         },
+        { _T("VBoxCard_DesiredSizeUnaffected"),          &Test_VBoxCard_DesiredSizeUnaffected          },
+        { _T("VBoxCard_InvalidBorderSkipsRegardlessOfWidth"),&Test_VBoxCard_InvalidBorderSkipsRegardlessOfWidth},
     };
 
     CString out;

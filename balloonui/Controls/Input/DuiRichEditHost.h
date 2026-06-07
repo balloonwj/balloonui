@@ -84,6 +84,11 @@ public:
 
     // ---- Pre-Create 配置（必须在 EnsureCreated 之前调）----
 
+    // 竖直滚动位置变化回调原型。当用户用滚轮 / 键盘等使内容滚动、首个可见
+    // 像素发生变化时,本控件回调它(供外部「悬浮滚动条」据此同步显示)。
+    //   ctx：SetOnVScrollChanged 传入的上下文(通常为宿主面板 this)。
+    typedef void (*VScrollChangedFn)(void* ctx);
+
     // 多行模式。<u>HWND 创建后再改会触发内部 HWND 销毁重建</u>。
     //   b：true（默认） = 多行；false = 单行。
     void    SetMultiLine(bool b);
@@ -169,6 +174,19 @@ public:
     void    Copy();
     void    Paste();
     void    Clear();
+
+    // ---- 右键菜单 ----
+    //
+    // 默认：右键 / 键盘菜单键 弹 balloonui 自绘菜单（DuiMenu）取代 RichEdit
+    // 原生菜单：
+    //   · 读写：剪切 / 复制 / 粘贴 /（分隔条）/ 全选；
+    //   · 只读：复制 /（分隔条）/ 全选。
+    // 各项按选区 / 剪贴板 / 文本量自动灰显（规则见 EditContextMenu.h）。粘贴
+    // 沿用 SetPasteAsPlainTextDefault 的设定。实现复用已有的子 HWND 子类过程
+    // （ScrollSubclassProc）拦 WM_CONTEXTMENU。
+    //   b：true（默认）= 自绘菜单；false = 退回原生菜单。
+    void    SetContextMenuEnabled(bool b);
+    bool    IsContextMenuEnabled() const { return m_contextMenuEnabled; }
 
     // ---- 字符格式（操作当前选区）----
 
@@ -271,6 +289,17 @@ public:
     void    OnPaint(HDC hdc, const RECT& rcDirty) override;
     bool    OnSetCursor(POINT pt) override;
 
+    // 滚轮:多行模式下滚动内容。DUI 宿主按鼠标位置把滚轮派发给最顶层命中的
+    // 控件(不冒泡),正文这类寄宿 HWND 命中的就是本控件,故必须由本控件自己
+    // 处理滚轮才能滚动。滚动后若注册了 VScrollChangedFn 则回调通知(供外部
+    // 悬浮滚动条同步)。
+    //   pt：鼠标位置(host-client 坐标,本控件未使用);
+    //   zDelta：滚轮增量(WHEEL_DELTA 的整数倍,正值向上滚);
+    //   mkFlags：按键修饰(本控件未使用)。
+    //   返回:true = 已消费(多行且内容溢出);false = 未消费(单行 / 内容放得下,
+    //         交由宿主另作处理)。
+    bool    OnMouseWheel(POINT pt, short zDelta, UINT mkFlags) override;
+
     // ---- HwndHostControl 覆写（接 child HWND 通知）----
     void    OnHwndCommand(UINT enCode) override;
     LRESULT OnHwndNotify (NMHDR* pnmh) override;
@@ -279,10 +308,74 @@ public:
     void    Test_SetTextDirect(LPCTSTR sz)  { m_cachedText = sz ? sz : _T(""); }
     CString Test_GetCachedText() const      { return m_cachedText; }
     void    Test_SetFocused(bool b)         { m_bFocused = b; }
+    bool    Test_IsContextMenuEnabled() const { return m_contextMenuEnabled; }
 
     // 老 CSkinRichEdit 的资源 setter 空 stub，迁移期占位用。
     void    SetBgPic     (LPCTSTR /*p*/) {}
     void    SetTransparent(BOOL /*b*/, HDC /*hBgDC*/ = nullptr) {}
+
+    // ---- 边框开关 ----
+    //
+    // 设置 / 读取是否在 OnPaint 里绘制 1px 外边框(BorderColor() 决定颜色)。
+    //   b: true(默认,与历史一致) = 画边框,RichEdit 表现为典型"输入框"
+    //      外观;false = 跳过 Rectangle 绘制,让 RichEdit 与父容器卡片底完全
+    //      融合,适用于"卡片内嵌一段只读多行可选文本"这类不希望出现输入框
+    //      外观的场景(如 flamingoAdmin 公告详情的标题 / 正文)。
+    //   只影响视觉外边框,RichEdit 自身行为(滚动 / 选区 / 输入)不变。
+    void    SetShowBorder(bool b);
+    bool    IsShowBorder() const { return m_showBorder; }
+
+    // ---- 垂直滚动条槽位开关 ----
+    //
+    // 设置 / 读取是否在多行模式下保留垂直滚动条槽位(WS_VSCROLL 风格)。
+    //   b: true(默认,与历史一致) = 加 WS_VSCROLL 风格,RichEdit 永远预留
+    //      ~17px 的右侧滚动条空间,内容溢出时自动出现可拖动滚动条;
+    //      false = 不加 WS_VSCROLL,RichEdit 没有滚动条槽,内容铺满全宽。
+    //      适用于"外层容器已经管滚动 + 自己高度被父布局算到足够装下全部
+    //      内容"的场景(如公告详情把 RichEdit 嵌进 OverlayScrollbar 接管的
+    //      预览区),不希望右侧出现内嵌滚动条占空间。
+    //   ES_AUTOVSCROLL 行为标志不动 —— RichEdit 内部仍可滚动(键盘 / 滚轮),
+    //   只是不显示滚动条。
+    //   注意:HWND 创建后再改会触发内部 HWND 销毁重建(WS_VSCROLL 是 baked-in
+    //   风格位,跟 SetMultiLine / SetWordWrap 同性质)。
+    void    SetShowVScroll(bool b);
+    bool    IsShowVScroll() const { return m_showVScroll; }
+
+    // ---- 外部悬浮滚动条接入(竖直)----
+    //
+    // 用途:当调用方关掉原生滚动条(SetShowVScroll(false))、改用自绘的悬浮
+    // 滚动条(如 flamingoAdmin 的 OverlayScrollbar)时,需要:① 在内容因滚轮 /
+    // 键盘滚动而位置变化时收到通知,② 查询滚动度量以驱动悬浮条,③ 反向把
+    // 悬浮条的拖动结果写回本控件。下面三个接口正是为此提供。
+    //
+    // 注册竖直滚动位置变化回调。HWND 未建时仅缓存,建好后由内部子类化的窗口
+    // 过程在滚轮 / 键盘 / 翻页导致首个可见位置变化时回调。
+    //   fn：回调函数指针(nullptr 注销);ctx：回调上下文(本控件不持有所有权)。
+    void    SetOnVScrollChanged(VScrollChangedFn fn, void* ctx);
+
+    // 查询竖直滚动度量(均为像素;HWND 未建时三者全置 0)。
+    //   contentH：内容总高度(所有行铺开的像素高);
+    //   scrollPos：当前已向下滚动的像素偏移(0 = 顶部);
+    //   viewH：可视区像素高度(约等于控件客户区高)。
+    //   三个参数均为出参(引用)。
+    void    GetVScrollMetrics(int& contentH, int& scrollPos, int& viewH) const;
+
+    // 把内容竖直滚动到指定像素偏移(自动夹取到 [0, contentH-viewH])。
+    //   pixelPos：目标像素偏移(0 = 顶部)。HWND 未建时为空操作。
+    void    SetVScrollPos(int pixelPos);
+
+    // ---- 默认字体覆盖 ----
+    //
+    // 用调用方持有的 HFONT 覆盖 RichEdit 的默认字体。
+    //   font: 调用方持有所有权的 HFONT(本控件不持有、不 Delete);
+    //         nullptr = 退回到 DuiResMgr::Inst().GetDefaultFont() 默认值,
+    //         与 SetDefaultFontFromHFONT 未被调过的初始状态一致。
+    //   行为:HWND 已建则立即 WM_SETFONT(redraw=true) 让现有文字与未来输入
+    //   都按新字体重排;未建则只缓存 m_defaultFont,EnsureCreated 时一并应用。
+    //   典型用法:让公告详情的标题用 17pt 半粗、正文用 10pt 普通字体
+    //   (admin 业务字号),而不是 RichEdit 系统默认。
+    void    SetDefaultFontFromHFONT(HFONT font);
+    HFONT   GetDefaultFontOverride() const { return m_defaultFont; }
 
 private:
     COLORREF BorderColor() const;
@@ -290,6 +383,32 @@ private:
     void     ApplyDefaultCharFormat();
     void     ApplySelectionCharFormatFlag(DWORD mask, DWORD effects, bool on);
     void     ApplySelectionTextColor(COLORREF cr);
+
+    int      LineHeightPx() const;      // 单行像素高(取默认字体 TEXTMETRIC)
+    int      FirstVisibleLine() const;  // EM_GETFIRSTVISIBLELINE(无 HWND 返回 0)
+
+    // 按滚轮增量滚动内容(多行且溢出时按行滚动并回调 m_onVScroll)。被 DUI 层
+    // OnMouseWheel 与子窗口子类过程的 WM_MOUSEWHEEL 分支共用。
+    //   zDelta：WHEEL_DELTA 的整数倍,正值向上滚。
+    //   返回:true = 已滚动(消费);false = 单行 / 内容放得下 / 无 HWND(未消费)。
+    bool     ScrollByWheelDelta(short zDelta);
+
+    // 子窗口子类过程:滚轮消息默认发给鼠标下的窗口 —— 正文是真子窗口,滚轮
+    // 多数情况下直达它而非 DUI 宿主,故必须在子窗口层拦 WM_MOUSEWHEEL 主动滚。
+    // 在 EnsureCreated 里挂、析构与重建前摘。
+    static LRESULT CALLBACK ScrollSubclassProc(HWND hwnd, UINT msg,
+                                               WPARAM wParam, LPARAM lParam,
+                                               UINT_PTR uIdSubclass,
+                                               DWORD_PTR dwRefData);
+    void     InstallScrollSubclass();   // 给当前子 HWND 挂滚动子类过程(幂等)
+    void     RemoveScrollSubclass();    // 摘掉滚动子类过程(幂等)
+
+    // 收到 WM_CONTEXTMENU 时(由 ScrollSubclassProc 分发):读自身状态 →
+    // BuildEditContextMenu → 弹 DuiMenu → 执行被选项。
+    //   screenPt：菜单弹出位置(屏幕坐标;键盘触发时由 ScrollSubclassProc 算好)。
+    //   返回:true = 已弹自绘菜单(消费消息、压掉原生菜单);false = 未处理
+    //         (交回默认过程,例如 HWND 无效 / 菜单特性被裁掉)。
+    bool     ShowContextMenu(POINT screenPt);
 
 private:
     bool        m_multiLine     = true;     // RichEdit 默认就是 multi-line 用法
@@ -307,6 +426,14 @@ private:
     int         m_marginL = 4, m_marginT = 2, m_marginR = 4, m_marginB = 2;
     UINT        m_ctrlIdHwnd = 0;
     bool        m_pastePlain = false;     // 把 WM_PASTE 路由到 PasteAsPlainText
+    bool        m_showBorder = true;      // 是否画 1px 外边框;默认 true 维持历史外观
+    bool        m_showVScroll = true;     // 多行下是否预留 WS_VSCROLL 槽;默认 true 维持历史外观
+    HFONT       m_defaultFont = nullptr;  // 覆盖 RichEdit 默认字体;nullptr = 走 DuiResMgr 默认;不持有所有权
+
+    VScrollChangedFn m_onVScroll    = nullptr;  // 竖直滚动位置变化回调;nullptr = 不通知
+    void*            m_onVScrollCtx = nullptr;  // 上述回调上下文(本控件不持有所有权)
+    bool             m_scrollSubclassed = false;// 是否已给子 HWND 挂滚动子类过程
+    bool             m_contextMenuEnabled = true;// 是否用 balloonui 自绘右键菜单(默认开)
 };
 
 } // namespace balloonwjui

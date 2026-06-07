@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "DuiLayout.h"
+#include "../../DuiPaintAA.h"   // DuiVBox 卡片样式走 DuiAA::FillRoundRect
 
 namespace balloonwjui {
 
@@ -11,6 +12,12 @@ void DuiLayout::SetPadding(int l, int t, int r, int b)
     m_padT = t;
     m_padR = r;
     m_padB = b;
+    // Layout 体内调到本函数时,m_layouting=true,跳过自我重排;让本次正在
+    // 进行的 Layout 自己收尾,避免无限递归(详见 DuiLayout::LayoutGuard 注释)。
+    if (m_layouting)
+    {
+        return;
+    }
     Layout(m_rcItem);
     Invalidate();
 }
@@ -18,6 +25,11 @@ void DuiLayout::SetPadding(int l, int t, int r, int b)
 void DuiLayout::SetGap(int gap)
 {
     m_gap = gap;
+    // 同 SetPadding:Layout 进行中只更新数据,不再二次触发 Layout/Invalidate。
+    if (m_layouting)
+    {
+        return;
+    }
     Layout(m_rcItem);
     Invalidate();
 }
@@ -53,12 +65,24 @@ void DuiLayout::SetHint(DuiControl* child, const Hint& hint)
         if (kv.first == child)
         {
             kv.second = hint;
+            // Layout 体内常见模式:override Layout 的子类按可用宽度算完
+            // titleEdit / bodyEdit 应有高度,SetHint 写回。若此处再调
+            // Layout(m_rcItem) 会立刻再次进入子类的 Layout,无限递归。
+            // 由 LayoutGuard 在子类 Layout 体首行置 m_layouting=true 拦截。
+            if (m_layouting)
+            {
+                return;
+            }
             Layout(m_rcItem);
             Invalidate();
             return;
         }
     }
     m_hints.push_back({child, hint});
+    if (m_layouting)
+    {
+        return;
+    }
     Layout(m_rcItem);
     Invalidate();
 }
@@ -130,6 +154,10 @@ RECT DuiLayout::ApplyHint(const RECT& cell, const Hint& h, bool mainIsHorizontal
 
 void DuiHBox::Layout(const RECT& rcAvail)
 {
+    // 自递归护栏:期间若有 SetHint / SetPadding / SetGap 调用,只更新数据,
+    // 不再二次触发 Layout / Invalidate(见 DuiLayout::LayoutGuard 注释)。
+    LayoutGuard layoutGuard(*this);
+
     m_rcItem = rcAvail;
 
     RECT inner = { rcAvail.left + m_padL,
@@ -244,6 +272,9 @@ SIZE DuiHBox::GetDesiredSize() const
 
 void DuiVBox::Layout(const RECT& rcAvail)
 {
+    // 自递归护栏:见 DuiHBox::Layout 同名注释。
+    LayoutGuard layoutGuard(*this);
+
     m_rcItem = rcAvail;
 
     RECT inner = { rcAvail.left + m_padL,
@@ -352,6 +383,87 @@ SIZE DuiVBox::GetDesiredSize() const
     return s;
 }
 
+// ---- 卡片样式 setter / OnPaint / 静态 helper ----
+
+void DuiVBox::SetBgColor(COLORREF c)
+{
+    if (m_bgColor == c)
+    {
+        return;
+    }
+    m_bgColor = c;
+    Invalidate();
+}
+
+void DuiVBox::SetCornerRadius(int px)
+{
+    // 防御性钳:负值视作 0(直角)。DuiAA::FillRoundRect 内部还会再夹到 min(w,h)/2。
+    if (px < 0)
+    {
+        px = 0;
+    }
+    if (m_cornerRadius == px)
+    {
+        return;
+    }
+    m_cornerRadius = px;
+    Invalidate();
+}
+
+void DuiVBox::SetBorderColor(COLORREF c)
+{
+    if (m_borderColor == c)
+    {
+        return;
+    }
+    m_borderColor = c;
+    Invalidate();
+}
+
+void DuiVBox::SetBorderWidth(float w)
+{
+    // 防御性钳:负值视作 0(等同不描边,与 DuiAA::FillRoundRect 一致)。
+    if (w < 0.0f)
+    {
+        w = 0.0f;
+    }
+    if (m_borderWidth == w)
+    {
+        return;
+    }
+    m_borderWidth = w;
+    Invalidate();
+}
+
+void DuiVBox::OnPaint(HDC hdc, const RECT& rcDirty)
+{
+    if (!m_bVisible)
+    {
+        return;
+    }
+    // 卡片样式:只要 bg 或 border 任一非 CLR_INVALID, 就走 PaintBackground。
+    // 全 CLR_INVALID(默认)→ 跳过装饰, 与历史行为一致。
+    if (m_bgColor != CLR_INVALID || m_borderColor != CLR_INVALID)
+    {
+        PaintBackground(hdc, m_rcItem, m_bgColor, m_cornerRadius,
+                        m_borderColor, m_borderWidth);
+    }
+    // 装饰画完后, 调基类继续画子控件。
+    DuiControl::OnPaint(hdc, rcDirty);
+}
+
+void DuiVBox::PaintBackground(HDC hdc, const RECT& rc, COLORREF bg, int radius,
+                              COLORREF border, float borderWidth)
+{
+    // borderWidth <= 0 视作不描边, 防御性传 CLR_INVALID 给 DuiAA。
+    // 这样调用方 SetBorderWidth(0) 与 SetBorderColor(CLR_INVALID) 等效。
+    if (borderWidth <= 0.0f)
+    {
+        border = CLR_INVALID;
+    }
+    DuiAA::FillRoundRect(hdc, rc, bg, radius, border, borderWidth);
+}
+
 // ===== DuiGrid ============================================================
 
 void DuiGrid::SetGrid(int rows, int cols)
@@ -372,6 +484,9 @@ void DuiGrid::SetGrid(int rows, int cols)
 
 void DuiGrid::Layout(const RECT& rcAvail)
 {
+    // 自递归护栏:见 DuiHBox::Layout 同名注释。
+    LayoutGuard layoutGuard(*this);
+
     m_rcItem = rcAvail;
 
     RECT inner = { rcAvail.left + m_padL,

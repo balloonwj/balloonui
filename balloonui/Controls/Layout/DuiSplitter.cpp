@@ -166,6 +166,25 @@ RECT DuiSplitter::GetBarRect() const
 bool DuiSplitter::IsPointInBar(POINT pt) const
 {
     RECT bar = GetBarRect();
+    // 拖拽命中热区下限 —— 分隔条视觉可以很细（甚至 1px 当作边框线用），
+    // 但若命中区也只有 1px 几乎抓不住。视觉厚度不足 kMinGrabPx 时，以
+    // 分隔条为中心向两侧把命中矩形补足到 kMinGrabPx，方便用户抓取。
+    // 仅影响命中测试，OnPaint 仍按真实 m_barThick 画细线。
+    const int kMinGrabPx = 7;
+    if (m_barThick < kMinGrabPx)
+    {
+        int pad = (kMinGrabPx - m_barThick + 1) / 2;
+        if (m_orient == Vertical)
+        {
+            bar.left  -= pad;
+            bar.right += pad;
+        }
+        else
+        {
+            bar.top    -= pad;
+            bar.bottom += pad;
+        }
+    }
     return ::PtInRect(&bar, pt) != FALSE;
 }
 
@@ -244,36 +263,42 @@ void DuiSplitter::OnPaint(HDC hdc, const RECT& rcDirty)
     ::FillRect(hdc, &inter, hbrFill);
     ::DeleteObject(hbrFill);
 
-    HBRUSH hbrDot = ::CreateSolidBrush(RGB(170, 170, 175));
-    POINT mid = {
-        (bar.left + bar.right ) / 2,
-        (bar.top  + bar.bottom) / 2
-    };
-    if (m_orient == Vertical)
+    // 抓手圆点仅在分隔条够粗时画 —— 细条（如 1px 当边框线用）画点只会
+    // 被裁成噪点，反而破坏"一条干净细线"的观感。
+    const int kMinThicknessForDots = 4;
+    if (m_barThick >= kMinThicknessForDots)
     {
-        for (int dy : { -10, 0, 10 })
+        HBRUSH hbrDot = ::CreateSolidBrush(RGB(170, 170, 175));
+        POINT mid = {
+            (bar.left + bar.right ) / 2,
+            (bar.top  + bar.bottom) / 2
+        };
+        if (m_orient == Vertical)
         {
-            RECT d = { mid.x - 1, mid.y + dy - 1, mid.x + 1, mid.y + dy + 1 };
-            RECT clipped;
-            if (::IntersectRect(&clipped, &d, &inter))
+            for (int dy : { -10, 0, 10 })
             {
-                ::FillRect(hdc, &clipped, hbrDot);
+                RECT d = { mid.x - 1, mid.y + dy - 1, mid.x + 1, mid.y + dy + 1 };
+                RECT clipped;
+                if (::IntersectRect(&clipped, &d, &inter))
+                {
+                    ::FillRect(hdc, &clipped, hbrDot);
+                }
             }
         }
-    }
-    else
-    {
-        for (int dx : { -10, 0, 10 })
+        else
         {
-            RECT d = { mid.x + dx - 1, mid.y - 1, mid.x + dx + 1, mid.y + 1 };
-            RECT clipped;
-            if (::IntersectRect(&clipped, &d, &inter))
+            for (int dx : { -10, 0, 10 })
             {
-                ::FillRect(hdc, &clipped, hbrDot);
+                RECT d = { mid.x + dx - 1, mid.y - 1, mid.x + dx + 1, mid.y + 1 };
+                RECT clipped;
+                if (::IntersectRect(&clipped, &d, &inter))
+                {
+                    ::FillRect(hdc, &clipped, hbrDot);
+                }
             }
         }
+        ::DeleteObject(hbrDot);
     }
-    ::DeleteObject(hbrDot);
 }
 
 bool DuiSplitter::OnLButtonDown(POINT pt, UINT /*mkFlags*/)

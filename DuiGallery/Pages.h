@@ -1,9 +1,11 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <vector>
 #include <atlstr.h>
 #include "DuiControl.h"
+#include "DuiNotify.h"
 
 // Each Build_* function returns a fully-built page (a vertical box that
 // stacks header + description labels + variant rows). Pages are rebuilt
@@ -34,6 +36,8 @@ void RegisterCapture(LPCTSTR name, balloonwjui::DuiControl* anchor);
 std::unique_ptr<balloonwjui::DuiControl> Build_Button     ();
 std::unique_ptr<balloonwjui::DuiControl> Build_Avatar     ();
 std::unique_ptr<balloonwjui::DuiControl> Build_Label      ();
+std::unique_ptr<balloonwjui::DuiControl> Build_Badge      ();
+std::unique_ptr<balloonwjui::DuiControl> Build_Toast      ();
 std::unique_ptr<balloonwjui::DuiControl> Build_Edit       ();
 std::unique_ptr<balloonwjui::DuiControl> Build_RichEdit   ();
 std::unique_ptr<balloonwjui::DuiControl> Build_ComboBox   ();
@@ -64,5 +68,11 @@ std::unique_ptr<balloonwjui::DuiControl> Build_Layouts();
 // Page metadata for the tab bar.
 struct PageInfo { LPCTSTR title; std::unique_ptr<balloonwjui::DuiControl> (*build)(); };
 const PageInfo* GetPages(int& outCount);
+
+// 当前页注册的全 WM_DUI_NOTIFY 钩子。某些 demo（如 TreeView 的 A5
+// hover 演示）需要监听控件 notify 来实时更新自己的 label / 状态。每次
+// Build_* 时按需注册 / 清空；GalleryFrame::OnDuiNotify 在分发 tab 切页
+// 之后转发给本钩子。空 = 无 demo 需要监听（默认）。
+extern std::function<void(const balloonwjui::DuiNotify*)> g_pageNotifyHook;
 
 } // namespace Pages

@@ -67,9 +67,10 @@ void DuiTabPage::SetHeaderHeight(int px)
     Invalidate();
 }
 
-int DuiTabPage::AddPage(LPCTSTR title, std::unique_ptr<DuiControl> page)
+int DuiTabPage::AddPage(LPCTSTR title, std::unique_ptr<DuiControl> page, HBITMAP icon)
 {
-    int idx = m_header->AddTab(title);
+    int idx = m_header->AddTab(title, /*closeable=*/false, /*dropdown=*/false,
+                               /*lParam=*/0, icon);
 
     DuiControl* raw = nullptr;
     if (page)
@@ -166,6 +167,46 @@ void DuiTabPage::SetPageTitle(int index, LPCTSTR title)
 CString DuiTabPage::GetPageTitle(int index) const
 {
     return m_header->GetTabText(index);
+}
+
+void DuiTabPage::SetPageIcon(int index, HBITMAP hBmp)
+{
+    m_header->SetTabIcon(index, hBmp);
+}
+
+HBITMAP DuiTabPage::GetPageIcon(int index) const
+{
+    return m_header->GetTabIcon(index);
+}
+
+void DuiTabPage::SetIconSize(int px)
+{
+    m_header->SetIconSize(px);
+}
+
+int DuiTabPage::GetIconSize() const
+{
+    return m_header->GetIconSize();
+}
+
+void DuiTabPage::SetIconGap(int px)
+{
+    m_header->SetIconGap(px);
+}
+
+int DuiTabPage::GetIconGap() const
+{
+    return m_header->GetIconGap();
+}
+
+void DuiTabPage::SetAutoFitTabWidth(bool b)
+{
+    m_header->SetAutoFitTabWidth(b);
+}
+
+bool DuiTabPage::GetAutoFitTabWidth() const
+{
+    return m_header->GetAutoFitTabWidth();
 }
 
 void DuiTabPage::SetCurSel(int index, bool notify)

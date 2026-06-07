@@ -244,6 +244,35 @@ public:
     void    SetMinSize(int w, int h);
     SIZE    GetMinSize() const { return SIZE{ m_minW, m_minH }; }
 
+    // 设置 / 读取最大窗口跟踪尺寸（px）。OS 拖大到此值后挡住。
+    //   w / h：0 = 不限（默认）；>= 1 会被 OS clamp 到屏幕 work area。
+    //   若同时 SetMaxSize 与 SetMinSize 设了相同值，等同于"固定尺寸"
+    //   （但 resize 边缘 hit-test 仍激活；要彻底禁拖再 SetResizable(false)）。
+    void    SetMaxSize(int w, int h);
+    SIZE    GetMaxSize() const { return SIZE{ m_maxW, m_maxH }; }
+
+    // ---- 标题栏自定义图标按钮 ----
+    //
+    // 在标题栏 close 按钮左侧依次插入可点击图标（VS Code / Chrome 右上角
+    // "设置 / 帮助 / 通知"风格）。每个 caption icon 占一个标准按钮宽
+    // （kCaptionBtnW），hover 同三按钮浅灰风格，点击发
+    // DUIFW_CAPTION_ICON_CLICK 通知（extra = 添加时返回的 captionId）。
+    // 业务侧识别用 code + extra，与 ctrlId 无关。
+    //
+    // HBITMAP 所有权由 caller 持有（控件只存裸指针），相同位图可被多个
+    // caption icon 共享。建议位图源至少 16x16，PaintBlt HALFTONE 缩放到 16x16
+    // 居中绘。
+    //
+    //   icon：HBITMAP，不可为 nullptr（nullptr 则不添加、返回 0）。
+    //   tooltip：可选，非空时自动 DuiToolTipMgr::Register 该图标；析构 / 移除时 Unregister。
+    //   返回：本图标的 captionId（>= 1 单调递增）；后续 Remove 用它，
+    //         click notify 的 extra 也是它。
+    int     AddCaptionIcon(HBITMAP icon, LPCTSTR tooltip = nullptr);
+    // 按 AddCaptionIcon 返回的 captionId 移除该图标；找不到 id 静默忽略。
+    void    RemoveCaptionIcon(int captionId);
+    // 清空所有 caption icons。
+    void    ClearCaptionIcons();
+
     // ---- 客户区 ----
 
     // 安装 / 替换客户区根控件。frame 内部已经预留了标题栏 slot，
@@ -303,7 +332,22 @@ public:
                                              int borderX,
                                              int borderY);
 
+    // ---- notify codes ----
+    enum NotifyCode
+    {
+        // 标题栏自定义图标按钮被点击；extra = AddCaptionIcon 返回的 captionId。
+        // ctrlId 是 frame 内部 caption button 的 ctrlId（业务一般不关心，
+        // 用 code + extra 完成识别即可）。
+        DUIFW_CAPTION_ICON_CLICK = DUIN_CUSTOM + 1,
+    };
+
     BEGIN_MSG_MAP(DuiFrameWindow)
+        // WM_DESTROY 必须放在 CHAIN_MSG_MAP(DuiHost) 之前 —— 先清掉本类
+        // 持有的 m_titleBar / m_skeleton / m_clientContent 三个裸指针
+        // （它们指向 DuiHost 的 m_root 所拥有的子控件），再让 chain 把消息
+        // 交给 DuiHost::OnDestroy 释放 m_root，避免下一次 Create + SetTitle
+        // 时这几个裸指针变成悬空指针被解引用（参 OnFrameDestroyMsg 注释）。
+        MESSAGE_HANDLER(WM_DESTROY,    OnFrameDestroyMsg)
         MESSAGE_HANDLER(WM_NCCALCSIZE, OnNcCalcSize)
         MESSAGE_HANDLER(WM_NCHITTEST,  OnNcHitTestMsg)
         MSG_WM_GETMINMAXINFO(OnGetMinMaxInfo)
@@ -318,6 +362,12 @@ protected:
     void    OnGetMinMaxInfo(LPMINMAXINFO mmi);
     LRESULT OnSizeMsg     (UINT, WPARAM, LPARAM, BOOL& bHandled);
     LRESULT OnDuiChildNotify(UINT, WPARAM, LPARAM, BOOL& bHandled);
+    // WM_DESTROY raw handler：把派生类持有的、指向 DuiHost 子控件的
+    // 三个裸指针置为 nullptr，然后 bHandled=FALSE 让消息继续 chain 到
+    // DuiHost::OnDestroy 释放 m_root。这保证窗口对象在 DestroyWindow
+    // 之后被复用（如 CMainDlg::m_LoginDlg 反复 DoModal）时再调
+    // SetTitle / SetIcon / SetButtons 等不会触碰悬空指针。
+    LRESULT OnFrameDestroyMsg(UINT, WPARAM, LPARAM, BOOL& bHandled);
 
 private:
     void    BuildSkeleton();      // builds title bar + content slot (one-time)
@@ -339,6 +389,9 @@ private:
     bool     m_resizable = true;
     int      m_minW      = 200;
     int      m_minH      = 150;
+    int      m_maxW      = 0;          // 0 = 不限
+    int      m_maxH      = 0;          // 0 = 不限
+    int      m_nextCaptionIconId = 1;  // 单调递增的 caption icon id
     bool     m_titleTransparent = false;
     COLORREF m_titleTextColor   = RGB(40, 40, 40);
     COLORREF m_captionGlyphOverride = CLR_INVALID;

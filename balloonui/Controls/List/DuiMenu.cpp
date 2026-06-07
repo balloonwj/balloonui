@@ -165,6 +165,17 @@ private:
         {
             return;
         }
+
+        // 先用菜单底色铺满整个客户区，再画各行内容。OnPaint 不能依赖
+        // OnEraseBkgnd 铺底：hover 变化是用 Invalidate(FALSE) 触发的（不发
+        // WM_ERASEBKGND），若这里不自铺底，上一次 hover 行的背景与文字会残留，
+        // 造成 hover 背景清不掉、文字重影。
+        CRect rcClient;
+        GetClientRect(&rcClient);
+        HBRUSH bgBrush = ::CreateSolidBrush(kClrBg);
+        ::FillRect(dc, &rcClient, bgBrush);
+        ::DeleteObject(bgBrush);
+
         const auto& items = m_menu->GetItems();
 
         HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
@@ -973,6 +984,57 @@ CImageEx* DuiMenu::GetItemIcon(UINT nID) const
 {
     int i = FindIndexById(nID);
     return (i >= 0) ? m_items[i].icon : nullptr;
+}
+
+SIZE DuiMenu::MeasureSize() const
+{
+    // 与 DuiMenuPopup::MeasureBody 完全同口径，单独抽出供"弹出前定位"使用。
+    // 两处共用本文件作用域的 kRowH / kSepRowH / kIconColW 等常量，改一处即同步。
+    SIZE sz = { 0, 0 };
+
+    // 空菜单没有可显示内容，直接返回 {0,0}（也不会被 TrackPopup 弹出）。
+    if (m_items.empty())
+    {
+        return sz;
+    }
+
+    // ---- 宽：取最宽一项文字（用默认菜单字体测量），夹在 [kMinTextW, kMaxTextW] ----
+    HDC   hdc     = ::GetDC(nullptr);
+    HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+    HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
+    int   textMax = kMinTextW;
+    for (size_t i = 0; i < m_items.size(); ++i)
+    {
+        if (m_items[i].kind == ItemSeparator)
+        {
+            continue;
+        }
+        SIZE ts = { 0, 0 };
+        ::GetTextExtentPoint32(hdc, m_items[i].text, m_items[i].text.GetLength(), &ts);
+        if (ts.cx > textMax)
+        {
+            textMax = ts.cx;
+        }
+    }
+    if (oldFont)
+    {
+        ::SelectObject(hdc, oldFont);
+    }
+    ::ReleaseDC(nullptr, hdc);
+    if (textMax > kMaxTextW)
+    {
+        textMax = kMaxTextW;
+    }
+    sz.cx = kIconColW + kTextPadL + textMax + kTextPadR + kArrowColW;
+
+    // ---- 高：各行高度之和（分隔条 kSepRowH，其余 kRowH）----
+    int totalH = 0;
+    for (size_t i = 0; i < m_items.size(); ++i)
+    {
+        totalH += (m_items[i].kind == ItemSeparator) ? kSepRowH : kRowH;
+    }
+    sz.cy = totalH;
+    return sz;
 }
 
 void DuiMenu::Clear()

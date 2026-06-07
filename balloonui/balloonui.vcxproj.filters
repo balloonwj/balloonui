@@ -83,6 +83,8 @@
     <ClCompile Include="Controls\Basic\DuiButton.cpp">     <Filter>Controls\Basic</Filter></ClCompile>
     <ClInclude Include="Controls\Basic\DuiBadge.h">        <Filter>Controls\Basic</Filter></ClInclude>
     <ClCompile Include="Controls\Basic\DuiBadge.cpp">      <Filter>Controls\Basic</Filter></ClCompile>
+    <ClInclude Include="Controls\Basic\DuiToast.h">        <Filter>Controls\Basic</Filter></ClInclude>
+    <ClCompile Include="Controls\Basic\DuiToast.cpp">      <Filter>Controls\Basic</Filter></ClCompile>
     <ClInclude Include="Controls\Basic\DuiAvatar.h">       <Filter>Controls\Basic</Filter></ClInclude>
     <ClCompile Include="Controls\Basic\DuiAvatar.cpp">     <Filter>Controls\Basic</Filter></ClCompile>
     <ClInclude Include="Controls\Basic\DuiSeparator.h">    <Filter>Controls\Basic</Filter></ClInclude>
@@ -93,6 +95,7 @@
     <!-- ============== Controls / Input ============== -->
     <ClInclude Include="Controls\Input\DuiEditHost.h">     <Filter>Controls\Input</Filter></ClInclude>
     <ClCompile Include="Controls\Input\DuiEditHost.cpp">   <Filter>Controls\Input</Filter></ClCompile>
+    <ClInclude Include="Controls\Input\EditContextMenu.h"> <Filter>Controls\Input</Filter></ClInclude>
     <ClInclude Include="Controls\Input\DuiRichEditHost.h"> <Filter>Controls\Input</Filter></ClInclude>
     <ClCompile Include="Controls\Input\DuiRichEditHost.cpp"><Filter>Controls\Input</Filter></ClCompile>
     <ClInclude Include="Controls\Input\DuiSearchBox.h">    <Filter>Controls\Input</Filter></ClInclude>

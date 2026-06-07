@@ -2,6 +2,7 @@
 
 #include "SkinManager.h"
 #include "BalloonUiApi.h"
+#include <map>
 
 class CImageEx;
 
@@ -16,6 +17,9 @@ namespace balloonwjui {
 //      单例，方便测试时 mock，也让迁移期"refcount 在 DUI 这一侧管控"。
 //   2) 默认 UI 字体：进程级共享的 HFONT —— Microsoft YaHei 9pt
 //      (GB2312)，懒构造、跟随 DPI 变化重建。
+//   3) 按 (pt, bold) 缓存的 UI 字体：GetFontByPointSize 给控件
+//      （DuiButton::SetTextPointSize 等）提供"指定字号"字体，避免每次
+//      ::CreateFont 句柄泄漏；缓存按 DPI 变化整体清空、惰性重建。
 //
 // 工作机制：
 //   · 单例，Inst() 拿。
@@ -57,6 +61,21 @@ public:
     // 进程退出时统一释放。<u>不要</u> DeleteObject。
     HFONT       GetDefaultFont();
 
+    // 取按 (pt, bold) 缓存的字体（Microsoft YaHei，DPI-aware）。
+    //   pt：磅值（点字号），如 9 / 11 / 14。pt <= 0 → 返回默认字体。
+    //   bold：true 用 FW_BOLD；false（默认）用 FW_NORMAL。
+    // 同一 (pt, bold) 多次调用返回同一 HFONT；缓存随 SetDpi 整体清空、
+    // 下次访问惰性重建。<u>不要</u> DeleteObject —— 所有权在 manager。
+    // 用途：业务控件需要"非 9pt"字体时调，避免业务侧自管 ::CreateFont
+    // 句柄泄漏；典型 caller：DuiButton::SetTextPointSize 内部。
+    HFONT       GetFontByPointSize(int pt, bool bold = false);
+
+    // 取按 (pt, bold) 缓存的字体，但走 ANTIALIASED_QUALITY(灰度 AA)
+    // 而非 ClearType。用于走 PARGB + AlphaBlend 合成的控件(如 DuiToast)
+    // —— ClearType 字体在透明合成时会有"子像素错位重影"。
+    // 同 GetFontByPointSize:DPI-aware, 缓存, SetDpi 清空, 不要 DeleteObject。
+    HFONT       GetAntiAliasedFontByPointSize(int pt, bool bold = false);
+
     // 设置当前 DPI。manager 据此重建默认字体。host 在 WM_DPICHANGED
     // 时调；caller 业务一般不调。
     void        SetDpi(int dpi);
@@ -71,6 +90,12 @@ private:
 private:
     HFONT       m_hDefaultFont = nullptr;
     int         m_dpi          = 0;       // 0 = 首次构建时取系统 DPI
+
+    // (pt, bold) → HFONT 缓存。key = (pt << 1) | (bold ? 1 : 0);
+    // SetDpi 时整张表清空、惰性重建,与 m_hDefaultFont 同生命周期管理。
+    std::map<int, HFONT> m_fontCache;
+    // 同 m_fontCache 但走 ANTIALIASED_QUALITY, 服务 PARGB 合成场景。
+    std::map<int, HFONT> m_aaFontCache;
 };
 
 } // namespace balloonwjui

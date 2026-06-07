@@ -51,6 +51,22 @@ namespace DuiAA
                              COLORREF outlineRgb = CLR_INVALID,
                              float outlineWidth = 1.0f);
 
+    // 抗锯齿填充圆角矩形，可选描边。
+    //   hdc：目标 DC。
+    //   rc：外接矩形（含右下边界，与 GDI ::RoundRect 语义一致）。
+    //   fillRgb：填充色；CLR_INVALID 时不填充。
+    //   radius：四角圆角半径（像素）；<=0 退化为普通矩形；
+    //           >min(w,h)/2 时自动夹到 min(w,h)/2。
+    //   outlineRgb：描边色；CLR_INVALID 时不描边。
+    //   outlineWidth：描边宽度（pt 像素，可小数）。
+    // 用途：替代 ::RoundRect 的锯齿圆角；DuiButton 外框走这里以消除
+    // 8px 圆角在屏上的阶梯像素。
+    BUI_API void FillRoundRect(HDC hdc, const RECT& rc,
+                               COLORREF fillRgb,
+                               int radius,
+                               COLORREF outlineRgb = CLR_INVALID,
+                               float outlineWidth = 1.0f);
+
     // 抗锯齿线段。
     //   x1/y1/x2/y2：两端点像素坐标。
     //   rgb：线色。

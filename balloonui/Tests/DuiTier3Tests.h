@@ -3,10 +3,11 @@
 #include "../BalloonUiFeatures.h"
 #if BUI_FEATURE_SEPARATOR && BUI_FEATURE_BADGE && BUI_FEATURE_GROUPBOX \
  && BUI_FEATURE_SEARCHBOX && BUI_FEATURE_SPINBOX && BUI_FEATURE_SLIDER \
- && BUI_FEATURE_PROGRESSBAR && BUI_FEATURE_SCROLLBAR
+ && BUI_FEATURE_PROGRESSBAR && BUI_FEATURE_SCROLLBAR && BUI_FEATURE_TOAST
 
 #include "../Controls/Basic/DuiSeparator.h"
 #include "../Controls/Basic/DuiBadge.h"
+#include "../Controls/Basic/DuiToast.h"
 #include "../Controls/Basic/DuiGroupBox.h"
 #include "../Controls/Input/DuiSearchBox.h"
 #include "../Controls/Input/DuiSpinBox.h"

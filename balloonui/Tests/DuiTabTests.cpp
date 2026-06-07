@@ -313,6 +313,153 @@ static Result Test_MoveTabTracksCurSel()
     return OK(_T("MoveTabTracksCurSel"));
 }
 
+// ----- icon ------------------------------------------------------------
+
+// 新加 tab 默认无图标 (icon = nullptr)。
+static Result Test_IconDefault_Nullptr()
+{
+    DuiTab t;
+    t.AddTab(_T("a"));
+    if (t.GetTabIcon(0) != nullptr)
+    {
+        return Fail(_T("Icon/defaultNull"), _T("expected nullptr"));
+    }
+    return OK(_T("IconDefault_Nullptr"));
+}
+
+// SetTabIcon round-trip: 设入 HBITMAP, GetTabIcon 拿回同值。
+static Result Test_IconRoundTrip()
+{
+    DuiTab t;
+    t.AddTab(_T("a"));
+    // (HBITMAP)1 是<u>虚</u>句柄, MeasureTabs / GetTabIcon 仅按"是否非空"
+    // 处理, 不解引用; 单测下不会被 GDI 触碰, 安全。
+    HBITMAP fake = (HBITMAP)(LONG_PTR)1;
+    t.SetTabIcon(0, fake);
+    if (t.GetTabIcon(0) != fake)
+    {
+        return Fail(_T("Icon/roundTrip"), _T("not the same handle"));
+    }
+    return OK(_T("IconRoundTrip"));
+}
+
+// SetTabIcon(idx, nullptr) 清除已有图标。
+static Result Test_IconCleared_Nullptr()
+{
+    DuiTab t;
+    t.AddTab(_T("a"));
+    t.SetTabIcon(0, (HBITMAP)(LONG_PTR)1);
+    t.SetTabIcon(0, nullptr);
+    if (t.GetTabIcon(0) != nullptr)
+    {
+        return Fail(_T("Icon/clear"), _T("not cleared"));
+    }
+    return OK(_T("IconCleared_Nullptr"));
+}
+
+// 有图标的 tab 比无图标的 tab 宽出 iconSize + iconGap (在 autoFit 开启时,
+// 避开 [minTabW, maxTabW] clamp 的干扰)。
+static Result Test_IconAffectsTabWidth()
+{
+    DuiTab t;
+    t.SetAutoFitTabWidth(true);    // 跳过 clamp, 让差值纯由图标贡献
+    t.AddTab(_T("hello"));
+    t.AddTab(_T("hello"));
+    t.SetTabIcon(1, (HBITMAP)(LONG_PTR)1);
+    t.SetRect(RECT{ 0, 0, 2000, 50 });
+
+    RECT r0 = t.Test_TabRect(0);
+    RECT r1 = t.Test_TabRect(1);
+    int w0 = r0.right - r0.left;
+    int w1 = r1.right - r1.left;
+    int expected = t.GetIconSize() + t.GetIconGap();
+    EXPECT_INT(w1 - w0, expected, _T("Icon/widthDelta"));
+    return OK(_T("IconAffectsTabWidth"));
+}
+
+// ----- auto-fit width --------------------------------------------------
+
+// 默认 (autoFit=false): 极短文字 tab 钳到 minTabW; 极长文字 tab 钳到 maxTabW。
+static Result Test_AutoFitDefault_OffMinMaxApplies()
+{
+    DuiTab t;
+    EXPECT_BOOL(t.GetAutoFitTabWidth(), false, _T("AutoFit/default"));
+    t.AddTab(_T("a"));    // 极短: text+pad << minTabW(60)
+    t.AddTab(_T("非常非常非常非常非常非常非常非常长的标签标题"));   // 极长: > maxTabW(200)
+    t.SetRect(RECT{ 0, 0, 4000, 50 });   // 避免 NeedsScroll 干扰
+
+    RECT r0 = t.Test_TabRect(0);
+    RECT r1 = t.Test_TabRect(1);
+    EXPECT_INT(r0.right - r0.left, 60,  _T("AutoFit/shortClampMin"));
+    EXPECT_INT(r1.right - r1.left, 200, _T("AutoFit/longClampMax"));
+    return OK(_T("AutoFitDefault_OffMinMaxApplies"));
+}
+
+// 打开 autoFit: 极短 tab < 60, 极长 tab > 200 (跳过 clamp)。
+static Result Test_AutoFitOn_IgnoresMinMax()
+{
+    DuiTab t;
+    t.SetAutoFitTabWidth(true);
+    t.AddTab(_T("a"));
+    t.AddTab(_T("非常非常非常非常非常非常非常非常长的标签标题"));
+    t.SetRect(RECT{ 0, 0, 4000, 50 });
+
+    RECT r0 = t.Test_TabRect(0);
+    RECT r1 = t.Test_TabRect(1);
+    int w0 = r0.right - r0.left;
+    int w1 = r1.right - r1.left;
+    if (w0 >= 60)
+    {
+        return Fail(_T("AutoFit/shortNotClamp"), _T("w0 should be < 60"));
+    }
+    if (w1 <= 200)
+    {
+        return Fail(_T("AutoFit/longNotClamp"), _T("w1 should be > 200"));
+    }
+    return OK(_T("AutoFitOn_IgnoresMinMax"));
+}
+
+// 打开 autoFit 后, tab 宽仍至少含 2*tabPad (text=0 也得有 padding 才不挤)。
+static Result Test_AutoFitOn_StillIncludesPadding()
+{
+    DuiTab t;
+    t.SetAutoFitTabWidth(true);
+    t.AddTab(_T(""));    // 空文本
+    t.SetRect(RECT{ 0, 0, 2000, 50 });
+    RECT r0 = t.Test_TabRect(0);
+    int w = r0.right - r0.left;
+    // 默认 m_tabPad = 12 → 期望 2 * 12 = 24 (无 icon / close / dropdown)
+    EXPECT_INT(w, 24, _T("AutoFit/emptyPaddingOnly"));
+    return OK(_T("AutoFitOn_StillIncludesPadding"));
+}
+
+// AutoFit toggle Off→On→Off: 宽度对应变化, 触发重新测量。
+static Result Test_AutoFitToggle_Reapplies()
+{
+    DuiTab t;
+    t.AddTab(_T("a"));    // 极短
+    t.SetRect(RECT{ 0, 0, 2000, 50 });
+
+    // 默认 Off → clamp 到 minTabW=60
+    EXPECT_INT(t.Test_TabRect(0).right - t.Test_TabRect(0).left, 60,
+               _T("AutoFitToggle/off1"));
+
+    // 打开 → 真实宽 (text+pad << 60)
+    t.SetAutoFitTabWidth(true);
+    int wOn = t.Test_TabRect(0).right - t.Test_TabRect(0).left;
+    if (wOn >= 60)
+    {
+        return Fail(_T("AutoFitToggle/on"), _T("expected < 60"));
+    }
+
+    // 再关回 → 回到 60
+    t.SetAutoFitTabWidth(false);
+    EXPECT_INT(t.Test_TabRect(0).right - t.Test_TabRect(0).left, 60,
+               _T("AutoFitToggle/off2"));
+
+    return OK(_T("AutoFitToggle_Reapplies"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_BOOL
 #undef EXPECT_STR
@@ -338,7 +485,15 @@ CString RunAll()
         { _T("ClickZones"),           &Test_ClickZones           },
         { _T("DragOutCancels"),       &Test_DragOutCancels       },
         { _T("TextRoundTrip"),        &Test_TextRoundTrip        },
-        { _T("SetCurSelIdempotent"),  &Test_SetCurSelIdempotent  }
+        { _T("SetCurSelIdempotent"),  &Test_SetCurSelIdempotent  },
+        { _T("IconDefault_Nullptr"),  &Test_IconDefault_Nullptr  },
+        { _T("IconRoundTrip"),        &Test_IconRoundTrip        },
+        { _T("IconCleared_Nullptr"),  &Test_IconCleared_Nullptr  },
+        { _T("IconAffectsTabWidth"),  &Test_IconAffectsTabWidth  },
+        { _T("AutoFitDefault_OffMinMaxApplies"), &Test_AutoFitDefault_OffMinMaxApplies },
+        { _T("AutoFitOn_IgnoresMinMax"),         &Test_AutoFitOn_IgnoresMinMax         },
+        { _T("AutoFitOn_StillIncludesPadding"),  &Test_AutoFitOn_StillIncludesPadding  },
+        { _T("AutoFitToggle_Reapplies"),         &Test_AutoFitToggle_Reapplies         }
     };
 
     CString out;

@@ -125,12 +125,241 @@ static Result Test_BadgeSetCountUpdatesShowing()
     return OK(_T("BadgeSetCountUpdatesShowing"));
 }
 
+// 新契约:SetText 不再在 setter 里截; GetText 返回原始文本。
+// 显示时截到 MaxDisplayChars(默认 4) —— 由 ApplyMaxChars 单独测。
 static Result Test_BadgeTruncates()
 {
     DuiBadge b;
     b.SetText(_T("abcdef"));
-    EXPECT_STR(b.GetText(), _T("abcd"), _T("Trunc/4"));
+    // GetText 返回原始, 不截 —— 与旧契约不同。
+    EXPECT_STR(b.GetText(), _T("abcdef"), _T("Trunc/raw"));
+    // 默认 MaxDisplayChars=4 仍然生效:显示时截到 "abcd"。
+    EXPECT_STR(DuiBadge::ApplyMaxChars(b.GetText(), b.GetMaxDisplayChars()),
+               _T("abcd"), _T("Trunc/display4"));
     return OK(_T("BadgeTruncates"));
+}
+
+// ----- DuiBadge: leading dot ------------------------------------------
+
+// 默认无前导圆点；SetLeadingDot 往返；CLR_INVALID 清除。
+static Result Test_BadgeLeadingDotSettersDefaults()
+{
+    DuiBadge b;
+    EXPECT_TRUE(!b.HasLeadingDot(),                                _T("LD/defOff"));
+    EXPECT_INT((int)b.GetLeadingDotColor(), (int)CLR_INVALID,      _T("LD/defColor"));
+
+    b.SetLeadingDot(RGB(60, 200, 120));
+    EXPECT_TRUE(b.HasLeadingDot(),                                 _T("LD/on"));
+    EXPECT_INT((int)b.GetLeadingDotColor(), (int)RGB(60, 200, 120),_T("LD/color"));
+
+    b.SetLeadingDot(CLR_INVALID);
+    EXPECT_TRUE(!b.HasLeadingDot(),                                _T("LD/cleared"));
+    EXPECT_INT((int)b.GetLeadingDotColor(), (int)CLR_INVALID,      _T("LD/clearedColor"));
+    return OK(_T("BadgeLeadingDotSettersDefaults"));
+}
+
+// 圆点半径 / 间距 setters 往返。默认半径 = 0（自适配），默认间距 = 4。
+static Result Test_BadgeLeadingRadiusAndGap()
+{
+    DuiBadge b;
+    EXPECT_INT(b.GetLeadingDotRadius(), 0, _T("LDR/def_autoSentinel"));
+    EXPECT_INT(b.GetLeadingGap(),       4, _T("LDG/def4"));
+
+    b.SetLeadingDotRadius(5);
+    EXPECT_INT(b.GetLeadingDotRadius(), 5, _T("LDR/5"));
+
+    b.SetLeadingDotRadius(0);           // 回到自适配模式
+    EXPECT_INT(b.GetLeadingDotRadius(), 0, _T("LDR/back0"));
+
+    b.SetLeadingGap(8);
+    EXPECT_INT(b.GetLeadingGap(),       8, _T("LDG/8"));
+
+    b.SetLeadingGap(0);                  // 允许 0（无 gap）
+    EXPECT_INT(b.GetLeadingGap(),       0, _T("LDG/0"));
+    return OK(_T("BadgeLeadingRadiusAndGap"));
+}
+
+// ContentWidth：无圆点 = textW；有圆点 = 2r + gap + textW；
+// 负值钳到 0；hasDot=true + textW=0 → 2r + gap（纯圆点）。
+static Result Test_BadgeContentWidthMath()
+{
+    // 无圆点
+    EXPECT_INT(DuiBadge::ContentWidth( 30, 4, 4, false), 30, _T("CW/noDot"));
+    EXPECT_INT(DuiBadge::ContentWidth(  0, 4, 4, false),  0, _T("CW/noDot_zero"));
+    EXPECT_INT(DuiBadge::ContentWidth( -5, 4, 4, false),  0, _T("CW/noDot_neg"));
+
+    // 有圆点：r=4, gap=6, text=30 → 2*4 + 6 + 30 = 44
+    EXPECT_INT(DuiBadge::ContentWidth( 30, 4, 6, true ), 44, _T("CW/dot"));
+    // 纯圆点（text=0）：仅 2r + gap
+    EXPECT_INT(DuiBadge::ContentWidth(  0, 4, 6, true ), 14, _T("CW/dot_only"));
+    // gap=0 时 == 2r + textW
+    EXPECT_INT(DuiBadge::ContentWidth( 30, 4, 0, true ), 38, _T("CW/dot_noGap"));
+
+    // 负数钳到 0
+    EXPECT_INT(DuiBadge::ContentWidth(-5, -2, -3, true), 0, _T("CW/allNeg_dot"));
+    return OK(_T("BadgeContentWidthMath"));
+}
+
+// AutoDotRadius：fontHeight 异常 → 3；正常 → max(3, fontHeight/4)。
+static Result Test_BadgeAutoDotRadius()
+{
+    // 异常 / 边界
+    EXPECT_INT(DuiBadge::AutoDotRadius(  0), 3, _T("ADR/zero"));
+    EXPECT_INT(DuiBadge::AutoDotRadius( -5), 3, _T("ADR/neg"));
+
+    // 小字号：12/4=3，与最小值一致
+    EXPECT_INT(DuiBadge::AutoDotRadius( 12), 3, _T("ADR/12"));
+    // 11/4=2，被 max(3,...) 提到 3
+    EXPECT_INT(DuiBadge::AutoDotRadius( 11), 3, _T("ADR/11_clampToMin"));
+    // 大字号
+    EXPECT_INT(DuiBadge::AutoDotRadius( 20), 5, _T("ADR/20"));
+    EXPECT_INT(DuiBadge::AutoDotRadius( 40),10, _T("ADR/40"));
+    return OK(_T("BadgeAutoDotRadius"));
+}
+
+// ----- DuiBadge: 形状参数化(chip 扩展)------------------------------------
+
+// SetCornerRadius 默认 -1(胶囊); 设 0/4/8/-1 后 getter 一致。
+static Result Test_BadgeSetCornerRadiusRoundTrip()
+{
+    DuiBadge b;
+    EXPECT_INT(b.GetCornerRadius(), -1, _T("CR/def_pill"));
+
+    b.SetCornerRadius(0);
+    EXPECT_INT(b.GetCornerRadius(),  0, _T("CR/0"));
+    b.SetCornerRadius(4);
+    EXPECT_INT(b.GetCornerRadius(),  4, _T("CR/4"));
+    b.SetCornerRadius(8);
+    EXPECT_INT(b.GetCornerRadius(),  8, _T("CR/8"));
+    b.SetCornerRadius(-1);
+    EXPECT_INT(b.GetCornerRadius(), -1, _T("CR/backPill"));
+    return OK(_T("BadgeSetCornerRadiusRoundTrip"));
+}
+
+// SetMaxDisplayChars 默认 4; 设 0/4/8 后 getter 一致。
+static Result Test_BadgeSetMaxDisplayCharsRoundTrip()
+{
+    DuiBadge b;
+    EXPECT_INT(b.GetMaxDisplayChars(), 4, _T("MC/def4"));
+
+    b.SetMaxDisplayChars(0);
+    EXPECT_INT(b.GetMaxDisplayChars(), 0, _T("MC/0"));
+    b.SetMaxDisplayChars(8);
+    EXPECT_INT(b.GetMaxDisplayChars(), 8, _T("MC/8"));
+    b.SetMaxDisplayChars(4);
+    EXPECT_INT(b.GetMaxDisplayChars(), 4, _T("MC/back4"));
+    return OK(_T("BadgeSetMaxDisplayCharsRoundTrip"));
+}
+
+// EffectiveCornerRadius:rawRadius=-1 → height/2(胶囊)。
+static Result Test_BadgeEffectiveCornerRadiusPillMode()
+{
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(-1, 20), 10, _T("ECR/pill20"));
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(-1, 16),  8, _T("ECR/pill16"));
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(-1, 24), 12, _T("ECR/pill24"));
+    // 边界:height<=0 时退化为 0,避免负值。
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(-1,  0),  0, _T("ECR/pill0"));
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(-1, -5),  0, _T("ECR/pillNeg"));
+    return OK(_T("BadgeEffectiveCornerRadiusPillMode"));
+}
+
+// EffectiveCornerRadius:rawRadius>=0 → 原值; <-1 → 0(误用兜底)。
+static Result Test_BadgeEffectiveCornerRadiusFixed()
+{
+    // 固定半径:与 height 无关。
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(4, 20),  4, _T("ECR/fix4"));
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(4,  5),  4, _T("ECR/fix4_tiny"));
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(0, 20),  0, _T("ECR/fix0"));
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(8,  0),  8, _T("ECR/fix8_h0"));
+    // 误用:< -1 视作 0(直角),不报错。
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(-2, 20), 0, _T("ECR/negMisuse"));
+    EXPECT_INT(DuiBadge::EffectiveCornerRadius(-99,20), 0, _T("ECR/negMisuseBig"));
+    return OK(_T("BadgeEffectiveCornerRadiusFixed"));
+}
+
+// ApplyMaxChars:maxChars=0 不截。
+static Result Test_BadgeApplyMaxCharsZeroNoTruncation()
+{
+    EXPECT_STR(DuiBadge::ApplyMaxChars(_T("长文本测试"), 0),
+               _T("长文本测试"), _T("AMC/zero_chinese"));
+    EXPECT_STR(DuiBadge::ApplyMaxChars(_T("ABCDEFGHIJK"), 0),
+               _T("ABCDEFGHIJK"), _T("AMC/zero_ascii"));
+    EXPECT_TRUE(DuiBadge::ApplyMaxChars(_T(""), 0).IsEmpty(), _T("AMC/zero_empty"));
+    EXPECT_TRUE(DuiBadge::ApplyMaxChars(nullptr, 0).IsEmpty(), _T("AMC/zero_null"));
+    return OK(_T("BadgeApplyMaxCharsZeroNoTruncation"));
+}
+
+// ApplyMaxChars:maxChars>0 → 截到 n 字(直接砍,不加省略号)。
+static Result Test_BadgeApplyMaxCharsTruncates()
+{
+    EXPECT_STR(DuiBadge::ApplyMaxChars(_T("ABCDEFGH"), 4),
+               _T("ABCD"), _T("AMC/trunc_ascii"));
+    EXPECT_STR(DuiBadge::ApplyMaxChars(_T("一二三四五六"), 3),
+               _T("一二三"), _T("AMC/trunc_chinese"));
+    // 默认 4 一致行为(对应历史"超 4 截断"契约)。
+    EXPECT_STR(DuiBadge::ApplyMaxChars(_T("abcdef"), 4),
+               _T("abcd"), _T("AMC/trunc_default4"));
+    return OK(_T("BadgeApplyMaxCharsTruncates"));
+}
+
+// ApplyMaxChars 边界:文本长度 ≤ maxChars → 原样返回。
+static Result Test_BadgeApplyMaxCharsExactBoundary()
+{
+    EXPECT_STR(DuiBadge::ApplyMaxChars(_T("ABCD"), 4),
+               _T("ABCD"), _T("AMC/exact"));
+    EXPECT_STR(DuiBadge::ApplyMaxChars(_T("AB"), 4),
+               _T("AB"), _T("AMC/shorter"));
+    EXPECT_TRUE(DuiBadge::ApplyMaxChars(_T(""), 4).IsEmpty(), _T("AMC/empty_4"));
+    return OK(_T("BadgeApplyMaxCharsExactBoundary"));
+}
+
+// ApplyMaxChars:负值(误用)兜底为不截(等同 0)。
+static Result Test_BadgeApplyMaxCharsNegativeChars()
+{
+    EXPECT_STR(DuiBadge::ApplyMaxChars(_T("ABCDEFGH"), -1),
+               _T("ABCDEFGH"), _T("AMC/neg1"));
+    EXPECT_STR(DuiBadge::ApplyMaxChars(_T("长文本测试"), -99),
+               _T("长文本测试"), _T("AMC/negBig"));
+    return OK(_T("BadgeApplyMaxCharsNegativeChars"));
+}
+
+// 与现有 SetCount 链路共存:SetCount(150) 仍走 FormatCount → "99+"。
+// 默认 m_maxChars=4 不影响("99+"是 3 字符)。
+static Result Test_BadgeSetCountStillUses99Plus()
+{
+    DuiBadge b;
+    b.SetCount(150);
+    EXPECT_STR(b.GetText(), _T("99+"), _T("Cnt/99+"));
+    // 显示时也不会被 MaxDisplayChars=4 截。
+    EXPECT_STR(DuiBadge::ApplyMaxChars(b.GetText(), b.GetMaxDisplayChars()),
+               _T("99+"), _T("Cnt/display99+"));
+    // 切到 MaxDisplayChars=2 时, "99+" 会被截到 "99" —— 但这是 caller 自找的。
+    b.SetMaxDisplayChars(2);
+    EXPECT_STR(DuiBadge::ApplyMaxChars(b.GetText(), b.GetMaxDisplayChars()),
+               _T("99"), _T("Cnt/display2"));
+    return OK(_T("BadgeSetCountStillUses99Plus"));
+}
+
+// LeadingDot + 自定义半径 + 长文字 chip 四项 setter 共存,
+// getter 全部往返正确。
+static Result Test_BadgeLeadingDotPlusChipCoexist()
+{
+    DuiBadge b;
+    b.SetLeadingDot(RGB(60, 200, 120));        // 绿点 = 已启用
+    b.SetCornerRadius(4);                       // chip 形态
+    b.SetMaxDisplayChars(0);                    // 不截
+    b.SetText(_T("已启用"));                    // 3 字
+    b.SetBgColor(RGB(245, 246, 248));           // 浅灰底
+    b.SetTextColor(RGB(80, 88, 102));           // 深字
+
+    EXPECT_TRUE(b.HasLeadingDot(),                                    _T("Coex/dot"));
+    EXPECT_INT((int)b.GetLeadingDotColor(), (int)RGB(60, 200, 120),    _T("Coex/dotColor"));
+    EXPECT_INT(b.GetCornerRadius(),         4,                          _T("Coex/r4"));
+    EXPECT_INT(b.GetMaxDisplayChars(),      0,                          _T("Coex/mc0"));
+    EXPECT_STR(b.GetText(),                _T("已启用"),                _T("Coex/text"));
+    EXPECT_INT((int)b.GetBgColor(),         (int)RGB(245, 246, 248),    _T("Coex/bg"));
+    EXPECT_INT((int)b.GetTextColor(),       (int)RGB( 80,  88, 102),    _T("Coex/fg"));
+    return OK(_T("BadgeLeadingDotPlusChipCoexist"));
 }
 
 // ----- DuiGroupBox ----------------------------------------------------
@@ -828,20 +1057,15 @@ static Result Test_HwndHostInSV_FullyVisible_NotClipped()
                     _T("EDIT not fully inside ScrollView"));
     }
 
-    // Translate editDui to screen coords for comparison with effective rect.
-    POINT lt = { editDui.left, editDui.top };
-    POINT rb = { editDui.right, editDui.bottom };
-    ::ClientToScreen(fx.host.m_hWnd, &lt);
-    ::ClientToScreen(fx.host.m_hWnd, &rb);
-    RECT editDuiScreen = { lt.x, lt.y, rb.x, rb.y };
-
     RECT editScreen = GetEffectiveScreenRect_(hEdit);
-    // EditHost shrinks the EDIT slightly inside its DUI rect for border /
-    // margin (see DuiEditHost::Layout — InflateRect(-1,-1) + margins). So
-    // we don't require exact-match; we require the EDIT to occupy at least
-    // the inner portion (which is editDui inflated by -1 — generous floor).
-    RECT minEdit = editDuiScreen;
-    ::InflateRect(&minEdit, -8, -8);   // generous: real inset is 1+marginAny
+    // 单行 EDIT 默认垂直居中（DuiEditHost::SetVerticalCenter 默认开）后，寄宿
+    // 窗口收成约一行高、在 DUI 矩形内居中，已不再填满 DUI 矩形；故期望值以寄宿
+    // 窗口的【真实矩形】为基准（而非 editDui）。完全可见时不应被裁小 —— 有效
+    // 矩形应覆盖"真实窗口矩形再内缩少量容差"。
+    RECT winScreen;
+    ::GetWindowRect(hEdit, &winScreen);   // 真实窗口矩形（屏幕坐标）
+    RECT minEdit = winScreen;
+    ::InflateRect(&minEdit, -2, -2);
     if (!RectContains_(editScreen, minEdit))
     {
         CString d;
@@ -882,15 +1106,12 @@ static Result Test_HwndHostInSV_RegionRestoredOnScrollBack()
     if (!hEdit) { return Fail(_T("ScrollBack/noHwnd"), _T("EDIT not created")); }
 
     // Same assertion as FullyVisible — after scrolling back, EDIT must be
-    // visibly the same as if we'd never scrolled.
-    RECT editDui = editPtr->GetRect();
-    POINT lt = { editDui.left, editDui.top };
-    POINT rb = { editDui.right, editDui.bottom };
-    ::ClientToScreen(fx.host.m_hWnd, &lt);
-    ::ClientToScreen(fx.host.m_hWnd, &rb);
-    RECT editDuiScreen = { lt.x, lt.y, rb.x, rb.y };
-    RECT minEdit = editDuiScreen;
-    ::InflateRect(&minEdit, -8, -8);
+    // visibly the same as if we'd never scrolled。基准同样取寄宿窗口的真实矩形
+    // （单行 EDIT 默认垂直居中后不再填满 DUI 矩形，见 FullyVisible 用例注释）。
+    RECT winScreen;
+    ::GetWindowRect(hEdit, &winScreen);
+    RECT minEdit = winScreen;
+    ::InflateRect(&minEdit, -2, -2);
 
     RECT editScreen = GetEffectiveScreenRect_(hEdit);
     if (!RectContains_(editScreen, minEdit))
@@ -1117,6 +1338,197 @@ static Result Test_HwndHostInSV_MultipleSiblingsClippedIndependently()
     return OK(_T("HwndHostInSV_MultipleSiblingsClippedIndependently"));
 }
 
+// ===== DuiToast =========================================================
+
+// 默认值:durationMs=3000, fadeMs=200, textColor 白, bgColor 深灰,
+// cornerRadius=16, icon=nullptr, iconSize=16, iconGap=8, topOffset=40,
+// maxWidth=0, IsActive=false; 阴影默认开, 黑色 alpha=90 blur=16 offsetY=6。
+static Result Test_ToastDefaults()
+{
+    DuiToast t;
+    EXPECT_INT(t.GetDurationMs(),   3000, _T("Toast/dur"));
+    EXPECT_INT(t.GetFadeMs(),        200, _T("Toast/fade"));
+    EXPECT_INT((int)t.GetTextColor(), (int)RGB(255, 255, 255), _T("Toast/text"));
+    EXPECT_INT((int)t.GetBgColor(),   (int)RGB( 50,  50,  50), _T("Toast/bg"));
+    EXPECT_INT(t.GetCornerRadius(),   16, _T("Toast/r"));
+    EXPECT_TRUE(t.GetIcon() == nullptr,   _T("Toast/icon"));
+    EXPECT_INT(t.GetIconSize(),       16, _T("Toast/iconSz"));
+    EXPECT_INT(t.GetIconGap(),         8, _T("Toast/iconGap"));
+    EXPECT_INT(t.GetTopOffset(),      40, _T("Toast/top"));
+    EXPECT_INT(t.GetMaxWidth(),        0, _T("Toast/maxW"));
+    EXPECT_TRUE(!t.IsActive(),            _T("Toast/notActive"));
+    EXPECT_TRUE(t.IsShadowEnabled(),         _T("Toast/shadowOn"));
+    EXPECT_INT((int)t.GetShadowColor(), (int)RGB(0, 0, 0), _T("Toast/shadowClr"));
+    EXPECT_INT(t.GetShadowAlpha(),    90, _T("Toast/shadowA"));
+    EXPECT_INT(t.GetShadowBlur(),     16, _T("Toast/shadowBlur"));
+    EXPECT_INT(t.GetShadowOffsetY(),   6, _T("Toast/shadowOffY"));
+    return OK(_T("ToastDefaults"));
+}
+
+// 所有 setter 往返;clamp 行为:durationMs<=0→1, fadeMs<0→0,
+// cornerRadius<0→0, iconSize<1→1, iconGap<0→0, maxWidth<0→0。
+static Result Test_ToastSettersAndClamp()
+{
+    DuiToast t;
+    t.SetDurationMs(5000);
+    EXPECT_INT(t.GetDurationMs(), 5000, _T("D/5000"));
+    t.SetDurationMs(0);
+    EXPECT_INT(t.GetDurationMs(),    1, _T("D/0→1"));
+    t.SetDurationMs(-100);
+    EXPECT_INT(t.GetDurationMs(),    1, _T("D/neg→1"));
+
+    t.SetFadeMs(300);
+    EXPECT_INT(t.GetFadeMs(),    300, _T("F/300"));
+    t.SetFadeMs(-1);
+    EXPECT_INT(t.GetFadeMs(),      0, _T("F/neg→0"));
+
+    t.SetTextColor(RGB(1, 2, 3));
+    EXPECT_INT((int)t.GetTextColor(), (int)RGB(1, 2, 3), _T("TC"));
+    t.SetBgColor(RGB(9, 8, 7));
+    EXPECT_INT((int)t.GetBgColor(),   (int)RGB(9, 8, 7), _T("BC"));
+
+    t.SetCornerRadius(20);
+    EXPECT_INT(t.GetCornerRadius(), 20, _T("CR/20"));
+    t.SetCornerRadius(-3);
+    EXPECT_INT(t.GetCornerRadius(),  0, _T("CR/neg→0"));
+
+    t.SetIconSize(0);
+    EXPECT_INT(t.GetIconSize(), 1, _T("IS/0→1"));
+    t.SetIconSize(24);
+    EXPECT_INT(t.GetIconSize(), 24, _T("IS/24"));
+
+    t.SetIconGap(-5);
+    EXPECT_INT(t.GetIconGap(), 0, _T("IG/neg→0"));
+    t.SetIconGap(12);
+    EXPECT_INT(t.GetIconGap(), 12, _T("IG/12"));
+
+    t.SetTopOffset(100);
+    EXPECT_INT(t.GetTopOffset(), 100, _T("TO/100"));
+    t.SetMaxWidth(-1);
+    EXPECT_INT(t.GetMaxWidth(),    0, _T("MW/neg→0"));
+    t.SetMaxWidth(400);
+    EXPECT_INT(t.GetMaxWidth(),  400, _T("MW/400"));
+
+    HBITMAP fake = reinterpret_cast<HBITMAP>((LPARAM)0xABCD);
+    t.SetIcon(fake);
+    EXPECT_TRUE(t.GetIcon() == fake, _T("Icon/set"));
+    t.SetIcon(nullptr);
+    EXPECT_TRUE(t.GetIcon() == nullptr, _T("Icon/clear"));
+
+    // 阴影 setter / clamp:enabled / color / offsetY 往返;alpha 钳 [0,255];
+    // blur < 1 → 1。
+    t.SetShadowEnabled(false);
+    EXPECT_TRUE(!t.IsShadowEnabled(), _T("Sh/off"));
+    t.SetShadowEnabled(true);
+    EXPECT_TRUE(t.IsShadowEnabled(),  _T("Sh/on"));
+
+    t.SetShadowColor(RGB(10, 20, 30));
+    EXPECT_INT((int)t.GetShadowColor(), (int)RGB(10, 20, 30), _T("Sh/clr"));
+
+    t.SetShadowAlpha(-5);
+    EXPECT_INT(t.GetShadowAlpha(),   0, _T("Sh/a/neg→0"));
+    t.SetShadowAlpha(300);
+    EXPECT_INT(t.GetShadowAlpha(), 255, _T("Sh/a/over→255"));
+    t.SetShadowAlpha(120);
+    EXPECT_INT(t.GetShadowAlpha(), 120, _T("Sh/a/120"));
+
+    t.SetShadowBlur(0);
+    EXPECT_INT(t.GetShadowBlur(), 1, _T("Sh/blur/0→1"));
+    t.SetShadowBlur(24);
+    EXPECT_INT(t.GetShadowBlur(), 24, _T("Sh/blur/24"));
+
+    t.SetShadowOffsetY(-4);
+    EXPECT_INT(t.GetShadowOffsetY(), -4, _T("Sh/offY/neg"));
+    t.SetShadowOffsetY(8);
+    EXPECT_INT(t.GetShadowOffsetY(), 8, _T("Sh/offY/8"));
+    return OK(_T("ToastSettersAndClamp"));
+}
+
+// Show 触发 IsActive=true; HideNow 立即清。空文本 Show 等价于 HideNow。
+static Result Test_ToastShowHide()
+{
+    DuiToast t;
+    EXPECT_TRUE(!t.IsActive(), _T("SH/init"));
+
+    t.Show(_T("hello"));
+    EXPECT_TRUE(t.IsActive(), _T("SH/showActive"));
+
+    t.HideNow();
+    EXPECT_TRUE(!t.IsActive(), _T("SH/hideCleared"));
+
+    // 空文本退化为 HideNow
+    t.Show(_T("again"));
+    EXPECT_TRUE(t.IsActive(), _T("SH/showAgain"));
+    t.Show(_T(""));
+    EXPECT_TRUE(!t.IsActive(), _T("SH/emptyHides"));
+
+    // nullptr 文本同样退化
+    t.Show(_T("once more"));
+    t.Show(nullptr);
+    EXPECT_TRUE(!t.IsActive(), _T("SH/nullHides"));
+    return OK(_T("ToastShowHide"));
+}
+
+// MeasureWidth 静态 helper:无图标 = text + 2*padding;
+// 有图标 = text + icon + gap + 2*padding;负值钳零。
+static Result Test_ToastMeasureWidth()
+{
+    // 无图标:100 文字 + 14*2 padding = 128
+    EXPECT_INT(DuiToast::MeasureWidth(100, false, 16, 8), 100 + 14 + 14, _T("MW/noIcon"));
+    // 有图标:100 文字 + 16 icon + 8 gap + 14*2 padding = 152
+    EXPECT_INT(DuiToast::MeasureWidth(100, true, 16, 8),
+               100 + 16 + 8 + 14 + 14, _T("MW/icon"));
+    // 负值钳零
+    EXPECT_INT(DuiToast::MeasureWidth(-10, false, 16, 8),  0 + 14 + 14, _T("MW/negText"));
+    EXPECT_INT(DuiToast::MeasureWidth(100, true, -5, -3),
+               100 + 0 + 0 + 14 + 14, _T("MW/negIconGap"));
+    // 空文本 + 无图标 = 仅 padding
+    EXPECT_INT(DuiToast::MeasureWidth(0, false, 16, 8), 14 + 14, _T("MW/empty"));
+    return OK(_T("ToastMeasureWidth"));
+}
+
+// ApplyEllipsis:maxChars<=0 → 不截; 长度<=max → 原样; 长度>max →
+// 截到 max-3 + "...";max<3 退化为硬截。
+static Result Test_ToastApplyEllipsis()
+{
+    EXPECT_STR(DuiToast::ApplyEllipsis(_T("hello"),  0),  _T("hello"),  _T("AE/0"));
+    EXPECT_STR(DuiToast::ApplyEllipsis(_T("hello"), -5),  _T("hello"),  _T("AE/neg"));
+    EXPECT_STR(DuiToast::ApplyEllipsis(_T("hello"),  8),  _T("hello"),  _T("AE/within"));
+    EXPECT_STR(DuiToast::ApplyEllipsis(_T("hello"),  5),  _T("hello"),  _T("AE/exact"));
+    // 长度 10, max 8 → "hello" 的 keep = 5 → "hello..."
+    EXPECT_STR(DuiToast::ApplyEllipsis(_T("abcdefghij"), 8), _T("abcde..."), _T("AE/trunc8"));
+    // max < 3 → 硬截
+    EXPECT_STR(DuiToast::ApplyEllipsis(_T("abcdefg"), 2), _T("ab"), _T("AE/hard2"));
+    EXPECT_STR(DuiToast::ApplyEllipsis(nullptr, 10),     _T(""),   _T("AE/null"));
+    return OK(_T("ToastApplyEllipsis"));
+}
+
+// 多次 Show 不堆积:连续 3 次 Show 后只有最新文本生效。
+// 我们没法直接断言"动画队列",但能验:IsActive true 且 没崩。
+// (动画代际号 m_animGen 是 private; 通过行为验证 —— 老 callback 不破坏状态)
+static Result Test_ToastShowReplacement()
+{
+    DuiToast t;
+    t.Show(_T("first"));
+    t.Show(_T("second"));
+    t.Show(_T("third"));
+    EXPECT_TRUE(t.IsActive(), _T("Replace/active"));
+    t.HideNow();
+    EXPECT_TRUE(!t.IsActive(), _T("Replace/hideAfter"));
+    return OK(_T("ToastShowReplacement"));
+}
+
+// HitTest 永远返回 nullptr —— toast 不参与命中。
+static Result Test_ToastHitTestAlwaysNull()
+{
+    DuiToast t;
+    t.SetRect(RECT{ 0, 0, 100, 40 });
+    t.Show(_T("hello"));
+    EXPECT_TRUE(t.HitTest(POINT{ 50, 20 }) == nullptr, _T("HT/inside"));
+    EXPECT_TRUE(t.HitTest(POINT{ -10, -10 }) == nullptr, _T("HT/outside"));
+    return OK(_T("ToastHitTestAlwaysNull"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_TRUE
 #undef EXPECT_STR
@@ -1135,6 +1547,22 @@ CString RunAll()
         { _T("BadgeFormatCount"),           &Test_BadgeFormatCount           },
         { _T("BadgeSetCountUpdatesShowing"),&Test_BadgeSetCountUpdatesShowing},
         { _T("BadgeTruncates"),             &Test_BadgeTruncates             },
+        // ---- 前导小圆点（SetLeadingDot） ----
+        { _T("BadgeLeadingDotSettersDefaults"),&Test_BadgeLeadingDotSettersDefaults},
+        { _T("BadgeLeadingRadiusAndGap"),      &Test_BadgeLeadingRadiusAndGap      },
+        { _T("BadgeContentWidthMath"),         &Test_BadgeContentWidthMath         },
+        { _T("BadgeAutoDotRadius"),            &Test_BadgeAutoDotRadius            },
+        // ---- 形状参数化(chip 扩展)----
+        { _T("BadgeSetCornerRadiusRoundTrip"),    &Test_BadgeSetCornerRadiusRoundTrip    },
+        { _T("BadgeSetMaxDisplayCharsRoundTrip"), &Test_BadgeSetMaxDisplayCharsRoundTrip },
+        { _T("BadgeEffectiveCornerRadiusPillMode"),&Test_BadgeEffectiveCornerRadiusPillMode},
+        { _T("BadgeEffectiveCornerRadiusFixed"),  &Test_BadgeEffectiveCornerRadiusFixed  },
+        { _T("BadgeApplyMaxCharsZeroNoTruncation"),&Test_BadgeApplyMaxCharsZeroNoTruncation},
+        { _T("BadgeApplyMaxCharsTruncates"),      &Test_BadgeApplyMaxCharsTruncates      },
+        { _T("BadgeApplyMaxCharsExactBoundary"),  &Test_BadgeApplyMaxCharsExactBoundary  },
+        { _T("BadgeApplyMaxCharsNegativeChars"),  &Test_BadgeApplyMaxCharsNegativeChars  },
+        { _T("BadgeSetCountStillUses99Plus"),     &Test_BadgeSetCountStillUses99Plus     },
+        { _T("BadgeLeadingDotPlusChipCoexist"),   &Test_BadgeLeadingDotPlusChipCoexist   },
         { _T("GroupBoxDefaults"),           &Test_GroupBoxDefaults           },
         { _T("GroupBoxComputeContent"),     &Test_GroupBoxComputeContent     },
         { _T("GroupBoxComputeTinyOuter"),   &Test_GroupBoxComputeTinyOuter   },
@@ -1168,6 +1596,14 @@ CString RunAll()
         { _T("ScrollSync_FlushesPendingPaint"),                    &Test_ScrollSync_FlushesPendingPaint                    },
         { _T("ScrollSync_RepeatedScrollsAllFlushed"),              &Test_ScrollSync_RepeatedScrollsAllFlushed              },
         { _T("ScrollSync_ActuallyMovedEditHwnd"),                  &Test_ScrollSync_ActuallyMovedEditHwnd                  },
+        // ---- DuiToast ----
+        { _T("ToastDefaults"),            &Test_ToastDefaults            },
+        { _T("ToastSettersAndClamp"),     &Test_ToastSettersAndClamp     },
+        { _T("ToastShowHide"),            &Test_ToastShowHide            },
+        { _T("ToastMeasureWidth"),        &Test_ToastMeasureWidth        },
+        { _T("ToastApplyEllipsis"),       &Test_ToastApplyEllipsis       },
+        { _T("ToastShowReplacement"),     &Test_ToastShowReplacement     },
+        { _T("ToastHitTestAlwaysNull"),   &Test_ToastHitTestAlwaysNull   },
     };
 
     CString out;

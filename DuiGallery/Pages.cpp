@@ -14,6 +14,7 @@
 #include "DuiXmlBuilder.h"
 #include "Controls/Basic/DuiSeparator.h"
 #include "Controls/Basic/DuiBadge.h"
+#include "Controls/Basic/DuiToast.h"
 #include "Controls/Basic/DuiGroupBox.h"
 #include "Controls/Input/DuiSearchBox.h"
 #include "Controls/Input/DuiSpinBox.h"
@@ -64,6 +65,12 @@ void RegisterCapture(LPCTSTR name, balloonwjui::DuiControl* anchor)
     m.anchor = anchor;
     GetCaptureMarks().push_back(m);
 }
+
+// 共享给 GalleryFrame::OnDuiNotify 用：当前页注册的 notify 钩子。
+// Build_TreeView 等 demo 在构建时按需赋值；切换 tab 重建页面前应被
+// 后注册者覆盖（旧 lambda 捕获的控件指针会随页面销毁失效，因此后建
+// demo 必须覆盖前一份）。空 = 无 demo 监听。
+std::function<void(const balloonwjui::DuiNotify*)> g_pageNotifyHook;
 
 // ===== shared helpers =================================================
 
@@ -325,6 +332,361 @@ std::unique_ptr<DuiControl> Build_Button()
         row->AddChild(std::move(bDis),  DuiLayout::Hint().Fixed(120));
         AddVariantRow(page.get(), std::move(row));
     }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("Variants (StylePushButton only)"),
+               _T("Six visual variants × four states (Normal / Hover / Pressed / "
+                  "Disabled). Only StylePushButton consults Variant; Checkbox / "
+                  "Radio / Icon ignore it. Bitmap skin (SetBgBitmap) takes "
+                  "precedence over Variant."));
+    {
+        // 6 行 × 4 个状态按钮。每行：左侧 Variant 名称标签 + 4 个 state 按钮。
+        // 用 DebugSetHover / DebugSetPressed / SetEnabled 强制各 state 视觉，
+        // 让用户一眼看完所有色板。
+        struct VariantRowDesc
+        {
+            DuiButton::Variant v;
+            LPCTSTR            name;
+        };
+        const VariantRowDesc vrows[] =
+        {
+            { DuiButton::Variant::Primary,  _T("Primary")  },
+            { DuiButton::Variant::Default,  _T("Default")  },
+            { DuiButton::Variant::Outlined, _T("Outlined") },
+            { DuiButton::Variant::Ghost,    _T("Ghost")    },
+            { DuiButton::Variant::Danger,   _T("Danger")   },
+            { DuiButton::Variant::Text,     _T("Text")     },
+        };
+        const int kVarRows = sizeof(vrows) / sizeof(vrows[0]);
+        for (int i = 0; i < kVarRows; ++i)
+        {
+            const VariantRowDesc& vr = vrows[i];
+            auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+            row->SetGap(8);
+
+            auto name = std::unique_ptr<DuiLabel>(new DuiLabel());
+            name->SetText(vr.name);
+            row->AddChild(std::move(name), DuiLayout::Hint().Fixed(80));
+
+            auto bN = std::unique_ptr<DuiButton>(new DuiButton());
+            bN->SetVariant(vr.v);
+            bN->SetText(_T("Normal"));
+
+            auto bH = std::unique_ptr<DuiButton>(new DuiButton());
+            bH->SetVariant(vr.v);
+            bH->SetText(_T("Hover"));
+            bH->DebugSetHover(true);
+
+            auto bP = std::unique_ptr<DuiButton>(new DuiButton());
+            bP->SetVariant(vr.v);
+            bP->SetText(_T("Pressed"));
+            bP->DebugSetHover(true);
+            bP->DebugSetPressed(true);
+
+            auto bD = std::unique_ptr<DuiButton>(new DuiButton());
+            bD->SetVariant(vr.v);
+            bD->SetText(_T("Disabled"));
+            bD->SetEnabled(false);
+
+            row->AddChild(std::move(bN), DuiLayout::Hint().Fixed(90));
+            row->AddChild(std::move(bH), DuiLayout::Hint().Fixed(90));
+            row->AddChild(std::move(bP), DuiLayout::Hint().Fixed(90));
+            row->AddChild(std::move(bD), DuiLayout::Hint().Fixed(90));
+            AddVariantRow(page.get(), std::move(row));
+        }
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("Variants — interactive (live hover/press)"),
+               _T("Same six variants, but no Debug* state forcing — try hover and "
+                  "click them to feel each variant's hover / pressed transition."));
+    {
+        struct VariantPair
+        {
+            DuiButton::Variant v;
+            LPCTSTR            text;
+        };
+        const VariantPair pairs[] =
+        {
+            { DuiButton::Variant::Primary,  _T("Save")    },
+            { DuiButton::Variant::Default,  _T("Cancel")  },
+            { DuiButton::Variant::Outlined, _T("Apply")   },
+            { DuiButton::Variant::Ghost,    _T("More")    },
+            { DuiButton::Variant::Danger,   _T("Delete")  },
+            { DuiButton::Variant::Text,     _T("Skip")    },
+        };
+        const int kPairs = sizeof(pairs) / sizeof(pairs[0]);
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->SetGap(10);
+        for (int i = 0; i < kPairs; ++i)
+        {
+            auto b = std::unique_ptr<DuiButton>(new DuiButton());
+            b->SetVariant(pairs[i].v);
+            b->SetText(pairs[i].text);
+            row->AddChild(std::move(b), DuiLayout::Hint().Fixed(96));
+        }
+        AddVariantRow(page.get(), std::move(row));
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("AntiAlias on/off (圆角对比)"),
+               _T("上行 SetAntiAlias(false) 走 GDI ::RoundRect — 8px 圆角能"
+                  "看到台阶像素;下行默认 SetAntiAlias(true) 走 GDI+ "
+                  "DuiAA::FillRoundRect — 边线连续无锯齿。"
+                  "Checkbox 方框 glyph 同样跟随该开关。"));
+    {
+        // 上行: AA=off
+        auto rowOff = std::unique_ptr<DuiHBox>(new DuiHBox());
+        rowOff->SetGap(12);
+        auto lblOff = std::unique_ptr<DuiLabel>(new DuiLabel());
+        lblOff->SetText(_T("AA=off"));
+        rowOff->AddChild(std::move(lblOff), DuiLayout::Hint().Fixed(80));
+
+        auto p1 = std::unique_ptr<DuiButton>(new DuiButton());
+        p1->SetText(_T("Primary"));
+        p1->SetAntiAlias(false);
+        auto p2 = std::unique_ptr<DuiButton>(new DuiButton());
+        p2->SetText(_T("Default"));
+        p2->SetVariant(DuiButton::Variant::Default);
+        p2->SetAntiAlias(false);
+        auto p3 = std::unique_ptr<DuiButton>(new DuiButton());
+        p3->SetText(_T("Danger"));
+        p3->SetVariant(DuiButton::Variant::Danger);
+        p3->SetAntiAlias(false);
+        auto c1 = std::unique_ptr<DuiButton>(new DuiButton());
+        c1->SetButtonType(DuiButton::StyleCheckbox);
+        c1->SetText(_T("Checkbox"));
+        c1->SetCheck(true, false);
+        c1->SetAntiAlias(false);
+
+        rowOff->AddChild(std::move(p1), DuiLayout::Hint().Fixed(90));
+        rowOff->AddChild(std::move(p2), DuiLayout::Hint().Fixed(90));
+        rowOff->AddChild(std::move(p3), DuiLayout::Hint().Fixed(90));
+        rowOff->AddChild(std::move(c1), DuiLayout::Hint().Fixed(130));
+        AddVariantRow(page.get(), std::move(rowOff));
+
+        // 下行: AA=on(默认)
+        auto rowOn = std::unique_ptr<DuiHBox>(new DuiHBox());
+        rowOn->SetGap(12);
+        auto lblOn = std::unique_ptr<DuiLabel>(new DuiLabel());
+        lblOn->SetText(_T("AA=on (默认)"));
+        rowOn->AddChild(std::move(lblOn), DuiLayout::Hint().Fixed(80));
+
+        auto q1 = std::unique_ptr<DuiButton>(new DuiButton());
+        q1->SetText(_T("Primary"));
+        auto q2 = std::unique_ptr<DuiButton>(new DuiButton());
+        q2->SetText(_T("Default"));
+        q2->SetVariant(DuiButton::Variant::Default);
+        auto q3 = std::unique_ptr<DuiButton>(new DuiButton());
+        q3->SetText(_T("Danger"));
+        q3->SetVariant(DuiButton::Variant::Danger);
+        auto c2 = std::unique_ptr<DuiButton>(new DuiButton());
+        c2->SetButtonType(DuiButton::StyleCheckbox);
+        c2->SetText(_T("Checkbox"));
+        c2->SetCheck(true, false);
+
+        rowOn->AddChild(std::move(q1), DuiLayout::Hint().Fixed(90));
+        rowOn->AddChild(std::move(q2), DuiLayout::Hint().Fixed(90));
+        rowOn->AddChild(std::move(q3), DuiLayout::Hint().Fixed(90));
+        rowOn->AddChild(std::move(c2), DuiLayout::Hint().Fixed(130));
+        AddVariantRow(page.get(), std::move(rowOn));
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("Checkbox / Radio — 透明 Variant(Ghost / Outlined / Text)"),
+               _T("Checkbox / Radio 在三个透明 Variant 下接管外框色板:"
+                  "Ghost / Text 外框完全透明; Outlined 外框透明 + 品牌色边。"
+                  "无论哪种透明 Variant, 内部 glyph 的小方框 / 圆环始终可见"
+                  "(走 kLight* 色板); 选中时勾 / 圆点 / 钩颜色保持不变。"
+                  "其余 Variant(Primary / Default / Danger)在 Checkbox / "
+                  "Radio 上兜底回 kLight* 家族, 与历史视觉一致。"));
+    {
+        struct TransparentRow
+        {
+            DuiButton::Variant v;
+            LPCTSTR            name;
+        };
+        const TransparentRow rows[] =
+        {
+            { DuiButton::Variant::Ghost,    _T("Ghost")    },
+            { DuiButton::Variant::Outlined, _T("Outlined") },
+            { DuiButton::Variant::Text,     _T("Text")     },
+        };
+        const int kRows = sizeof(rows) / sizeof(rows[0]);
+        for (int i = 0; i < kRows; ++i)
+        {
+            const TransparentRow& tr = rows[i];
+
+            auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+            row->SetGap(20);
+
+            auto name = std::unique_ptr<DuiLabel>(new DuiLabel());
+            name->SetText(tr.name);
+            row->AddChild(std::move(name), DuiLayout::Hint().Fixed(80));
+
+            // Checkbox: 未选 + 已选 两个状态
+            auto cb1 = std::unique_ptr<DuiButton>(new DuiButton());
+            cb1->SetButtonType(DuiButton::StyleCheckbox);
+            cb1->SetVariant(tr.v);
+            cb1->SetText(_T("启用"));
+
+            auto cb2 = std::unique_ptr<DuiButton>(new DuiButton());
+            cb2->SetButtonType(DuiButton::StyleCheckbox);
+            cb2->SetVariant(tr.v);
+            cb2->SetText(_T("已选"));
+            cb2->SetCheck(true, false);
+
+            // Radio: 同组下两个
+            auto rd1 = std::unique_ptr<DuiButton>(new DuiButton());
+            rd1->SetButtonType(DuiButton::StyleRadio);
+            rd1->SetVariant(tr.v);
+            // 每行独立 group, 避免跨行互斥。
+            rd1->SetRadioGroup(100 + i);
+            rd1->SetText(_T("选项 A"));
+            rd1->SetCheck(true, false);
+
+            auto rd2 = std::unique_ptr<DuiButton>(new DuiButton());
+            rd2->SetButtonType(DuiButton::StyleRadio);
+            rd2->SetVariant(tr.v);
+            rd2->SetRadioGroup(100 + i);
+            rd2->SetText(_T("选项 B"));
+
+            row->AddChild(std::move(cb1), DuiLayout::Hint().Fixed(110));
+            row->AddChild(std::move(cb2), DuiLayout::Hint().Fixed(110));
+            row->AddChild(std::move(rd1), DuiLayout::Hint().Fixed(110));
+            row->AddChild(std::move(rd2), DuiLayout::Hint().Fixed(110));
+            AddVariantRow(page.get(), std::move(row));
+        }
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("SetTextPointSize / SetFont(自定义字号)"),
+               _T("SetFont(HFONT) 直接传字体, SetTextPointSize(pt, bold) 走"
+                  " DuiResMgr 缓存(避免业务管句柄)。下行 9pt / 11pt 普通 / 14pt 粗体"
+                  "三种 Primary 按钮并列, 同一文字, 字号差异肉眼可见。"));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->SetGap(12);
+        struct FontDemo { int pt; bool bold; LPCTSTR caption; };
+        const FontDemo demos[] =
+        {
+            {  9, false, _T("9pt") },
+            { 11, false, _T("11pt") },
+            { 14, true,  _T("14pt bold") },
+        };
+        const int kCount = sizeof(demos) / sizeof(demos[0]);
+        for (int i = 0; i < kCount; ++i)
+        {
+            auto col = std::unique_ptr<DuiVBox>(new DuiVBox());
+            col->SetGap(4);
+            auto bt = std::unique_ptr<DuiButton>(new DuiButton());
+            bt->SetText(_T("Save"));
+            bt->SetTextPointSize(demos[i].pt, demos[i].bold);
+            auto lbl = std::unique_ptr<DuiLabel>(new DuiLabel());
+            lbl->SetText(demos[i].caption);
+            lbl->SetTextColor(RGB(80, 80, 80));
+            col->AddChild(std::move(bt),  DuiLayout::Hint().Fixed(36));
+            col->AddChild(std::move(lbl), DuiLayout::Hint().Fixed(18));
+            row->AddChild(std::move(col), DuiLayout::Hint().Fixed(120));
+        }
+        AddVariantRow(page.get(), std::move(row), 70);
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("LeadingIcon(图标按钮, 仅 PushButton)"),
+               _T("SetLeadingIcon(HBITMAP) + SetLeadingIconSize / Gap。整组"
+                  "(图标 + gap + 文字)按 m_dtFlags 对齐, 默认水平居中。"
+                  "图标走 ::AlphaBlend, 支持 32bpp 预乘 alpha; HBITMAP 为"
+                  "caller-owned, 控件不释放。Checkbox / Radio / Icon 风格"
+                  "忽略 LeadingIcon, 保留各自原有 glyph。"));
+    {
+        // 合成一个 16x16 32bpp 预乘 alpha 的"加号"位图作演示;静态,
+        // 进程级生命期(不必清理)。
+        struct PlusIcon
+        {
+            static HBITMAP Make()
+            {
+                BITMAPINFO bi = {};
+                bi.bmiHeader.biSize     = sizeof(BITMAPINFOHEADER);
+                bi.bmiHeader.biWidth    = 16;
+                bi.bmiHeader.biHeight   = -16;          // top-down
+                bi.bmiHeader.biPlanes   = 1;
+                bi.bmiHeader.biBitCount = 32;
+                bi.bmiHeader.biCompression = BI_RGB;
+                void* bits = nullptr;
+                HBITMAP hbm = ::CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS,
+                                                 &bits, nullptr, 0);
+                if (!hbm)
+                {
+                    return nullptr;
+                }
+                // 白色"+"号:中央十字 12 像素长 × 2 像素粗, 其余透明。
+                // 预乘 alpha:RGB 与 alpha 同色, alpha=255 不透明。
+                BYTE* p = static_cast<BYTE*>(bits);
+                ::ZeroMemory(p, 16 * 16 * 4);
+                // 横杠 y in [7, 9), x in [2, 14)
+                for (int y = 7; y < 9; ++y)
+                {
+                    for (int x = 2; x < 14; ++x)
+                    {
+                        BYTE* px = p + (y * 16 + x) * 4;
+                        px[0] = 255;
+                        px[1] = 255;
+                        px[2] = 255;
+                        px[3] = 255;
+                    }
+                }
+                // 竖杠 x in [7, 9), y in [2, 14)
+                for (int y = 2; y < 14; ++y)
+                {
+                    for (int x = 7; x < 9; ++x)
+                    {
+                        BYTE* px = p + (y * 16 + x) * 4;
+                        px[0] = 255;
+                        px[1] = 255;
+                        px[2] = 255;
+                        px[3] = 255;
+                    }
+                }
+                return hbm;
+            }
+        };
+        static HBITMAP s_plus = PlusIcon::Make();
+
+        // 4 个按钮:Primary 默认对齐 / Primary DT_LEFT / Danger / 仅图标(无文字)
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->SetGap(12);
+
+        auto b1 = std::unique_ptr<DuiButton>(new DuiButton());
+        b1->SetText(_T("新建"));
+        b1->SetLeadingIcon(s_plus);
+
+        auto b2 = std::unique_ptr<DuiButton>(new DuiButton());
+        b2->SetText(_T("DT_LEFT 对齐"));
+        b2->SetLeadingIcon(s_plus);
+        b2->SetTextAlign(DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        auto b3 = std::unique_ptr<DuiButton>(new DuiButton());
+        b3->SetText(_T("删除"));
+        b3->SetVariant(DuiButton::Variant::Danger);
+        b3->SetLeadingIcon(s_plus);
+
+        auto b4 = std::unique_ptr<DuiButton>(new DuiButton());
+        b4->SetText(_T(""));     // 纯图标(整组只有图标)
+        b4->SetLeadingIcon(s_plus);
+
+        row->AddChild(std::move(b1), DuiLayout::Hint().Fixed(110));
+        row->AddChild(std::move(b2), DuiLayout::Hint().Fixed(160));
+        row->AddChild(std::move(b3), DuiLayout::Hint().Fixed(110));
+        row->AddChild(std::move(b4), DuiLayout::Hint().Fixed(60));
+        AddVariantRow(page.get(), std::move(row), 36);
+    }
     return page;
 }
 
@@ -544,6 +906,422 @@ std::unique_ptr<DuiControl> Build_Label()
         row->AddChild(std::move(link), DuiLayout::Hint().Weight(1));
         AddVariantRow(page.get(), std::move(row), 24);
     }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("Selectable (drag-select + Ctrl+C copy)"),
+               _T("SetSelectable(true) lets users drag-select a substring and copy via "
+                  "Ctrl+C; with empty selection Ctrl+C copies the whole text. Ctrl+A "
+                  "selects all. Single-line only — auto-disables under SetWordWrap."));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox()); row->SetGap(20);
+        auto l1 = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l1->SetText(_T("EMP100086"));
+        l1->SetSelectable(true);
+        auto l2 = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l2->SetText(_T("balloonwj@qq.com"));
+        l2->SetSelectable(true);
+        auto l3 = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l3->SetText(_T("北京市朝阳区望京 SOHO T1-1801"));
+        l3->SetSelectable(true);
+        row->AddChild(std::move(l1), DuiLayout::Hint().Weight(1));
+        row->AddChild(std::move(l2), DuiLayout::Hint().Weight(1));
+        row->AddChild(std::move(l3), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 24);
+    }
+    AddGap(page.get(), 8);
+
+    AddSection(page.get(),
+               _T("Selection color override"),
+               _T("SetSelectionColor changes the highlight color (default light blue "
+                  "RGB(217, 232, 252))."));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox()); row->SetGap(20);
+        auto l1 = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l1->SetText(_T("Default highlight"));
+        l1->SetSelectable(true);
+        auto l2 = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l2->SetText(_T("Yellow highlight"));
+        l2->SetSelectable(true);
+        l2->SetSelectionColor(RGB(255, 230, 130));
+        auto l3 = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l3->SetText(_T("Pink highlight"));
+        l3->SetSelectable(true);
+        l3->SetSelectionColor(RGB(255, 200, 220));
+        row->AddChild(std::move(l1), DuiLayout::Hint().Weight(1));
+        row->AddChild(std::move(l2), DuiLayout::Hint().Weight(1));
+        row->AddChild(std::move(l3), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 24);
+    }
+    return page;
+}
+
+// ===== Badge ==========================================================
+
+std::unique_ptr<DuiControl> Build_Badge()
+{
+    auto page = NewPage();
+
+    AddSection(page.get(),
+               _T("DuiBadge — unread count pill / circle"),
+               _T("0 hides; 1-99 shows the number; 100+ shows \"99+\". Custom color also supported."));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox()); row->SetGap(28);
+
+        struct Demo { int n; LPCTSTR caption; COLORREF c; };
+        Demo demos[] = {
+            { 0,    _T("count=0 (hidden)"),   RGB(220, 60, 60) },
+            { 1,    _T("count=1"),            RGB(220, 60, 60) },
+            { 9,    _T("count=9"),            RGB(220, 60, 60) },
+            { 42,   _T("count=42"),           RGB(220, 60, 60) },
+            { 240,  _T("count=240 (\"99+\")"),RGB(45, 108, 223) },
+        };
+        for (auto& d : demos)
+        {
+            auto col = std::unique_ptr<DuiVBox>(new DuiVBox()); col->SetGap(4);
+            auto bdg = std::unique_ptr<DuiBadge>(new DuiBadge());
+            bdg->SetCount(d.n);
+            bdg->SetBgColor(d.c);
+            auto lbl = std::unique_ptr<DuiLabel>(new DuiLabel());
+            lbl->SetText(d.caption);
+            lbl->SetTextColor(RGB(80, 80, 80));
+            col->AddChild(std::move(bdg), DuiLayout::Hint().Fixed(24));
+            col->AddChild(std::move(lbl), DuiLayout::Hint().Fixed(18));
+            row->AddChild(std::move(col), DuiLayout::Hint().Fixed(110));
+        }
+        AddVariantRow(page.get(), std::move(row), 60);
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("DuiBadge — corner radius variants (chip 扩展)"),
+               _T("SetCornerRadius(-1) = 胶囊形(默认, 与历史一致); "
+                  "SetCornerRadius(>=0) = 固定圆角(chip 形态)。DuiBadge 现可"
+                  "覆盖'短计数 / 红点'与'长文字标签'两种形态, 内部统一走"
+                  "DuiAA::FillRoundRect 抗锯齿。"));
+    {
+        // 五段对比:radius = -1(胶囊) / 0(直角) / 2 / 4 / 8
+        struct RadiusDemo { int r; LPCTSTR caption; };
+        const RadiusDemo demos[] =
+        {
+            { -1, _T("r=-1 (胶囊/默认)") },
+            {  0, _T("r=0 (直角)")        },
+            {  2, _T("r=2")               },
+            {  4, _T("r=4 (常用 chip)")   },
+            {  8, _T("r=8")               },
+        };
+        const int kCount = sizeof(demos) / sizeof(demos[0]);
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->SetGap(20);
+        for (int i = 0; i < kCount; ++i)
+        {
+            auto col = std::unique_ptr<DuiVBox>(new DuiVBox());
+            col->SetGap(4);
+
+            auto bdg = std::unique_ptr<DuiBadge>(new DuiBadge());
+            bdg->SetText(_T("Label"));
+            bdg->SetMaxDisplayChars(0);                 // 不截
+            bdg->SetBgColor  (RGB( 45, 108, 223));      // 品牌蓝
+            bdg->SetTextColor(RGB(255, 255, 255));
+            bdg->SetCornerRadius(demos[i].r);
+
+            auto lbl = std::unique_ptr<DuiLabel>(new DuiLabel());
+            lbl->SetText(demos[i].caption);
+            lbl->SetTextColor(RGB(80, 80, 80));
+
+            col->AddChild(std::move(bdg), DuiLayout::Hint().Fixed(24));
+            col->AddChild(std::move(lbl), DuiLayout::Hint().Fixed(18));
+            row->AddChild(std::move(col), DuiLayout::Hint().Fixed(120));
+        }
+        AddVariantRow(page.get(), std::move(row), 60);
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("DuiBadge — 长文字 chip(leading dot + MaxDisplayChars=0)"),
+               _T("典型 status chip 用法:SetCornerRadius(4) + SetMaxDisplayChars(0) + "
+                  "SetLeadingDot(<语义色>), 配合浅灰底 + 深字。"
+                  "ServicesPanel / EnterprisesScreen 的状态徽章可以直接用这种姿势, "
+                  "撕掉 ui::DrawChip 兜底。"));
+    {
+        // 模拟 ServicesPanel 的状态徽章四种态:运行中 / 审核中 / 已停用 / 已删除
+        struct StatusDemo
+        {
+            LPCTSTR  text;
+            COLORREF dot;
+        };
+        const StatusDemo demos[] =
+        {
+            { _T("运行中"),  RGB( 60, 200, 120) },   // 绿
+            { _T("审核中"),  RGB(220, 150,  40) },   // 橙
+            { _T("已停用"),  RGB(160, 168, 180) },   // 灰
+            { _T("已删除"),  RGB(220,  60,  60) },   // 红
+        };
+        const int kCount = sizeof(demos) / sizeof(demos[0]);
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->SetGap(12);
+        for (int i = 0; i < kCount; ++i)
+        {
+            auto bdg = std::unique_ptr<DuiBadge>(new DuiBadge());
+            bdg->SetText(demos[i].text);
+            bdg->SetMaxDisplayChars(0);                  // 不截
+            bdg->SetCornerRadius(4);                      // chip 圆角
+            bdg->SetLeadingDot(demos[i].dot);             // 语义色圆点
+            bdg->SetBgColor   (RGB(245, 246, 248));       // 浅灰底
+            bdg->SetTextColor (RGB( 80,  88, 102));       // 深字
+            row->AddChild(std::move(bdg), DuiLayout::Hint().Fixed(96));
+        }
+        AddVariantRow(page.get(), std::move(row), 36);
+    }
+    return page;
+}
+
+// ===== Toast ==========================================================
+
+namespace {
+
+// 合成一张 16x16 PARGB 位图作 toast 图标演示。color 指定 RGB(白色描边时
+// 传 RGB(255,255,255)), alpha 通道写满 255(可见)。kind 控制图标形状:
+//   0=Info(ⓘ), 1=Success(✓), 2=Warning(⚠), 3=Error(✗)。
+HBITMAP MakeToastIcon(int kind, COLORREF color)
+{
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth       = 16;
+    bi.bmiHeader.biHeight      = -16;        // top-down
+    bi.bmiHeader.biPlanes      = 1;
+    bi.bmiHeader.biBitCount    = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP hbm = ::CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS,
+                                     &bits, nullptr, 0);
+    if (!hbm)
+    {
+        return nullptr;
+    }
+    BYTE* p = static_cast<BYTE*>(bits);
+    ::ZeroMemory(p, 16 * 16 * 4);
+    BYTE r = GetRValue(color);
+    BYTE g = GetGValue(color);
+    BYTE bb = GetBValue(color);
+    auto setPx = [&](int x, int y)
+    {
+        if (x < 0 || x >= 16 || y < 0 || y >= 16) return;
+        BYTE* px = p + (y * 16 + x) * 4;
+        px[0] = bb; px[1] = g; px[2] = r; px[3] = 255;
+    };
+    auto fillBlock = [&](int x0, int y0, int x1, int y1)
+    {
+        for (int y = y0; y < y1; ++y) for (int x = x0; x < x1; ++x) setPx(x, y);
+    };
+    switch (kind)
+    {
+    case 0: // Info: 圆 + 中心竖线 + 顶点
+        // 8x8 简化:外圈像素一圈 + 中央 i
+        for (int i = 2; i <= 13; ++i) { setPx(i, 1); setPx(i, 14); setPx(1, i); setPx(14, i); }
+        fillBlock(7, 5, 9, 6);     // 顶点
+        fillBlock(7, 7, 9, 13);    // 竖线
+        break;
+    case 1: // Success: ✓
+        // 折线两段:左下到中下, 中下到右上
+        for (int k = 0; k < 4; ++k) { setPx(3 + k, 8 + k);  setPx(4 + k, 8 + k); }
+        for (int k = 0; k < 7; ++k) { setPx(7 + k, 11 - k); setPx(8 + k, 11 - k); }
+        break;
+    case 2: // Warning: 三角形 + 中竖线 + 底点
+        // 三角形边:从顶 (8,2) 到 (1,13) 和 (14,13), 底部 (1,13)-(14,13)
+        for (int k = 0; k <= 11; ++k)
+        {
+            int xL = 8 - (7 * k) / 11;
+            int xR = 8 + (7 * k) / 11;
+            setPx(xL, 2 + k); setPx(xR, 2 + k);
+        }
+        for (int x = 1; x <= 14; ++x) setPx(x, 13);
+        fillBlock(7, 6, 9, 10);    // 中竖线
+        fillBlock(7, 11, 9, 12);   // 底点
+        break;
+    case 3: // Error: ✗
+        for (int k = 0; k < 12; ++k)
+        {
+            setPx(2 + k, 2 + k);  setPx(3 + k, 2 + k);
+            setPx(2 + k, 13 - k); setPx(3 + k, 13 - k);
+        }
+        break;
+    default:
+        break;
+    }
+    return hbm;
+}
+
+// Toast 演示页用的 9 个按钮 ctrlId(都局部用, 不入 UiIds)。
+const int kToastBtnInfo     = 9001;
+const int kToastBtnSuccess  = 9002;
+const int kToastBtnWarning  = 9003;
+const int kToastBtnError    = 9004;
+const int kToastBtnLongText = 9005;
+const int kToastBtnNoIcon   = 9006;
+const int kToastBtnLongDur  = 9007;
+const int kToastBtnCancel   = 9008;
+const int kToastBtnRapid    = 9009;
+
+} // anonymous
+
+std::unique_ptr<DuiControl> Build_Toast()
+{
+    auto page = NewPage();
+
+    AddSection(page.get(),
+               _T("DuiToast — 4 语义色 + 长文本截断(点击按钮触发)"),
+               _T("顶层浮出提示控件;HitTest 返 nullptr 不抢点击"
+                  ", 内部走 DuiAnimMgr 自驱渐入 200ms + 显示 3s + 渐出 200ms。"));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->SetGap(10);
+
+        struct Btn { int id; LPCTSTR text; };
+        const Btn btns[] =
+        {
+            { kToastBtnInfo,     _T("信息") },
+            { kToastBtnSuccess,  _T("成功") },
+            { kToastBtnWarning,  _T("警告") },
+            { kToastBtnError,    _T("错误") },
+            { kToastBtnLongText, _T("长文本截断") },
+        };
+        for (auto& b : btns)
+        {
+            auto bt = std::unique_ptr<DuiButton>(new DuiButton());
+            bt->SetCtrlId(b.id);
+            bt->SetText(b.text);
+            bt->SetVariant(DuiButton::Variant::Default);
+            row->AddChild(std::move(bt), DuiLayout::Hint().Fixed(120));
+        }
+        AddVariantRow(page.get(), std::move(row), 36);
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("配置项演示"),
+               _T("无图标 / 8 秒长时长 / Show 后立即 HideNow 取消"));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->SetGap(10);
+
+        struct Btn { int id; LPCTSTR text; };
+        const Btn btns[] =
+        {
+            { kToastBtnNoIcon,  _T("无图标") },
+            { kToastBtnLongDur, _T("8s 长时长") },
+            { kToastBtnCancel,  _T("Show 后立即取消") },
+        };
+        for (auto& b : btns)
+        {
+            auto bt = std::unique_ptr<DuiButton>(new DuiButton());
+            bt->SetCtrlId(b.id);
+            bt->SetText(b.text);
+            bt->SetVariant(DuiButton::Variant::Default);
+            row->AddChild(std::move(bt), DuiLayout::Hint().Fixed(140));
+        }
+        AddVariantRow(page.get(), std::move(row), 36);
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("多次 Show 替换"),
+               _T("连点 3 次:前一条 toast 被立即替换, 不堆积"));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->SetGap(10);
+        auto bt = std::unique_ptr<DuiButton>(new DuiButton());
+        bt->SetCtrlId(kToastBtnRapid);
+        bt->SetText(_T("连点 3 次测试"));
+        bt->SetVariant(DuiButton::Variant::Default);
+        row->AddChild(std::move(bt), DuiLayout::Hint().Fixed(180));
+        AddVariantRow(page.get(), std::move(row), 36);
+    }
+
+    // ---- Toast 实例:挂在 page 末尾, Layout override 让它自定位顶居中 ----
+    auto toast = std::unique_ptr<DuiToast>(new DuiToast());
+    DuiToast* toastRaw = toast.get();
+    page->AddChild(std::move(toast), DuiLayout::Hint().Fixed(0));   // Fixed(0) 不占 VBox 主轴空间
+
+    // ---- 图标位图:进程级缓存(static lambda init), 退出由 OS 收 ----
+    static HBITMAP s_iconInfo    = MakeToastIcon(0, RGB(255, 255, 255));
+    static HBITMAP s_iconSuccess = MakeToastIcon(1, RGB(255, 255, 255));
+    static HBITMAP s_iconWarning = MakeToastIcon(2, RGB(255, 255, 255));
+    static HBITMAP s_iconError   = MakeToastIcon(3, RGB(255, 255, 255));
+
+    // ---- 注册 page notify hook, 根据 ctrlId 触发不同 toast 配置 ----
+    Pages::g_pageNotifyHook =
+        [toastRaw](const balloonwjui::DuiNotify* n)
+        {
+            if (n == nullptr || n->code != balloonwjui::DUIN_CLICK)
+            {
+                return;
+            }
+            // 每次重置一组通用配置, 避免上次设置遗留(MaxWidth / DurationMs 等)。
+            toastRaw->SetTextColor(RGB(255, 255, 255));
+            toastRaw->SetDurationMs(3000);
+            toastRaw->SetMaxWidth(0);
+            toastRaw->SetCornerRadius(16);
+            switch (n->ctrlId)
+            {
+            case kToastBtnInfo:
+                toastRaw->SetBgColor(RGB( 45, 108, 223));     // 品牌蓝
+                toastRaw->SetIcon(s_iconInfo);
+                toastRaw->Show(_T("已切换到深色主题"));
+                break;
+            case kToastBtnSuccess:
+                toastRaw->SetBgColor(RGB( 40, 167,  69));     // 成功绿
+                toastRaw->SetIcon(s_iconSuccess);
+                toastRaw->Show(_T("保存成功"));
+                break;
+            case kToastBtnWarning:
+                toastRaw->SetBgColor(RGB(245, 158,  11));     // 警告橙
+                toastRaw->SetIcon(s_iconWarning);
+                toastRaw->Show(_T("请先在左侧选择一个 agent"));
+                break;
+            case kToastBtnError:
+                toastRaw->SetBgColor(RGB(220,  53,  69));     // 错误红
+                toastRaw->SetIcon(s_iconError);
+                toastRaw->Show(_T("网络连接失败"));
+                break;
+            case kToastBtnLongText:
+                toastRaw->SetBgColor(RGB( 50,  50,  50));     // 默认深灰
+                toastRaw->SetIcon(nullptr);
+                toastRaw->SetMaxWidth(360);                    // 触发截断
+                toastRaw->Show(_T("这是一段非常非常非常非常长的提示文字用于验证 MaxWidth 截断加 … 的行为"));
+                break;
+            case kToastBtnNoIcon:
+                toastRaw->SetBgColor(RGB( 50,  50,  50));
+                toastRaw->SetIcon(nullptr);
+                toastRaw->Show(_T("已复制到剪贴板"));
+                break;
+            case kToastBtnLongDur:
+                toastRaw->SetBgColor(RGB( 45, 108, 223));
+                toastRaw->SetIcon(s_iconInfo);
+                toastRaw->SetDurationMs(8000);                 // 8 秒
+                toastRaw->Show(_T("上传中, 请稍候(8 秒)..."));
+                break;
+            case kToastBtnCancel:
+                // Show 一个 5 秒 toast, 然后立刻 HideNow 取消 —— 用户应该
+                // 看不到任何 toast 出现, 验证 HideNow 能 hard cancel。
+                toastRaw->SetBgColor(RGB( 50,  50,  50));
+                toastRaw->SetIcon(s_iconInfo);
+                toastRaw->SetDurationMs(5000);
+                toastRaw->Show(_T("这条应该被立即取消"));
+                toastRaw->HideNow();
+                break;
+            case kToastBtnRapid:
+                // 连续 3 次 Show: 前两条立即被替换, 最终只显示"third"。
+                toastRaw->SetBgColor(RGB( 50,  50,  50));
+                toastRaw->SetIcon(nullptr);
+                toastRaw->Show(_T("first"));
+                toastRaw->Show(_T("second"));
+                toastRaw->Show(_T("third"));
+                break;
+            default:
+                break;
+            }
+        };
     return page;
 }
 
@@ -935,6 +1713,53 @@ std::unique_ptr<DuiControl> Build_ComboBox()
         row->AddChild(std::move(cb), DuiLayout::Hint().Weight(1));
         AddVariantRow(page.get(), std::move(row), 28);
     }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("Arrow color + AA"),
+               _T("下拉箭头走 DuiAA::FillPolygon 抗锯齿绘制(对角边丝滑无锯齿); "
+                  "SetArrowColor(COLORREF) 一行换色, 与底色 / 边框 / 数据 model 正交。"
+                  "三个 combo 并列展示:默认蓝灰 / 品牌蓝 / 危险红。"));
+    {
+        struct ArrowDemo
+        {
+            LPCTSTR  caption;
+            COLORREF arrow;   // CLR_INVALID = 不设, 用默认
+        };
+        const ArrowDemo demos[] =
+        {
+            { _T("默认 (RGB 80,100,140)"), CLR_INVALID            },
+            { _T("品牌蓝"),                 RGB( 45, 108, 223)     },
+            { _T("危险红"),                 RGB(220,  60,  60)     },
+        };
+        const int kCount = sizeof(demos) / sizeof(demos[0]);
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->SetGap(16);
+        for (int i = 0; i < kCount; ++i)
+        {
+            auto col = std::unique_ptr<DuiVBox>(new DuiVBox());
+            col->SetGap(4);
+
+            auto cb = std::unique_ptr<DuiComboBox>(new DuiComboBox());
+            cb->AddString(_T("Option A"));
+            cb->AddString(_T("Option B"));
+            cb->AddString(_T("Option C"));
+            cb->SetCurSel(0, false);
+            if (demos[i].arrow != CLR_INVALID)
+            {
+                cb->SetArrowColor(demos[i].arrow);
+            }
+
+            auto lbl = std::unique_ptr<DuiLabel>(new DuiLabel());
+            lbl->SetText(demos[i].caption);
+            lbl->SetTextColor(RGB(80, 80, 80));
+
+            col->AddChild(std::move(cb),  DuiLayout::Hint().Fixed(28));
+            col->AddChild(std::move(lbl), DuiLayout::Hint().Fixed(18));
+            row->AddChild(std::move(col), DuiLayout::Hint().Weight(1));
+        }
+        AddVariantRow(page.get(), std::move(row), 60);
+    }
     return page;
 }
 
@@ -1136,6 +1961,56 @@ std::unique_ptr<DuiControl> Build_ProgressBar()
 
 // ===== Tab ============================================================
 
+namespace {
+
+// 合成一个 16x16 32bpp 预乘 alpha 的"色块"位图作 tab 图标演示;静态、
+// 进程级生命期, 不必释放。三种颜色用以区分三个 tab。与 DuiButton demo
+// 的 PlusIcon 思路一致(见 Build_Button 的 LeadingIcon section)。
+HBITMAP MakeTabDotIcon(BYTE r, BYTE g, BYTE b)
+{
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth       = 16;
+    bi.bmiHeader.biHeight      = -16;      // top-down
+    bi.bmiHeader.biPlanes      = 1;
+    bi.bmiHeader.biBitCount    = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP hbm = ::CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS,
+                                     &bits, nullptr, 0);
+    if (!hbm)
+    {
+        return nullptr;
+    }
+    BYTE* p = static_cast<BYTE*>(bits);
+    ::ZeroMemory(p, 16 * 16 * 4);
+    // 画一个 12 像素直径的实心圆盘, 中心 (7.5, 7.5), 预乘 alpha。
+    // 半径 6, 用 r*r 比较避免 sqrt。
+    const int cx = 8;
+    const int cy = 8;
+    const int rr = 36;     // 6 * 6
+    for (int y = 0; y < 16; ++y)
+    {
+        for (int x = 0; x < 16; ++x)
+        {
+            int dx = x - cx;
+            int dy = y - cy;
+            if (dx * dx + dy * dy < rr)
+            {
+                BYTE* px = p + (y * 16 + x) * 4;
+                // 预乘 alpha: alpha=255 → RGB 不需要乘 (BGRA 顺序)
+                px[0] = b;
+                px[1] = g;
+                px[2] = r;
+                px[3] = 255;
+            }
+        }
+    }
+    return hbm;
+}
+
+} // anonymous
+
 std::unique_ptr<DuiControl> Build_Tab()
 {
     auto page = NewPage();
@@ -1164,6 +2039,66 @@ std::unique_ptr<DuiControl> Build_Tab()
         t->AddTab(_T("Settings"), false, true);    // dropdown
         t->AddTab(_T("Chat: Alice"), true);        // closeable
         t->AddTab(_T("Chat: Bob"),   true);
+        t->SetCurSel(0, false);
+        row->AddChild(std::move(t), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 32);
+    }
+    AddGap(page.get(), kSectionGap);
+
+    // === Leading icon ====================================================
+    AddSection(page.get(),
+               _T("Tabs with leading icon"),
+               _T("SetTabIcon(idx, HBITMAP) / AddTab(..., icon)。图标 16x16 PARGB, "
+                  "走 ::AlphaBlend, HBITMAP caller-owned, 控件不释放。SetIconSize / "
+                  "SetIconGap 调整尺寸与图标-文字间距。"));
+    {
+        static HBITMAP s_dotRed   = MakeTabDotIcon(220,  60,  60);
+        static HBITMAP s_dotGreen = MakeTabDotIcon( 60, 170,  80);
+        static HBITMAP s_dotBlue  = MakeTabDotIcon( 60, 120, 220);
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        auto t = std::unique_ptr<DuiTab>(new DuiTab());
+        t->AddTab(_T("Inbox"),     false, false, 0, s_dotRed);
+        t->AddTab(_T("Sent"),      false, false, 0, s_dotGreen);
+        t->AddTab(_T("Archive"),   false, false, 0, s_dotBlue);
+        t->SetCurSel(0, false);
+        row->AddChild(std::move(t), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 32);
+    }
+    AddGap(page.get(), kSectionGap);
+
+    // === Auto-fit width: Off (default) vs On 对照 ========================
+    AddSection(page.get(),
+               _T("Auto-fit width: Off (default)"),
+               _T("默认 SetAutoFitTabWidth(false) — tab 宽 clamp 到 [minTabW=60, "
+                  "maxTabW=200]: 极短 tab 至少 60px, 极长 tab 截到 200px + 省略号。"
+                  "适合\"每个 tab 视觉宽度相近\"的设置对话框等场景。"));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        auto t = std::unique_ptr<DuiTab>(new DuiTab());
+        t->AddTab(_T("A"));     // 极短: 文字 + padding << 60, clamp 到 60
+        t->AddTab(_T("Hello"));
+        t->AddTab(_T("Settings"));
+        t->AddTab(_T("非常非常非常非常非常非常长的标签标题"));   // 极长: clamp 到 200 + 省略号
+        t->SetCurSel(0, false);
+        row->AddChild(std::move(t), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 32);
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("Auto-fit width: On"),
+               _T("SetAutoFitTabWidth(true) — 跳过 min / max clamp, tab 宽严格"
+                  "贴合 \"text + 2*padding + (icon? iconSize+iconGap : 0) + (close/dropdown 增量)\"。"
+                  "适合分类条 / 过滤条等\"tab 宽窄一目了然\"的场景。"));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        auto t = std::unique_ptr<DuiTab>(new DuiTab());
+        t->SetAutoFitTabWidth(true);
+        t->AddTab(_T("A"));      // 极短: 仅 padding 包裹, < 60
+        t->AddTab(_T("Hello"));
+        t->AddTab(_T("Settings"));
+        t->AddTab(_T("非常非常非常非常非常非常长的标签标题"));   // 极长: > 200, 不截断
         t->SetCurSel(0, false);
         row->AddChild(std::move(t), DuiLayout::Hint().Weight(1));
         AddVariantRow(page.get(), std::move(row), 32);
@@ -1586,6 +2521,68 @@ std::unique_ptr<DuiControl> Build_Layout()
         row->AddChild(std::move(inner), DuiLayout::Hint().Weight(1));
         AddVariantRow(page.get(), std::move(row), 80);
     }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("DuiVBox — 卡片样式(BgColor / CornerRadius / BorderColor / BorderWidth)"),
+               _T("DuiVBox 直接担当卡片容器:4 个 setter 默认全关闭, 设值后"
+                  "OnPaint 自动绘装饰 + 调基类画子。底色 / 描边走"
+                  "DuiAA::FillRoundRect, 自带 AA。owner-draw 流程可调静态"
+                  "DuiVBox::PaintBackground 共用同一段绘制。"
+                  "下方三个 VBox 并列:无装饰(默认) / 经典白底圆角卡 / 品牌色描边卡。"));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->SetGap(16);
+
+        // 1) 无装饰(默认):与历史 DuiVBox 完全一致, 验证向后兼容。
+        auto v1 = std::unique_ptr<DuiVBox>(new DuiVBox());
+        v1->SetPadding(12);
+        auto l1a = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l1a->SetText(_T("默认(无装饰)"));
+        l1a->SetTextColor(RGB(80, 80, 80));
+        v1->AddChild(std::move(l1a), DuiLayout::Hint().Fixed(20));
+        auto l1b = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l1b->SetText(_T("DuiVBox 不调任何卡片 setter"));
+        l1b->SetTextColor(RGB(140, 140, 140));
+        v1->AddChild(std::move(l1b), DuiLayout::Hint().Fixed(18));
+        row->AddChild(std::move(v1), DuiLayout::Hint().Weight(1));
+
+        // 2) 经典卡片:白底 + 8px 圆角 + 1px 浅灰描边(对应 admin ui::DrawCard)。
+        auto v2 = std::unique_ptr<DuiVBox>(new DuiVBox());
+        v2->SetBgColor      (RGB(255, 255, 255));
+        v2->SetCornerRadius (8);
+        v2->SetBorderColor  (RGB(232, 236, 240));
+        v2->SetBorderWidth  (1.0f);
+        v2->SetPadding(12);
+        auto l2a = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l2a->SetText(_T("经典卡片"));
+        l2a->SetTextColor(RGB(20, 30, 50));
+        v2->AddChild(std::move(l2a), DuiLayout::Hint().Fixed(20));
+        auto l2b = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l2b->SetText(_T("白底 + 8px 圆角 + 1px 浅灰边"));
+        l2b->SetTextColor(RGB(140, 140, 140));
+        v2->AddChild(std::move(l2b), DuiLayout::Hint().Fixed(18));
+        row->AddChild(std::move(v2), DuiLayout::Hint().Weight(1));
+
+        // 3) 品牌色描边卡:浅底 + 12px 圆角 + 2px 品牌色边。
+        auto v3 = std::unique_ptr<DuiVBox>(new DuiVBox());
+        v3->SetBgColor      (RGB(245, 248, 255));
+        v3->SetCornerRadius (12);
+        v3->SetBorderColor  (RGB( 45, 108, 223));
+        v3->SetBorderWidth  (2.0f);
+        v3->SetPadding(12);
+        auto l3a = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l3a->SetText(_T("品牌色边框卡"));
+        l3a->SetTextColor(RGB(20, 30, 50));
+        v3->AddChild(std::move(l3a), DuiLayout::Hint().Fixed(20));
+        auto l3b = std::unique_ptr<DuiLabel>(new DuiLabel());
+        l3b->SetText(_T("12px 圆角 + 2px 品牌色边"));
+        l3b->SetTextColor(RGB(140, 140, 140));
+        v3->AddChild(std::move(l3b), DuiLayout::Hint().Fixed(18));
+        row->AddChild(std::move(v3), DuiLayout::Hint().Weight(1));
+
+        AddVariantRow(page.get(), std::move(row), 80);
+    }
     return page;
 }
 
@@ -1798,6 +2795,82 @@ std::unique_ptr<DuiControl> Build_TabPage()
         row->AddChild(std::move(tp), DuiLayout::Hint().Weight(1));
         AddVariantRow(page.get(), std::move(row), 180);
     }
+    AddGap(page.get(), kSectionGap);
+
+    // === Leading icon ====================================================
+    AddSection(page.get(),
+               _T("Tabs with leading icon"),
+               _T("AddPage(title, page, icon) 或 SetPageIcon(idx, HBITMAP) 在 tab 头"
+                  "左侧加 16x16 PARGB 图标; 透传给内部 DuiTab, 行为与 DuiTab 一致。"
+                  "SetIconSize / SetIconGap 调整尺寸与图标-文字间距。"));
+    {
+        // 复用 Build_Tab 的 MakeTabDotIcon (同 TU 的 anonymous namespace 可见)。
+        static HBITMAP s_tpRed   = MakeTabDotIcon(220,  60,  60);
+        static HBITMAP s_tpGreen = MakeTabDotIcon( 60, 170,  80);
+        static HBITMAP s_tpBlue  = MakeTabDotIcon( 60, 120, 220);
+
+        auto tp = std::unique_ptr<DuiTabPage>(new DuiTabPage());
+        tp->AddPage(_T("Inbox"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB(220,  60,  60), _T("inbox page"))),
+                    s_tpRed);
+        tp->AddPage(_T("Sent"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB( 60, 170,  80), _T("sent page"))),
+                    s_tpGreen);
+        tp->AddPage(_T("Archive"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB( 60, 120, 220), _T("archive page"))),
+                    s_tpBlue);
+        tp->SetCurSel(0, false);
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->AddChild(std::move(tp), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 200);
+    }
+    AddGap(page.get(), kSectionGap);
+
+    // === Auto-fit width 对照 ============================================
+    AddSection(page.get(),
+               _T("Auto-fit width: Off (default)"),
+               _T("默认 SetAutoFitTabWidth(false): tab 头宽 clamp 到 [60, 200], 极短"
+                  "tab 至少 60px, 极长 tab 截到 200 + 省略号。"));
+    {
+        auto tp = std::unique_ptr<DuiTabPage>(new DuiTabPage());
+        tp->AddPage(_T("A"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB(120, 150, 200), _T("A"))));
+        tp->AddPage(_T("Hello"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB(150, 200, 120), _T("Hello"))));
+        tp->AddPage(_T("Settings"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB(200, 150, 120), _T("Settings"))));
+        tp->AddPage(_T("非常非常非常非常非常非常长的标签标题"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB(180, 120, 200), _T("long"))));
+        tp->SetCurSel(0, false);
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->AddChild(std::move(tp), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 160);
+    }
+    AddGap(page.get(), kSectionGap);
+
+    AddSection(page.get(),
+               _T("Auto-fit width: On"),
+               _T("SetAutoFitTabWidth(true): tab 头宽严格贴合内容, 跳过 min / max clamp。"
+                  "长标题完整显示, 短标题贴紧 padding; 与 DuiTab 同一开关。"));
+    {
+        auto tp = std::unique_ptr<DuiTabPage>(new DuiTabPage());
+        tp->SetAutoFitTabWidth(true);
+        tp->AddPage(_T("A"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB(120, 150, 200), _T("A"))));
+        tp->AddPage(_T("Hello"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB(150, 200, 120), _T("Hello"))));
+        tp->AddPage(_T("Settings"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB(200, 150, 120), _T("Settings"))));
+        tp->AddPage(_T("非常非常非常非常非常非常长的标签标题"),
+                    std::unique_ptr<DuiControl>(new ColorPaneTP(RGB(180, 120, 200), _T("long"))));
+        tp->SetCurSel(0, false);
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->AddChild(std::move(tp), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 160);
+    }
     return page;
 }
 
@@ -1812,6 +2885,34 @@ static const COLORREF kTVAway    = RGB(240, 175,  40);
 static const COLORREF kTVBusy    = RGB(220,  60,  60);
 static const COLORREF kTVOffline = RGB(150, 150, 150);
 
+// Tiny DuiButton subclass that fires a std::function<> on click; used by the
+// TreeView demo's "Save expand / Filter / Hide" toolbar. Mirrors the later-
+// defined FnButton class but renamed to avoid the cross-section forward
+// reference (Build_TreeView appears before FnButton's definition).
+class TreeDemoBtn : public DuiButton
+{
+public:
+    std::function<void(TreeDemoBtn*)> onClick;
+    bool OnLButtonDown(POINT pt, UINT mk) override
+    {
+        m_localPressed = true;
+        return DuiButton::OnLButtonDown(pt, mk);
+    }
+    bool OnLButtonUp(POINT pt, UINT mk) override
+    {
+        bool was = m_localPressed;
+        m_localPressed = false;
+        bool r = DuiButton::OnLButtonUp(pt, mk);
+        if (was && IsEnabled() && ::PtInRect(&GetRect(), pt) && onClick)
+        {
+            onClick(this);
+        }
+        return r;
+    }
+private:
+    bool m_localPressed = false;
+};
+
 } // anonymous
 
 std::unique_ptr<DuiControl> Build_TreeView()
@@ -1819,9 +2920,9 @@ std::unique_ptr<DuiControl> Build_TreeView()
     auto page = NewPage();
 
     AddSection(page.get(),
-               _T("Friend list (click ▶ to expand, click row to select)"),
-               _T("Embedded in a DuiScrollView so the tree scrolls when collapsed/expanded changes height. ")
-               _T("Row 28 px, indent 18 px, status dot at right."));
+               _T("1. 好友列表（基础用法：点 ▶ 展开折叠，点行选中）"),
+               _T("树嵌进 DuiScrollView，展开/折叠改变高度时滚动条自动出现。")
+               _T("行高 28 像素，缩进 18 像素，行右端可挂彩色状态点。"));
     {
         auto tree = std::unique_ptr<DuiTreeView>(new DuiTreeView());
         tree->SetCtrlId(900);
@@ -1869,11 +2970,139 @@ std::unique_ptr<DuiControl> Build_TreeView()
         AddVariantRow(page.get(), std::move(row), 320);
     }
 
+    // Multi-level nesting section -------------------------------------------
+    AddSection(page.get(),
+               _T("2. 多层级嵌套（任意深度）"),
+               _T("AddRoot / AddChild 支持无限深度，每个 AddChild 都可以挂到任意已存在的节点下，")
+               _T("不限定挂到根节点。绘制时按 depth × indent（默认 18 像素）做视觉缩进；")
+               _T("折叠某个祖先节点时它下面的整棵子树自动跳过。本演示画了一棵 5 层公司组织结构：")
+               _T("公司 → 中心 → 部门 → 小组 → 项目。"));
+    {
+        auto tree = std::unique_ptr<DuiTreeView>(new DuiTreeView());
+        tree->SetCtrlId(906);
+
+        //—— Depth 0: 公司
+        int gCompany = tree->AddRoot(_T("CloudCorp"));
+
+        //—— Depth 1: 两个中心
+        int gRD  = tree->AddChild(gCompany, _T("R&D Center"));
+        int gOps = tree->AddChild(gCompany, _T("Operations Center"));
+
+        //—— Depth 2: R&D 下两个部门 / Ops 下两个部门
+        int gFE      = tree->AddChild(gRD,  _T("Frontend"));
+        int gBE      = tree->AddChild(gRD,  _T("Backend"));
+        int gHost    = tree->AddChild(gOps, _T("Hosting"));
+        int gSupport = tree->AddChild(gOps, _T("Support"));
+        (void)gSupport;
+
+        //—— Depth 3: 各部门下的组
+        int gWeb     = tree->AddChild(gFE,   _T("Web Team"));
+        int gMobile  = tree->AddChild(gFE,   _T("Mobile Team"));
+        int gGateway = tree->AddChild(gBE,   _T("Gateway Group"));
+        int gStore   = tree->AddChild(gBE,   _T("Datastore Group"));
+        int gCDN     = tree->AddChild(gHost, _T("CDN Group"));
+        (void)gStore; (void)gCDN;
+
+        //—— Depth 4: 项目级（叶节点）
+        tree->AddChild(gWeb,     _T("Project Aurora"));
+        tree->AddChild(gWeb,     _T("Project Borealis"));
+        tree->AddChild(gMobile,  _T("Project Comet"));
+        tree->AddChild(gMobile,  _T("Project Drako"));
+        tree->AddChild(gGateway, _T("Edge Proxy"));
+        tree->AddChild(gGateway, _T("Rate Limiter"));
+
+        DuiTreeView* treeRaw = tree.get();
+
+        auto sv = std::unique_ptr<DuiScrollView>(new DuiScrollView());
+        sv->SetContent(std::move(tree));
+        sv->SetContentHeight(treeRaw->GetContentHeight());
+        DuiScrollView* svRaw = sv.get();
+        auto syncSvHeight = [treeRaw, svRaw]()
+        {
+            svRaw->SetContentHeight(treeRaw->GetContentHeight());
+        };
+
+        //—— 控制按钮：批量展开/折叠演示 hideUntilDepth 跳过子树
+        auto bar = std::unique_ptr<DuiHBox>(new DuiHBox());
+        bar->SetGap(8);
+
+        auto bExpand = std::unique_ptr<TreeDemoBtn>(new TreeDemoBtn());
+        bExpand->SetText(_T("Expand all"));
+        bExpand->onClick = [treeRaw, syncSvHeight](TreeDemoBtn*)
+        {
+            treeRaw->ExpandAll();
+            syncSvHeight();
+        };
+
+        auto bCollapse = std::unique_ptr<TreeDemoBtn>(new TreeDemoBtn());
+        bCollapse->SetText(_T("Collapse all"));
+        bCollapse->onClick = [treeRaw, syncSvHeight](TreeDemoBtn*)
+        {
+            treeRaw->CollapseAll();
+            syncSvHeight();
+        };
+
+        bar->AddChild(std::move(bExpand),   DuiLayout::Hint().Fixed(100));
+        bar->AddChild(std::move(bCollapse), DuiLayout::Hint().Fixed(100));
+
+        auto group = std::unique_ptr<DuiVBox>(new DuiVBox());
+        group->SetGap(8);
+        group->AddChild(std::move(bar), DuiLayout::Hint().Fixed(30));
+        group->AddChild(std::move(sv),  DuiLayout::Hint().Weight(1));
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->AddChild(std::move(group), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 320);
+    }
+
+    // Per-node icons section ------------------------------------------------
+    AddSection(page.get(),
+               _T("3. 节点图标（SetItemIcon 传 HBITMAP）"),
+               _T("每个节点可以挂自己的 18×18 HBITMAP 图标，绘制在 ▶ 三角标志和标签之间。")
+               _T("位图所有权由调用方持有（控件内部只存裸指针）。可以混搭：")
+               _T("一部分节点有图标、一部分没有；单列模式和多列模式都生效，任意层级都可用。"));
+    {
+        //—— 复用 MakeAvatarSourceBitmap 生成 4 个不同色调的测试位图
+        //   （函数生成 32×32，PaintRow StretchBlt 到 18×18 显示槽）。
+        //   static 缓存随进程退出释放，本 section 重建时复用。
+        static HBITMAP s_iconRedDir   = MakeAvatarSourceBitmap(220,  90,  60, 130,  30,  20);
+        static HBITMAP s_iconBlueDir  = MakeAvatarSourceBitmap( 80, 130, 220,  30,  60, 130);
+        static HBITMAP s_iconGreenDoc = MakeAvatarSourceBitmap( 80, 200, 110,  30, 110,  50);
+        static HBITMAP s_iconAmberDoc = MakeAvatarSourceBitmap(255, 180,  70, 200, 110,  20);
+
+        auto tree = std::unique_ptr<DuiTreeView>(new DuiTreeView());
+        tree->SetCtrlId(907);
+        tree->SetRowHeight(30);   // 略高让 18px icon 周围有 padding
+
+        //—— 根节点带 "folder" 风格 icon
+        int gAlpha = tree->AddRoot(_T("project-alpha"), s_iconRedDir);
+        int gBeta  = tree->AddRoot(_T("project-beta"),  s_iconBlueDir);
+
+        //—— 子节点带不同 icon；混入两个无 icon 节点演示混排
+        tree->AddChild(gAlpha, _T("README.md"),  s_iconGreenDoc);
+        tree->AddChild(gAlpha, _T("design.pdf"), s_iconAmberDoc);
+        tree->AddChild(gAlpha, _T("(empty TODO, no icon)"));     // 不传 icon
+        tree->AddChild(gAlpha, _T("schema.sql"), s_iconGreenDoc);
+
+        tree->AddChild(gBeta,  _T("docs.md"),    s_iconGreenDoc);
+        tree->AddChild(gBeta,  _T("logo.png"),   s_iconAmberDoc);
+        tree->AddChild(gBeta,  _T("(legacy notes, no icon)"));
+
+        auto sv = std::unique_ptr<DuiScrollView>(new DuiScrollView());
+        DuiTreeView* treeRaw = tree.get();
+        sv->SetContent(std::move(tree));
+        sv->SetContentHeight(treeRaw->GetContentHeight());
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->AddChild(std::move(sv), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 280);
+    }
+
     // Multi-column section --------------------------------------------------
     AddSection(page.get(),
-               _T("Multi-column mode (drag header / Ctrl+click to multi-select / dbl-click text to edit)"),
-               _T("5 columns: Name (tree, frozen) / Done (CheckBox) / Progress / Size / Link. ")
-               _T("Editable=on, frozen-cols=1, initial sort indicator on Name (asc)."));
+               _T("4. 多列表格模式（拖动列宽、Ctrl+点击多选、双击文字进入编辑）"),
+               _T("5 列：Name（树列，冻结）/ Done（复选框）/ Progress / Size / Link。")
+               _T("开启了编辑模式，冻结第 1 列，初始按 Name 升序显示排序指示。"));
     {
         auto tree = std::unique_ptr<DuiTreeView>(new DuiTreeView());
         tree->SetCtrlId(901);
@@ -1927,6 +3156,428 @@ std::unique_ptr<DuiControl> Build_TreeView()
         auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
         row->AddChild(std::move(tree), DuiLayout::Hint().Weight(1));
         AddVariantRowCapture(page.get(), _T("treeview-multicol"), std::move(row), 320);
+    }
+
+    // Right-text + grayed icon (A3 + A4) section ------------------------
+    AddSection(page.get(),
+               _T("5. 右侧辅助文字与灰显图标（仅单列模式）"),
+               _T("SetItemRightText(id, \"...\") 在行右端画一段右对齐的辅助文字（在状态点的内侧）。")
+               _T("SetItemIconGrayed(id, true) 用 NTSC luma 灰度公式把图标转灰，")
+               _T("典型用途是表示\"离线 / 已禁用\"这种在但不可用的状态。"));
+    {
+        //—— 复用 Build_Avatar 用过的 MakeAvatarSourceBitmap 生成 3 个彩色测试 icon
+        //   （32x32 渐变方块）。静态缓存随进程退出释放，本 section 重建时复用。
+        static HBITMAP s_iconBlue   = MakeAvatarSourceBitmap( 80, 130, 220,  30,  60, 130);
+        static HBITMAP s_iconOrange = MakeAvatarSourceBitmap(255, 170,  60, 200,  80,  20);
+        static HBITMAP s_iconPurple = MakeAvatarSourceBitmap(170,  90, 200,  90,  30, 130);
+
+        auto tree = std::unique_ptr<DuiTreeView>(new DuiTreeView());
+        tree->SetCtrlId(903);
+        tree->SetRowHeight(32);   // 比默认 28 略高，让 icon + 文字 + 右侧数字都舒展
+
+        //—— 分组节点带右侧 "X/Y" 在线计数（典型分组用法）
+        int gFriends = tree->AddRoot(_T("Friends"));
+        tree->SetItemRightText(gFriends, _T("3/5"));
+
+        int idAlice = tree->AddChild(gFriends, _T("Alice"));
+        tree->SetItemIcon(idAlice, s_iconBlue);
+        tree->SetItemStatusColor(idAlice, kTVOnline);
+
+        int idBob = tree->AddChild(gFriends, _T("Bob"));
+        tree->SetItemIcon(idBob, s_iconOrange);
+        tree->SetItemStatusColor(idBob, kTVAway);
+
+        //—— Carol 离线：icon 灰显
+        int idCarol = tree->AddChild(gFriends, _T("Carol (offline)"));
+        tree->SetItemIcon(idCarol, s_iconPurple);
+        tree->SetItemIconGrayed(idCarol, true);
+        tree->SetItemStatusColor(idCarol, kTVOffline);
+
+        //—— Dave 离线：icon 灰显 + 右侧"今天 14:32"辅助文字（在 status dot 左）
+        int idDave = tree->AddChild(gFriends, _T("Dave (offline)"));
+        tree->SetItemIcon(idDave, s_iconBlue);
+        tree->SetItemIconGrayed(idDave, true);
+        tree->SetItemStatusColor(idDave, kTVOffline);
+        tree->SetItemRightText(idDave, _T("today 14:32"));
+
+        //—— 第二组：仅右侧文字，无状态点（演示 rightText 贴右边距）
+        int gProjects = tree->AddRoot(_T("Projects"));
+        tree->SetItemRightText(gProjects, _T("2 active"));
+
+        int idAlpha = tree->AddChild(gProjects, _T("Alpha"));
+        tree->SetItemIcon(idAlpha, s_iconOrange);
+        tree->SetItemRightText(idAlpha, _T("3 issues"));
+
+        int idBeta = tree->AddChild(gProjects, _T("Beta (frozen)"));
+        tree->SetItemIcon(idBeta, s_iconPurple);
+        tree->SetItemIconGrayed(idBeta, true);
+        tree->SetItemRightText(idBeta, _T("Q4 release"));
+
+        auto sv = std::unique_ptr<DuiScrollView>(new DuiScrollView());
+        DuiTreeView* treeRaw = tree.get();
+        sv->SetContent(std::move(tree));
+        sv->SetContentHeight(treeRaw->GetContentHeight());
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->AddChild(std::move(sv), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 250);
+    }
+
+    // Hover notify + auto-hide scroll bar (A5 + A1) section ------------
+    AddSection(page.get(),
+               _T("6. 悬停通知（DUITVN_HOVER_ENTER / LEAVE）与悬浮滚动条自动隐藏"),
+               _T("鼠标移到行上时，下方标签会实时变化 —— DUITVN_HOVER_ENTER / LEAVE 通知没有延时，")
+               _T("业务侧如果想要\"悬停 500ms 才弹卡片\"这种语义，自己用 SetTimer 加延时即可。")
+               _T("滚动条调用了 DuiScrollBar::SetAutoHide(true)：滚轮滚动时淡入，")
+               _T("停止滚动约 800ms 后淡出。按 CLAUDE.md UI 约定，复用 balloonui 的滚动控件时")
+               _T("沿用内置 auto-hide 行为，不为此修改 balloonui。"));
+    {
+        auto tree = std::unique_ptr<DuiTreeView>(new DuiTreeView());
+        tree->SetCtrlId(905);
+        DuiTreeView* treeRaw = tree.get();
+
+        //—— 多人列表给 hover 移动空间；列表够长触发滚动条用 auto-hide 验证
+        int gRoot = tree->AddRoot(_T("Engineers"));
+        for (int i = 1; i <= 20; ++i)
+        {
+            CString s; s.Format(_T("Eng #%d"), i);
+            int id = tree->AddChild(gRoot, s);
+            tree->SetItemStatusColor(id, (i & 1) ? kTVOnline : kTVOffline);
+        }
+
+        auto sv = std::unique_ptr<DuiScrollView>(new DuiScrollView());
+        sv->SetContent(std::move(tree));
+        sv->SetContentHeight(treeRaw->GetContentHeight());
+        //—— A1：启用滚动条 auto-hide 模式（DuiScrollBar 内置 fade-in/out
+        //   + 800ms idle 隐藏，cf. DuiScrollBar.h: SetAutoHide 注释）。
+        //   完全靠 balloonui 现成机制，没有改动库代码。
+        DuiScrollBar* sb = sv->GetScrollBar();
+        if (sb)
+        {
+            sb->SetAutoHide(true);
+        }
+
+        //—— A5：hover label，实时显示 DUITVN_HOVER_ENTER/LEAVE 的 itemId + 节点名
+        auto hoverLabel = std::unique_ptr<DuiLabel>(new DuiLabel());
+        hoverLabel->SetText(_T("Hovering: (none) — move mouse over rows"));
+        hoverLabel->SetTextColor(RGB(60, 60, 60));
+        DuiLabel* hoverLabelRaw = hoverLabel.get();
+
+        //—— 注册 page notify hook，让 GalleryFrame 把 hover notify 转到这里
+        Pages::g_pageNotifyHook =
+            [treeRaw, hoverLabelRaw](const balloonwjui::DuiNotify* n)
+            {
+                if (n == nullptr || n->ctrlId != 905)
+                {
+                    return;
+                }
+                if (n->code == DuiTreeView::DUITVN_HOVER_ENTER)
+                {
+                    int id = (int)n->extra;
+                    CString label = treeRaw->GetItemLabel(id);
+                    CString s;
+                    s.Format(_T("Hovering: %s (id=%d)"), (LPCTSTR)label, id);
+                    hoverLabelRaw->SetText(s);
+                }
+                else if (n->code == DuiTreeView::DUITVN_HOVER_LEAVE)
+                {
+                    hoverLabelRaw->SetText(_T("Hovering: (none)"));
+                }
+            };
+
+        auto group = std::unique_ptr<DuiVBox>(new DuiVBox());
+        group->SetGap(6);
+        group->AddChild(std::move(hoverLabel), DuiLayout::Hint().Fixed(20));
+        group->AddChild(std::move(sv),         DuiLayout::Hint().Weight(1));
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->AddChild(std::move(group), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 260);
+    }
+
+    // Expand snapshot + filter / visibility (A6 + A7) section ----------
+    AddSection(page.get(),
+               _T("7. 展开状态快照与节点过滤"),
+               _T("[Save expand] 捕获当前所有展开节点的 id 列表。")
+               _T("先 [Collapse all] 全部折叠，再 [Restore expand] 还原，证明快照能扛住中间的破坏性改动。")
+               _T("[Filter Eng*] 用谓词函数过滤：保留名字以 Eng 开头的节点（连带其后代）。")
+               _T("[Hide Bob] / [Show Bob] 单独翻转某个节点的可见性。"));
+    {
+        auto tree = std::unique_ptr<DuiTreeView>(new DuiTreeView());
+        tree->SetCtrlId(904);
+        DuiTreeView* treeRaw = tree.get();
+
+        //—— 三组 mock 数据：Friends / Engineers / Designers
+        int gF = tree->AddRoot(_T("Friends"));
+        int idAlice = tree->AddChild(gF, _T("Alice"));
+        int idBob   = tree->AddChild(gF, _T("Bob"));
+        int idCarol = tree->AddChild(gF, _T("Carol"));
+        (void)idAlice; (void)idCarol;
+
+        int gE = tree->AddRoot(_T("Engineers"));
+        for (int i = 1; i <= 5; ++i)
+        {
+            CString s; s.Format(_T("Eng #%d"), i);
+            tree->AddChild(gE, s);
+        }
+
+        int gD = tree->AddRoot(_T("Designers"));
+        tree->AddChild(gD, _T("Dan"));
+        tree->AddChild(gD, _T("Dora"));
+
+        //—— 嵌进 DuiScrollView：tree 行数变化时滚动条自动出现
+        auto sv = std::unique_ptr<DuiScrollView>(new DuiScrollView());
+        sv->SetContent(std::move(tree));
+        sv->SetContentHeight(treeRaw->GetContentHeight());
+        DuiScrollView* svRaw = sv.get();
+
+        //—— 共享 snapshot 缓冲：static 在 lambda 之间共享，整个进程生命期持有
+        static std::vector<int> s_snapshot;
+
+        //—— 帮助函数：刷新 scrollview 的 content height（节点显隐变化后必须）
+        auto syncSvHeight = [treeRaw, svRaw]()
+        {
+            svRaw->SetContentHeight(treeRaw->GetContentHeight());
+        };
+
+        //—— 6 个交互按钮，水平排开
+        auto bar = std::unique_ptr<DuiHBox>(new DuiHBox());
+        bar->SetGap(8);
+
+        auto bSave = std::unique_ptr<TreeDemoBtn>(new TreeDemoBtn());
+        bSave->SetText(_T("Save expand"));
+        bSave->onClick = [treeRaw](TreeDemoBtn*)
+        {
+            s_snapshot = treeRaw->GetExpandedSnapshot();
+        };
+
+        auto bCollapse = std::unique_ptr<TreeDemoBtn>(new TreeDemoBtn());
+        bCollapse->SetText(_T("Collapse all"));
+        bCollapse->onClick = [treeRaw, syncSvHeight](TreeDemoBtn*)
+        {
+            treeRaw->CollapseAll();
+            syncSvHeight();
+        };
+
+        auto bRestore = std::unique_ptr<TreeDemoBtn>(new TreeDemoBtn());
+        bRestore->SetText(_T("Restore expand"));
+        bRestore->onClick = [treeRaw, syncSvHeight](TreeDemoBtn*)
+        {
+            treeRaw->RestoreExpanded(s_snapshot);
+            syncSvHeight();
+        };
+
+        auto bFilter = std::unique_ptr<TreeDemoBtn>(new TreeDemoBtn());
+        bFilter->SetText(_T("Filter Eng*"));
+        bFilter->onClick = [treeRaw, syncSvHeight](TreeDemoBtn*)
+        {
+            //—— 只保留 label 以 "Eng" 开头的节点；保根节点（Engineers）显示
+            //   ── 因 Engineers 自身 label 以 Engineers 开头，仍命中
+            treeRaw->SetFilter([treeRaw](int id) -> bool
+            {
+                CString lbl = treeRaw->GetItemLabel(id);
+                return lbl.Find(_T("Eng")) == 0;
+            });
+            syncSvHeight();
+        };
+
+        auto bClearFilter = std::unique_ptr<TreeDemoBtn>(new TreeDemoBtn());
+        bClearFilter->SetText(_T("Clear filter"));
+        bClearFilter->onClick = [treeRaw, syncSvHeight](TreeDemoBtn*)
+        {
+            treeRaw->ClearFilter();
+            syncSvHeight();
+        };
+
+        auto bToggleBob = std::unique_ptr<TreeDemoBtn>(new TreeDemoBtn());
+        bToggleBob->SetText(_T("Toggle Bob"));
+        bToggleBob->onClick = [treeRaw, syncSvHeight, idBob](TreeDemoBtn*)
+        {
+            //—— 单节点 SetItemVisible 切换：与 filter 独立生效
+            bool wasVisible = treeRaw->IsItemVisible(idBob);
+            treeRaw->SetItemVisible(idBob, !wasVisible);
+            syncSvHeight();
+        };
+
+        bar->AddChild(std::move(bSave),         DuiLayout::Hint().Fixed(100));
+        bar->AddChild(std::move(bCollapse),     DuiLayout::Hint().Fixed(100));
+        bar->AddChild(std::move(bRestore),      DuiLayout::Hint().Fixed(120));
+        bar->AddChild(std::move(bFilter),       DuiLayout::Hint().Fixed(110));
+        bar->AddChild(std::move(bClearFilter),  DuiLayout::Hint().Fixed(100));
+        bar->AddChild(std::move(bToggleBob),    DuiLayout::Hint().Fixed(100));
+
+        //—— 用 VBox：上面 button bar + 下面 scroll view（tree）
+        auto group = std::unique_ptr<DuiVBox>(new DuiVBox());
+        group->SetGap(8);
+        group->AddChild(std::move(bar), DuiLayout::Hint().Fixed(30));
+        group->AddChild(std::move(sv),  DuiLayout::Hint().Weight(1));
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->AddChild(std::move(group), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 280);
+    }
+
+    // Sub-label (A2: 两行节点) section ----------------------------------
+    AddSection(page.get(),
+               _T("8. 副标签（两行节点，仅单列模式）"),
+               _T("SetItemSubLabel(id, \"...\") 在主标签下方加一行字号略小的副标签。")
+               _T("调用方应该把 SetRowHeight 调到约 40 像素左右，两行才不显得挤。")
+               _T("副标签为空字符串时退回单行垂直居中绘制（向后兼容老行为）。"));
+    {
+        auto tree = std::unique_ptr<DuiTreeView>(new DuiTreeView());
+        tree->SetCtrlId(902);
+        //—— 行高 40 给两行字留出舒展空间（默认 28 太挤）。
+        tree->SetRowHeight(40);
+
+        int gFriends = tree->AddRoot(_T("Friends"));
+
+        //—— 三个 sub-label 演示场景：
+        //   Alice：在线 + 完整副标签（最长有意义场景）
+        //   Bob：忙 + 较长副标签（演示 ellipsis）
+        //   Carol：无副标签（演示混排回退单行垂直居中）
+        int idAlice = tree->AddChild(gFriends, _T("Alice"));
+        tree->SetItemStatusColor(idAlice, kTVOnline);
+        tree->SetItemSubLabel(idAlice, _T("Online · last seen 2 min ago"));
+
+        int idBob = tree->AddChild(gFriends, _T("Bob"));
+        tree->SetItemStatusColor(idBob, kTVBusy);
+        tree->SetItemSubLabel(idBob,
+            _T("Busy · in meeting until 3pm — please leave a message"));
+
+        int idCarol = tree->AddChild(gFriends, _T("Carol"));
+        tree->SetItemStatusColor(idCarol, kTVAway);
+        //—— Carol 不设 subLabel：行内回退到单行垂直居中绘 label
+
+        int gWork = tree->AddRoot(_T("Projects"));
+        int idAlpha = tree->AddChild(gWork, _T("Alpha"));
+        tree->SetItemSubLabel(idAlpha, _T("3 open issues, 1 PR pending review"));
+        int idBeta  = tree->AddChild(gWork, _T("Beta"));
+        tree->SetItemSubLabel(idBeta,  _T("Frozen for Q4 release branch"));
+
+        //—— 嵌进 DuiScrollView，与本页其它 section 行高保持一致。
+        auto sv = std::unique_ptr<DuiScrollView>(new DuiScrollView());
+        DuiTreeView* treeRaw = tree.get();
+        sv->SetContent(std::move(tree));
+        sv->SetContentHeight(treeRaw->GetContentHeight());
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->AddChild(std::move(sv), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 280);
+    }
+
+    // Custom node control (PR8) section ---------------------------------
+    AddSection(page.get(),
+               _T("9. 节点自绘控件（业务接管整行绘制）"),
+               _T("SetItemCustomControl(id, ctrl) 把节点的内容区交给业务提供的 DuiControl 自己画。")
+               _T("tree 仍然画行背景、展开 ▶ 标志和缩进，但跳过内置的 label / icon / sub-label / right-text / status-dot。")
+               _T("内容区里的鼠标事件先转发给 ctrl（ctrl 返回 true 表示消耗）。")
+               _T("演示用的行控件画了：彩色头像方块 + 名字 + 副行 + 红色未读消息角标。")
+               _T("说明 IM 业务特有的概念（比如未读 badge）放在业务代码里实现，不污染通用 tree 库。"));
+    {
+        // 业务自绘行示例:模拟 IM 会话行视觉。本类作为函数内 local class
+        // 演示 \"业务实现的 DuiControl 子类\" 模式 —— 真实业务侧会把它放到
+        // 自己的 .h/.cpp。
+        class IMRowDemoCell : public DuiControl
+        {
+        public:
+            IMRowDemoCell(LPCTSTR name, LPCTSTR sub, COLORREF avatarClr, int badge)
+                : m_name(name), m_sub(sub), m_avatarClr(avatarClr), m_badge(badge) {}
+            void OnPaint(HDC hdc, const RECT& /*rcDirty*/) override
+            {
+                const int L = m_rcItem.left;
+                const int T = m_rcItem.top;
+                const int R = m_rcItem.right;
+                const int B = m_rcItem.bottom;
+                //—— 头像方块(实心 + 首字母)
+                const int avSz = 36;
+                const int avX  = L + 6;
+                const int avY  = T + (B - T - avSz) / 2;
+                HBRUSH brAv = ::CreateSolidBrush(m_avatarClr);
+                RECT avRc = { avX, avY, avX + avSz, avY + avSz };
+                ::FillRect(hdc, &avRc, brAv);
+                ::DeleteObject(brAv);
+                int oldBk = ::SetBkMode(hdc, TRANSPARENT);
+                COLORREF oldClr = ::SetTextColor(hdc, RGB(255, 255, 255));
+                HFONT defGui = (HFONT)::GetStockObject(DEFAULT_GUI_FONT);
+                HFONT oldF = defGui ? (HFONT)::SelectObject(hdc, defGui) : nullptr;
+                CString initial = m_name.IsEmpty() ? CString(_T("?"))
+                                                   : m_name.Left(1);
+                ::DrawText(hdc, initial, -1, &avRc,
+                           DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                //—— 名 + 副(右侧给 badge 留位)
+                const int badgeRsv = (m_badge > 0) ? 36 : 0;
+                const int textL    = avX + avSz + 10;
+                RECT nameRc = { textL, T + 5, R - badgeRsv - 8, T + 25 };
+                ::SetTextColor(hdc, RGB(30, 30, 30));
+                ::DrawText(hdc, m_name, -1, &nameRc,
+                           DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                RECT subRc = { textL, T + 27, R - badgeRsv - 8, B - 5 };
+                ::SetTextColor(hdc, RGB(140, 140, 140));
+                ::DrawText(hdc, m_sub, -1, &subRc,
+                           DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                //—— 红色未读 badge(IM 业务在自绘控件内自己画)
+                if (m_badge > 0)
+                {
+                    CString bt;
+                    if (m_badge > 99) { bt = _T("99+"); }
+                    else              { bt.Format(_T("%d"), m_badge); }
+                    SIZE sz = {};
+                    ::GetTextExtentPoint32(hdc, bt, bt.GetLength(), &sz);
+                    const int bh = 18;
+                    const int bw = (sz.cx + 12 > bh) ? (sz.cx + 12) : bh;
+                    const int by = T + (B - T) / 2 - bh / 2;
+                    const int bx = R - bw - 4;
+                    HBRUSH brBg = ::CreateSolidBrush(RGB(0xE5, 0x4D, 0x4D));
+                    HBRUSH oldBr = (HBRUSH)::SelectObject(hdc, brBg);
+                    HGDIOBJ oldP = ::SelectObject(hdc, ::GetStockObject(NULL_PEN));
+                    ::RoundRect(hdc, bx, by, bx + bw + 1, by + bh + 1, bh, bh);
+                    ::SelectObject(hdc, oldP);
+                    ::SelectObject(hdc, oldBr);
+                    ::DeleteObject(brBg);
+                    ::SetTextColor(hdc, RGB(255, 255, 255));
+                    RECT brc = { bx, by, bx + bw, by + bh };
+                    ::DrawText(hdc, bt, -1, &brc,
+                               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                }
+                if (oldF) { ::SelectObject(hdc, oldF); }
+                ::SetTextColor(hdc, oldClr);
+                ::SetBkMode(hdc, oldBk);
+            }
+        private:
+            CString  m_name;
+            CString  m_sub;
+            COLORREF m_avatarClr;
+            int      m_badge;
+        };
+
+        auto tree = std::unique_ptr<DuiTreeView>(new DuiTreeView());
+        tree->SetCtrlId(906);
+        tree->SetRowHeight(56);   // 业务自绘内容自决,这里设大点给头像 + 两行字
+
+        struct Row { LPCTSTR name; LPCTSTR sub; COLORREF clr; int badge; };
+        static const Row kRows[] = {
+            { _T("Alice"),    _T("今天有事吗"),            RGB(0xFF, 0x7A, 0x45),   3 },
+            { _T("Bob"),      _T("ok"),                    RGB(0x6E, 0x5B, 0xE5),   0 },
+            { _T("Charlie"),  _T("[图片]"),                RGB(0x22, 0xC5, 0x5E),  99 },
+            { _T("项目群"),    _T("张三: 文档已上传"),      RGB(0xFF, 0xC1, 0x07),   5 },
+            { _T("Dora"),     _T("回头聊"),                RGB(0x4A, 0x90, 0xE2), 120 },
+        };
+        for (const Row& r : kRows)
+        {
+            int id = tree->AddRoot(_T(""));  // label 由 custom ctrl 接管,空即可
+            tree->SetItemCustomControl(id,
+                std::unique_ptr<DuiControl>(
+                    new IMRowDemoCell(r.name, r.sub, r.clr, r.badge)));
+        }
+
+        auto sv = std::unique_ptr<DuiScrollView>(new DuiScrollView());
+        DuiTreeView* treeRaw = tree.get();
+        sv->SetContent(std::move(tree));
+        sv->SetContentHeight(treeRaw->GetContentHeight());
+
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox());
+        row->AddChild(std::move(sv), DuiLayout::Hint().Weight(1));
+        AddVariantRow(page.get(), std::move(row), 320);
     }
 
     return page;
@@ -2232,12 +3883,46 @@ std::unique_ptr<DuiControl> Build_Emoji()
 
 namespace {
 
+// DuiFrameWindow subclass for the demo: intercepts WM_DUI_NOTIFY before
+// the base class's CHAIN so we can react to DUIFW_CAPTION_ICON_CLICK
+// fired by Title-bar caption icons (popping a tiny MessageBox showing
+// the captionId for the demo). Everything else falls through to
+// DuiFrameWindow's existing routing.
+class DemoFrame : public DuiFrameWindow
+{
+public:
+    BEGIN_MSG_MAP(DemoFrame)
+        MESSAGE_HANDLER(WM_DUI_NOTIFY, OnFrameDuiNotify)
+        CHAIN_MSG_MAP(DuiFrameWindow)
+    END_MSG_MAP()
+
+private:
+    LRESULT OnFrameDuiNotify(UINT, WPARAM, LPARAM lp, BOOL& bHandled)
+    {
+        DuiNotify* n = reinterpret_cast<DuiNotify*>(lp);
+        if (n != nullptr
+            && n->code == (UINT)DuiFrameWindow::DUIFW_CAPTION_ICON_CLICK)
+        {
+            CString msg;
+            msg.Format(_T("Caption icon clicked: captionId = %d"),
+                       (int)n->extra);
+            ::MessageBox(m_hWnd, msg, _T("Caption Icon"),
+                         MB_OK | MB_ICONINFORMATION);
+            bHandled = TRUE;
+            return 0;
+        }
+        //—— 其它 notify 交给 base 的 OnDuiChildNotify（CHAIN_MSG_MAP）
+        bHandled = FALSE;
+        return 0;
+    }
+};
+
 // Static frame so its HWND survives across page rebuilds. Created on the
 // first click; re-shown on subsequent clicks. SetClientContent installs
 // a small sample tree (label + a few buttons) so the demo has something
 // inside.
-static DuiFrameWindow s_demoFrame;
-static bool           s_demoFrameBuilt = false;
+static DemoFrame s_demoFrame;
+static bool      s_demoFrameBuilt = false;
 
 static void EnsureDemoFrameBuilt()
 {
@@ -2249,6 +3934,17 @@ static void EnsureDemoFrameBuilt()
 
     s_demoFrame.SetTitle(_T("Custom skin frame demo"));
     s_demoFrame.SetMinSize(360, 240);
+    //—— 默认设个最大尺寸限制，演示 SetMaxSize 效果（用户拖大到 800x600 即停）
+    s_demoFrame.SetMaxSize(800, 600);
+
+    //—— 标题栏 caption icons：3 个不同色块当 icon，每个挂 tooltip。
+    //   位图源用 MakeAvatarSourceBitmap 生成 32x32 渐变方块（StretchBlt 缩到 16x16）。
+    static HBITMAP s_iconSettings = MakeAvatarSourceBitmap( 70, 130, 220,  30,  70, 160);
+    static HBITMAP s_iconBell     = MakeAvatarSourceBitmap(255, 170,  60, 200,  90,  20);
+    static HBITMAP s_iconHelp     = MakeAvatarSourceBitmap( 80, 200, 110,  30, 130,  60);
+    s_demoFrame.AddCaptionIcon(s_iconSettings, _T("Settings"));
+    s_demoFrame.AddCaptionIcon(s_iconBell,     _T("Notifications"));
+    s_demoFrame.AddCaptionIcon(s_iconHelp,     _T("Help"));
 
     // Sample client content: VBox with header + button row.
     auto root = std::unique_ptr<DuiVBox>(new DuiVBox());
@@ -2261,12 +3957,12 @@ static void EnsureDemoFrameBuilt()
     root->AddChild(std::move(h), DuiLayout::Hint().Fixed(28));
 
     auto h2 = std::unique_ptr<DuiLabel>(new DuiLabel());
-    h2->SetText(_T("Drag any window edge or corner to resize."));
+    h2->SetText(_T("Drag any window edge or corner to resize ── stops at min 360x240 / max 800x600."));
     h2->SetTextColor(RGB(80, 80, 80));
     root->AddChild(std::move(h2), DuiLayout::Hint().Fixed(22));
 
     auto h3 = std::unique_ptr<DuiLabel>(new DuiLabel());
-    h3->SetText(_T("Min / Max / Close all run through WM_SYSCOMMAND."));
+    h3->SetText(_T("Min / Max / Close run through WM_SYSCOMMAND. Caption icons fire DUIFW_CAPTION_ICON_CLICK."));
     h3->SetTextColor(RGB(80, 80, 80));
     root->AddChild(std::move(h3), DuiLayout::Hint().Fixed(22));
 
@@ -2317,7 +4013,8 @@ std::unique_ptr<DuiControl> Build_FrameWindow()
     AddSection(page.get(),
                _T("DuiFrameWindow — system chrome stripped, custom title bar"),
                _T("Click \"Pop frame\" to open a top-level window with no system non-client area. ")
-               _T("Drag title bar to move; drag any edge to resize; min/max/close are real DUI buttons routed through WM_SYSCOMMAND."));
+               _T("Drag title bar to move; drag any edge to resize; min/max/close are real DUI buttons routed through WM_SYSCOMMAND. ")
+               _T("Title bar also carries 3 caption icons (Settings / Notifications / Help) that fire DUIFW_CAPTION_ICON_CLICK; clicking them pops a tiny MessageBox showing the captionId."));
     {
         auto row = std::unique_ptr<DuiHBox>(new DuiHBox()); row->SetGap(12);
         auto btn = std::unique_ptr<FnButton>(new FnButton());
@@ -2335,6 +4032,149 @@ std::unique_ptr<DuiControl> Build_FrameWindow()
 
         AddVariantRow(page.get(), std::move(row));
     }
+
+    // Three-button visibility section ---------------------------------------
+    AddSection(page.get(),
+               _T("Three caption buttons — show / hide via SetButtons"),
+               _T("SetButtons(bool min, bool max, bool close) toggles each individually. ")
+               _T("Pop the demo frame first, then click below to see the title bar update live."));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox()); row->SetGap(8);
+
+        auto bAll = std::unique_ptr<FnButton>(new FnButton());
+        bAll->SetText(_T("All buttons"));
+        bAll->onClick = [](FnButton*)
+        {
+            EnsureDemoFrameBuilt();
+            s_demoFrame.SetButtons(true, true, true);
+        };
+
+        auto bNoMin = std::unique_ptr<FnButton>(new FnButton());
+        bNoMin->SetText(_T("Hide min"));
+        bNoMin->onClick = [](FnButton*)
+        {
+            EnsureDemoFrameBuilt();
+            s_demoFrame.SetButtons(false, true, true);
+        };
+
+        auto bNoMax = std::unique_ptr<FnButton>(new FnButton());
+        bNoMax->SetText(_T("Hide max"));
+        bNoMax->onClick = [](FnButton*)
+        {
+            EnsureDemoFrameBuilt();
+            s_demoFrame.SetButtons(true, false, true);
+        };
+
+        auto bOnlyClose = std::unique_ptr<FnButton>(new FnButton());
+        bOnlyClose->SetText(_T("Close only"));
+        bOnlyClose->onClick = [](FnButton*)
+        {
+            EnsureDemoFrameBuilt();
+            s_demoFrame.SetButtons(false, false, true);
+        };
+
+        auto bNone = std::unique_ptr<FnButton>(new FnButton());
+        bNone->SetText(_T("No buttons"));
+        bNone->onClick = [](FnButton*)
+        {
+            EnsureDemoFrameBuilt();
+            s_demoFrame.SetButtons(false, false, false);
+        };
+
+        row->AddChild(std::move(bAll),       DuiLayout::Hint().Fixed(110));
+        row->AddChild(std::move(bNoMin),     DuiLayout::Hint().Fixed(100));
+        row->AddChild(std::move(bNoMax),     DuiLayout::Hint().Fixed(100));
+        row->AddChild(std::move(bOnlyClose), DuiLayout::Hint().Fixed(110));
+        row->AddChild(std::move(bNone),      DuiLayout::Hint().Fixed(110));
+        AddVariantRow(page.get(), std::move(row));
+    }
+
+    // Caption icons add / remove section ------------------------------------
+    AddSection(page.get(),
+               _T("Caption icons — add / remove dynamically"),
+               _T("AddCaptionIcon(HBITMAP, tooltip) appends a click button just left of the close button; ")
+               _T("ClearCaptionIcons() removes all of them. The frame starts with 3 icons (Settings / Bell / Help); ")
+               _T("click below to remove and re-add them, then click an icon on the title bar to see DUIFW_CAPTION_ICON_CLICK fire."));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox()); row->SetGap(8);
+
+        auto bClear = std::unique_ptr<FnButton>(new FnButton());
+        bClear->SetText(_T("Clear caption icons"));
+        bClear->onClick = [](FnButton*)
+        {
+            EnsureDemoFrameBuilt();
+            s_demoFrame.ClearCaptionIcons();
+        };
+
+        auto bAddOne = std::unique_ptr<FnButton>(new FnButton());
+        bAddOne->SetText(_T("Add 1 random icon"));
+        bAddOne->onClick = [](FnButton*)
+        {
+            EnsureDemoFrameBuilt();
+            //—— 用 MakeAvatarSourceBitmap 生成一个随机色块；static 缓存到
+            //   进程末尾，控件按裸 HBITMAP 引用。
+            static int s_seq = 0;
+            BYTE r0 = (BYTE)(60 + (s_seq * 53) % 180);
+            BYTE g0 = (BYTE)(60 + (s_seq * 97) % 180);
+            BYTE b0 = (BYTE)(60 + (s_seq * 131) % 180);
+            ++s_seq;
+            static std::vector<HBITMAP> s_cache;
+            HBITMAP hbm = MakeAvatarSourceBitmap(r0, g0, b0,
+                                                 r0 / 2, g0 / 2, b0 / 2);
+            s_cache.push_back(hbm);
+            CString tip; tip.Format(_T("Random icon #%d"), s_seq);
+            s_demoFrame.AddCaptionIcon(hbm, tip);
+        };
+
+        row->AddChild(std::move(bClear),  DuiLayout::Hint().Fixed(170));
+        row->AddChild(std::move(bAddOne), DuiLayout::Hint().Fixed(170));
+        AddVariantRow(page.get(), std::move(row));
+    }
+
+    // Min/Max size drag limits section --------------------------------------
+    AddSection(page.get(),
+               _T("Min / Max drag size limits"),
+               _T("SetMinSize / SetMaxSize feed OnGetMinMaxInfo; OS enforces during drag-resize. ")
+               _T("Pop the frame first, then click below to switch limits, then drag any edge to verify."));
+    {
+        auto row = std::unique_ptr<DuiHBox>(new DuiHBox()); row->SetGap(8);
+
+        auto bDefault = std::unique_ptr<FnButton>(new FnButton());
+        bDefault->SetText(_T("Default 360×240 / 800×600"));
+        bDefault->onClick = [](FnButton*)
+        {
+            EnsureDemoFrameBuilt();
+            s_demoFrame.SetMinSize(360, 240);
+            s_demoFrame.SetMaxSize(800, 600);
+        };
+
+        auto bUnlimited = std::unique_ptr<FnButton>(new FnButton());
+        bUnlimited->SetText(_T("Unlimited (max = 0)"));
+        bUnlimited->onClick = [](FnButton*)
+        {
+            EnsureDemoFrameBuilt();
+            s_demoFrame.SetMinSize(360, 240);
+            //—— 0 = 不限，让 OS 沿用 work area 默认上限
+            s_demoFrame.SetMaxSize(0, 0);
+        };
+
+        auto bFixed = std::unique_ptr<FnButton>(new FnButton());
+        bFixed->SetText(_T("Fixed 480×320 (min = max)"));
+        bFixed->onClick = [](FnButton*)
+        {
+            EnsureDemoFrameBuilt();
+            //—— min == max 在拖拽 hit-test 上等价"固定尺寸"；用户拖边缘
+            //   不再改变尺寸（除非 SetResizable(false) 彻底禁拖）
+            s_demoFrame.SetMinSize(480, 320);
+            s_demoFrame.SetMaxSize(480, 320);
+        };
+
+        row->AddChild(std::move(bDefault),   DuiLayout::Hint().Fixed(220));
+        row->AddChild(std::move(bUnlimited), DuiLayout::Hint().Fixed(170));
+        row->AddChild(std::move(bFixed),     DuiLayout::Hint().Fixed(220));
+        AddVariantRow(page.get(), std::move(row));
+    }
+
     return page;
 }
 
@@ -2596,37 +4436,6 @@ std::unique_ptr<DuiControl> Build_Tier3()
     AddGap(page.get(), kSectionGap);
 
     AddSection(page.get(),
-               _T("DuiBadge — unread count pill / circle"),
-               _T("0 hides; 1-99 shows the number; 100+ shows \"99+\". Custom color also supported."));
-    {
-        auto row = std::unique_ptr<DuiHBox>(new DuiHBox()); row->SetGap(28);
-
-        struct Demo { int n; LPCTSTR caption; COLORREF c; };
-        Demo demos[] = {
-            { 0,    _T("count=0 (hidden)"),   RGB(220, 60, 60) },
-            { 1,    _T("count=1"),            RGB(220, 60, 60) },
-            { 9,    _T("count=9"),            RGB(220, 60, 60) },
-            { 42,   _T("count=42"),           RGB(220, 60, 60) },
-            { 240,  _T("count=240 (\"99+\")"),RGB(45, 108, 223) },
-        };
-        for (auto& d : demos)
-        {
-            auto col = std::unique_ptr<DuiVBox>(new DuiVBox()); col->SetGap(4);
-            auto bdg = std::unique_ptr<DuiBadge>(new DuiBadge());
-            bdg->SetCount(d.n);
-            bdg->SetBgColor(d.c);
-            auto lbl = std::unique_ptr<DuiLabel>(new DuiLabel());
-            lbl->SetText(d.caption);
-            lbl->SetTextColor(RGB(80, 80, 80));
-            col->AddChild(std::move(bdg), DuiLayout::Hint().Fixed(24));
-            col->AddChild(std::move(lbl), DuiLayout::Hint().Fixed(18));
-            row->AddChild(std::move(col), DuiLayout::Hint().Fixed(110));
-        }
-        AddVariantRow(page.get(), std::move(row), 60);
-    }
-    AddGap(page.get(), kSectionGap);
-
-    AddSection(page.get(),
                _T("DuiGroupBox — titled rounded-rect border"),
                _T("Title rests on the top edge of a rounded border. Caller's content control is placed inside with a configurable padding."));
     {
@@ -2817,6 +4626,8 @@ const PageInfo* GetPages(int& outCount)
         { _T("Button"),       &Build_Button       },
         { _T("Avatar"),       &Build_Avatar       },
         { _T("Label"),        &Build_Label        },
+        { _T("Badge"),        &Build_Badge        },
+        { _T("Toast"),        &Build_Toast        },
         { _T("Edit"),         &Build_Edit         },
         { _T("RichEdit"),     &Build_RichEdit     },
         { _T("ComboBox"),     &Build_ComboBox     },

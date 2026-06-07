@@ -248,6 +248,11 @@ void GalleryFrame::SwitchToPage(int index)
     }
     m_currentPage = index;
 
+    //—— 清空旧 page 注册的 notify 钩子（其 lambda 持有的 raw 指针指向
+    //   即将被销毁的旧控件）。新 page 的 Build_* 若需要 notify hook
+    //   会在自己构建时重新赋值。
+    Pages::g_pageNotifyHook = nullptr;
+
     auto content = pages[index].build();
     m_scroll->SetContent(std::move(content));
     // Pages are DuiVBox-rooted with all-fixed children (Fixed(rowH) for
@@ -268,6 +273,13 @@ LRESULT GalleryFrame::OnDuiNotify(UINT, WPARAM, LPARAM lParam)
     if (m_tab && n->ctrlId == m_tab->GetCtrlId() && n->code == DUIN_VALUECHANGED)
     {
         SwitchToPage((int)n->extra);
+        return 0;
+    }
+    //—— 把剩余 notify 转给当前 page 注册的钩子（如 TreeView demo 的
+    //   hover 监听）。无 demo 注册时 hook 为空，直接忽略。
+    if (Pages::g_pageNotifyHook)
+    {
+        Pages::g_pageNotifyHook(n);
     }
     return 0;
 }

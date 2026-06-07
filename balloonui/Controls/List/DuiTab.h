@@ -72,8 +72,12 @@ public:
     DuiTab();
 
     // ---- tab data ----
-    int     AddTab(LPCTSTR text, bool closeable = false, bool dropdown = false, LPARAM lParam = 0);
-    void    InsertTab(int index, LPCTSTR text, bool closeable = false, bool dropdown = false, LPARAM lParam = 0);
+    // icon 参数: HBITMAP, caller-owned, 控件不 copy 不 DeleteObject; 传
+    // nullptr 表示无图标。与 DuiButton::SetLeadingIcon 一致。
+    int     AddTab(LPCTSTR text, bool closeable = false, bool dropdown = false,
+                   LPARAM lParam = 0, HBITMAP icon = nullptr);
+    void    InsertTab(int index, LPCTSTR text, bool closeable = false, bool dropdown = false,
+                      LPARAM lParam = 0, HBITMAP icon = nullptr);
     void    RemoveTab(int index);
     void    RemoveAllTabs();
     int     GetTabCount() const { return (int)m_tabs.size(); }
@@ -87,6 +91,13 @@ public:
     bool    IsTabDropdown(int index) const;
     void    SetTabDropdown(int index, bool b);
 
+    // 单个 tab 的图标 (HBITMAP, caller-owned, 不 copy 不 DeleteObject)。
+    //   index: tab 序号; 越界静默返回。
+    //   hBmp:  32bpp 预乘 alpha 位图(同 DuiButton::SetLeadingIcon); nullptr 清除。
+    void    SetTabIcon(int index, HBITMAP hBmp);
+    // 取指定 tab 的图标 (caller-owned 借用)。越界返回 nullptr。
+    HBITMAP GetTabIcon(int index) const;
+
     // ---- selection ----
     int     GetCurSel() const { return m_curSel; }
     void    SetCurSel(int index, bool notify = true);
@@ -99,6 +110,21 @@ public:
     void    SetMaxTabWidth(int w);
     void    SetTabPadding(int leftRight) { m_tabPad = leftRight; Invalidate(); }
     void    SetGap(int g) { m_gap = g; Invalidate(); }
+
+    // 图标尺寸 (像素, 默认 16); 所有 tab 共用一个尺寸, 渲染时按此尺寸
+    // ::AlphaBlend 缩放。<1 自动钳到 1, 防御性。
+    void    SetIconSize(int px);
+    int     GetIconSize() const { return m_iconSize; }
+    // 图标与文字之间的间距 (像素, 默认 6); <0 自动钳到 0。
+    void    SetIconGap(int px);
+    int     GetIconGap() const { return m_iconGap; }
+
+    // 宽度自适应文字 (默认 false = 沿用 [m_minTabW, m_maxTabW] clamp)。
+    // 打开后 MeasureTabs 仍计算 text + padding + icon + close + dropdown 的
+    // 真实宽, 但<u>跳过</u> min / max clamp; 极短文字 tab 可窄于 minW,
+    // 极长文字 tab 可宽于 maxW。
+    void    SetAutoFitTabWidth(bool b);
+    bool    GetAutoFitTabWidth() const { return m_autoFit; }
 
     void    SetBgColor      (COLORREF c) { m_clrBg       = c; Invalidate(); }
     void    SetTabColor     (COLORREF c) { m_clrTab      = c; Invalidate(); }
@@ -179,6 +205,7 @@ private:
         bool    dropdown;
         LPARAM  lParam;
         int     widthPx;       // computed in MeasureTabs(), incl. padding/glyphs
+        HBITMAP icon;          // caller-owned 借用; nullptr = 无图标
     };
     enum HitZone { ZoneNone, ZoneTab, ZoneClose, ZoneDrop };
 
@@ -213,6 +240,9 @@ private:
     int     m_maxTabW      = 200;
     int     m_closeSize    = 14;     // close button glyph rect
     int     m_dropSize     = 12;     // dropdown arrow rect
+    int     m_iconSize     = 16;     // tab 左侧图标尺寸(像素), 所有 tab 共用
+    int     m_iconGap      = 6;      // 图标与文字之间的间距(像素)
+    bool    m_autoFit      = false;  // true = MeasureTabs 跳过 [minTabW,maxTabW] clamp
     int     m_scrollOffset = 0;      // px shifted to the left
     int     m_scrollStepPx = 60;     // per-arrow-click step
     static const int kArrowW = 18;   // width of left / right arrow strip

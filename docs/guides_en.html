@@ -525,7 +525,7 @@
   <li><b>Declarative XML layout</b>: <code>DuiXmlBuilder</code> parses XML into a control tree; you can register a custom-tag factory to inject custom-drawn nodes.</li>
   <li><b>Event bubbling</b>: child controls call <code>NotifyParent(DUIN_*, extra)</code> to bubble up a <code>WM_DUI_NOTIFY</code>.</li>
   <li><b>Per-Monitor V2 DPI awareness</b>: one line — <code>DuiDpi::OptInPerMonitorV2()</code>.</li>
-  <li><b>Unified GDI+ anti-aliasing</b>: <code>DuiPaintAA::FillEllipse / FillPolygon / DrawLine</code> — every non-axis-aligned shape (circle / triangle / diagonal line) goes through the same API.</li>
+  <li><b>Unified GDI+ anti-aliasing</b>: <code>DuiPaintAA::FillEllipse / FillPolygon / FillRoundRect / DrawLine</code> — every non-axis-aligned shape (circle / triangle / diagonal line / rounded rect) goes through the same API.</li>
   <li><b>Zero-extra-dependency build</b>: only ATL/WTL 9.0, GDI, GDI+, comctl32, richedit.</li>
 </ul>
 
@@ -1332,7 +1332,7 @@ private:
             break;
 
         case IDC_TAB_MAIN:
-            if (n-&gt;code == DUIN_VALUECHANGED) m_tabPage-&gt;SetActivePage((int)n-&gt;extra);
+            if (n-&gt;code == DUIN_VALUECHANGED) m_tabPage-&gt;SetCurSel((int)n-&gt;extra, /*notify*/false);
             else if (n-&gt;code == balloonwjui::DuiTab::DUITN_CLOSE)
                                               CloseTabAt((int)n-&gt;extra);
             break;
@@ -1583,6 +1583,31 @@ host.SetRoot(std::move(root));
   <h4>Chained Hint construction</h4>
   <p><code>Hint().Fixed(main, cross=-1).Weight(w).Margin(all).AlignM(...).AlignC(...)</code></p>
 
+  <h4>Card styling (optional; all defaults are no-op for backwards compatibility)</h4>
+  <p>If any of these are set, <code>OnPaint</code> first fills "background + rounded corners + border" on <code>m_rcItem</code>, then chains to the base to render children — letting <code>DuiVBox</code> act as a card container directly (replacing any business-side <code>CardBox</code> wrapper). The background and border go through <code>DuiAA::FillRoundRect</code>, with built-in anti-aliasing.</p>
+  <table>
+    <tr><th>Method</th><th>Description</th></tr>
+    <tr><td><code>SetBgColor(COLORREF)</code> / <code>GetBgColor()</code></td><td>Card background. <code>CLR_INVALID</code> (default) = no fill.</td></tr>
+    <tr><td><code>SetCornerRadius(int px)</code> / <code>GetCornerRadius()</code></td><td>Corner radius (pixels). Default <code>0</code> = square; <code>&gt;= 0</code> = rounded; negative values clamp to 0; the final radius is further clamped by <code>DuiAA::FillRoundRect</code> to <code>min(w,h)/2</code>.</td></tr>
+    <tr><td><code>SetBorderColor(COLORREF)</code> / <code>GetBorderColor()</code></td><td>Border color. <code>CLR_INVALID</code> (default) = no border.</td></tr>
+    <tr><td><code>SetBorderWidth(float w)</code> / <code>GetBorderWidth()</code></td><td>Border width (pixels, float). Default <code>1.0</code>; <code>&lt;= 0</code> means no border; negative values clamp to 0.</td></tr>
+    <tr><td><code>PaintBackground(hdc, rc, bg, radius, border=CLR_INVALID, width=1.0)</code> [static]</td><td>Pure helper: paint a card background on any HDC without constructing a <code>DuiVBox</code> instance. Used by owner-draw flows so they share the exact same painting logic as <code>OnPaint</code> — replaces the business-side <code>DrawCard</code> / paired <code>FillRoundRect + StrokeRoundRect</code> calls.</td></tr>
+  </table>
+<pre><code>// As a child-container card:
+auto card = std::unique_ptr&lt;balloonwjui::DuiVBox&gt;(new balloonwjui::DuiVBox());
+card-&gt;SetBgColor    (RGB(255, 255, 255));
+card-&gt;SetCornerRadius(8);
+card-&gt;SetBorderColor(RGB(232, 236, 240));
+card-&gt;SetBorderWidth(1.0f);
+card-&gt;SetPadding(12);
+card-&gt;AddChild(std::move(title), balloonwjui::DuiLayout::Hint().Fixed(24));
+card-&gt;AddChild(std::move(body),  balloonwjui::DuiLayout::Hint().Weight(1));
+
+// In an owner-draw flow (no control instantiation needed):
+balloonwjui::DuiVBox::PaintBackground(hdc, rcCard,
+    RGB(255,255,255), 8, RGB(232,236,240), 1.0f);
+</code></pre>
+
   <h4>XML quick reference</h4>
   <table>
     <tr><th>Tag</th><td><code>&lt;vbox padding="..." gap="..."&gt;...&lt;/vbox&gt;</code></td></tr>
@@ -1765,12 +1790,13 @@ host.SetRoot(std::move(dock));    // Dock as the top-level; when nesting, use ou
     <img src="images/ctl-label-link-hover.png" alt="Link hover-state DuiLabel">
     <figcaption>Top to bottom: single line / multi-line wrap / trailing ellipsis / link default vs hover state.</figcaption>
   </figure>
-  <p>Static text + hyperlinks. Two modes:</p>
+  <p>Static text + hyperlinks. Two modes (orthogonal to the <b>selectable</b> capability):</p>
   <ul>
     <li><code>ModeText</code> (default): plain text.</li>
     <li><code>ModeLink</code>: underline + hover highlight + IDC_HAND cursor + clicking fires <code>DUIN_CLICK</code> or auto-<code>ShellExecute</code>'s the URL (<code>SetAutoNavigate</code>).</li>
   </ul>
   <p>Supports <b>multi-line wrap</b> (<code>SetWordWrap(true)</code>) + <b>measure-height</b> (<code>MeasureHeight(width)</code>) — both are necessary for chat bubbles / streaming lists.</p>
+  <p>Supports <b>selectable</b> (<code>SetSelectable(true)</code>): mouse drag-to-select with highlight + <code>Ctrl+C</code> copy + <code>Ctrl+A</code> select-all; with an empty selection, <code>Ctrl+C</code> copies the whole string. <b>Single-line only</b> (the capability auto-disables when <code>SetWordWrap(true)</code> is also set). Typical use: read-only value fields in detail / profile pages, so users can copy the value directly without first switching to an edit field.</p>
 
   <p><b>Typical parent:</b> any layout container (VBox / HBox / Grid / GroupBox content area / Splitter pane / Dock child area).</p>
 
@@ -1789,6 +1815,13 @@ link-&gt;SetText(_T("Open website"));
 link-&gt;SetUrl (_T("https://example.com"));
 link-&gt;SetAutoNavigate(true);
 vbox-&gt;AddChild(std::move(link), balloonwjui::DuiLayout::Hint().Fixed(22));
+
+// Selectable read-only value field (common in detail / profile pages)
+auto val = std::make_unique&lt;balloonwjui::DuiLabel&gt;();
+val-&gt;SetText(_T("EMP100086"));
+val-&gt;SetSelectable(true);              // Drag-to-select + Ctrl+C / Ctrl+A
+val-&gt;SetSelectionColor(RGB(217, 232, 252));  // Optional; this is the default
+vbox-&gt;AddChild(std::move(val), balloonwjui::DuiLayout::Hint().Fixed(22));
 </code></pre>
   <h4>XML-based creation</h4>
 <pre><code>&lt;vbox padding="12" gap="6"&gt;
@@ -1810,6 +1843,8 @@ host.SetRoot(std::move(root));
     <tr><td><code>MeasureHeight(width)</code></td><td>Return the height needed to render at the given width (DT_CALCRECT).</td></tr>
     <tr><td><code>SetUrl(LPCTSTR)</code> + <code>SetAutoNavigate(true)</code></td><td>Auto-<code>ShellExecute</code> the URL on click.</td></tr>
     <tr><td><code>GetMnemonicChar()</code></td><td><code>"Open(&amp;O)"</code> → <code>'o'</code></td></tr>
+    <tr><td><code>SetSelectable(bool)</code> / <code>IsSelectable()</code></td><td>Turn the selectable mode on/off (drag-to-select + Ctrl+C copy + Ctrl+A select-all); off by default. Once on, the control becomes focusable. <b>Single-line only</b>; auto-disables when <code>SetWordWrap(true)</code>.</td></tr>
+    <tr><td><code>SetSelectionColor(COLORREF)</code> / <code>GetSelectionColor()</code></td><td>Selection highlight background color; defaults to <code>RGB(217, 232, 252)</code> light blue.</td></tr>
   </table>
   <h4>Events</h4>
   <table class="ev-table">
@@ -1848,14 +1883,37 @@ if (n-&gt;ctrlId == IDC_FORGOT_LINK &amp;&amp; n-&gt;code == DUIN_CLICK) {
   </table>
   <p>Supports <b>per-state background bitmaps</b> (<code>SetBgBitmap(normal, hover, pressed, disabled)</code>) + <b>9-grid stretching</b> (<code>SetBgInsets</code>). Bitmaps are caller-owned; the button neither copies nor releases them.</p>
 
+  <p>Also supports <b>visual <code>Variant</code>s</b> (orthogonal to <code>Style</code>, <b>only effective for <code>StylePushButton</code></b>) — a set of semantic "button skins":</p>
+  <table>
+    <tr><th>Variant</th><th>Visual / Semantics</th><th>Typical use</th></tr>
+    <tr><td><code>Primary</code></td><td>Brand-blue solid fill + white text (default; matches the historical PushButton)</td><td>Primary action (Save / Login / Create)</td></tr>
+    <tr><td><code>Default</code></td><td>White fill + 1px gray border + dark text</td><td>Secondary action (Cancel / Export)</td></tr>
+    <tr><td><code>Outlined</code></td><td>Transparent + 1px brand-color border + brand-color text</td><td>Emphatic secondary / inline primary inside a form</td></tr>
+    <tr><td><code>Ghost</code></td><td>Transparent + dark text; only on hover does a light fill appear; no border</td><td>Weak action / toolbar buttons</td></tr>
+    <tr><td><code>Danger</code></td><td>Danger-red solid fill + white text</td><td>Destructive / irreversible (Delete / Reset / Disable)</td></tr>
+    <tr><td><code>Text</code></td><td>Pure text, no fill, no border; only on hover does a light fill appear</td><td>Link-style buttons ("Forgot password?")</td></tr>
+  </table>
+  <p><code>StyleIcon</code> ignores Variant and always renders with the existing kLight palette. When <code>SetBgBitmap</code> is set, the bitmap takes precedence over Variant — do not use both. Each Variant's actual colors at the four states (Normal / Hover / Pressed / Disabled) are returned by the static pure function <code>PaletteFor(v, s)</code> — unit-testable, no HDC dependency.</p>
+
+  <p><b><code>StyleCheckbox</code> / <code>StyleRadio</code> special case:</b> the three transparent Variants (<code>Ghost</code> / <code>Outlined</code> / <code>Text</code>) take over the <u>outer frame</u> palette, letting Checkbox / Radio appear in a "no-border, no-background" style — useful inside list rows or compact forms. The other Variants (<code>Primary</code> / <code>Default</code> / <code>Danger</code>) fall back to the kLight palette on Checkbox / Radio, matching historical visuals. The inner glyph (small box / circle) always uses the kLight palette so it stays visible; under transparent Variants the glyph interior also goes transparent (a hollow shape).</p>
+
+  <p><b>Anti-aliasing:</b> the outer rounded frame and the Checkbox box glyph default to <code>DuiAA::FillRoundRect</code> (GDI+ anti-aliased); the 8px corner radius has no visible stair-stepping. Call <code>SetAntiAlias(false)</code> to fall back to the GDI <code>::RoundRect</code> path (for extreme performance or for visual comparison). The Radio circle glyph is always AA (via <code>DuiAA::FillEllipse</code>), independent of this toggle.</p>
+
   <p><b>Typical parent:</b> any layout container (VBox / HBox / Grid / GroupBox content area / Splitter pane / Dock child area).</p>
 
   <h4>Code-based creation</h4>
-<pre><code>auto btn = std::make_unique&lt;balloonwjui::DuiButton&gt;();
+<pre><code>// Default PushButton + Primary (the most common primary-action button)
+auto btn = std::make_unique&lt;balloonwjui::DuiButton&gt;();
 btn-&gt;SetButtonType(balloonwjui::DuiButton::StylePushButton);
 btn-&gt;SetText(_T("&amp;Save"));        // & marks 'S' as the mnemonic
 btn-&gt;SetCtrlId(IDC_SAVE);
 vbox-&gt;AddChild(std::move(btn), balloonwjui::DuiLayout::Hint().Fixed(32));
+
+// Switch to the Danger variant (irreversible action):
+btn-&gt;SetVariant(balloonwjui::DuiButton::Variant::Danger);
+
+// Switch to the Ghost variant (weak action, toolbar button):
+btn-&gt;SetVariant(balloonwjui::DuiButton::Variant::Ghost);
 
 // In the parent dialog's WM_DUI_NOTIFY:
 //   if (n-&gt;code == DUIN_CLICK &amp;&amp; n-&gt;ctrlId == IDC_SAVE) Save();
@@ -1881,8 +1939,15 @@ host.SetRoot(std::move(root));
     <tr><td><code>SetRadioGroup(int gid)</code></td><td>Radios under the same parent with a non-zero gid form a mutually exclusive group.</td></tr>
     <tr><td><code>SetBgBitmap(n,h,p,d)</code></td><td>Per-state background bitmaps (caller-owned).</td></tr>
     <tr><td><code>SetBgInsets(l,t,r,b)</code></td><td>9-grid slice insets.</td></tr>
-    <tr><td><code>SetTextColor / SetTextAlign</code></td><td>Text color and DT_* alignment.</td></tr>
+    <tr><td><code>SetTextColor / SetTextAlign</code></td><td>Text color and DT_* alignment (StylePushButton text color is overridden by the Variant palette).</td></tr>
     <tr><td><code>GetMnemonicChar()</code></td><td>Extracts the character following <code>&amp;</code>.</td></tr>
+    <tr><td><code>SetVariant(Variant) / GetVariant()</code></td><td>Visual variant: Primary / Default / Outlined / Ghost / Danger / Text. On <code>StylePushButton</code> all 6 Variants are effective; on <code>StyleCheckbox</code> / <code>StyleRadio</code> only the three transparent Variants (Ghost / Outlined / Text) take over the outer palette — the rest fall back to kLight; <code>StyleIcon</code> ignores Variant. If <code>SetBgBitmap</code> is also set, the bitmap takes precedence.</td></tr>
+    <tr><td><code>PaletteFor(Variant, ButtonState)</code> [static]</td><td>Pure helper that returns <code>ButtonPalette{ bg, text, border }</code>. <code>bg</code> / <code>border</code> set to <code>CLR_INVALID</code> mean "transparent / no border".</td></tr>
+    <tr><td><code>SetAntiAlias(bool) / IsAntiAlias()</code></td><td>Whether the outer frame and the Checkbox box glyph render anti-aliased (default <code>true</code>). When off, falls back to GDI <code>::RoundRect</code> (8px corners show stair-stepping); when on, uses <code>DuiAA::FillRoundRect</code>. The Radio circle glyph is always AA, independent of this toggle.</td></tr>
+    <tr><td><code>SetFont(HFONT) / GetFont()</code></td><td>Custom text font. HFONT is caller-owned; the control never deletes it. <code>nullptr</code> (default) falls back to <code>DuiResMgr::GetDefaultFont()</code> (YaHei 9pt).</td></tr>
+    <tr><td><code>SetTextPointSize(int pt, bool bold = false)</code></td><td>Convenience setter: pulls a cached HFONT from <code>DuiResMgr::GetFontByPointSize</code> by (pt, bold) and calls <code>SetFont</code>. <code>pt &lt;= 0</code> degenerates to the default font.</td></tr>
+    <tr><td><code>SetLeadingIcon(HBITMAP) / GetLeadingIcon()</code></td><td>Bitmap drawn to the left of the text. <b>Effective only on <code>StylePushButton</code></b>; other styles ignore it. HBITMAP is caller-owned. Drawn via <code>::AlphaBlend</code>, supporting 32bpp premultiplied alpha. The icon + gap + text group is aligned by <code>m_dtFlags</code> (default horizontally centered).</td></tr>
+    <tr><td><code>SetLeadingIconSize(int px)</code> / <code>SetLeadingIconGap(int px)</code></td><td>Icon edge length (default <code>16</code>; <code>&lt;= 0</code> clamped to 1) / gap between icon and text (default <code>6</code>; <code>&lt; 0</code> clamped to 0).</td></tr>
   </table>
   <h4>Events</h4>
   <table class="ev-table">
@@ -1915,6 +1980,26 @@ LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lp, BOOL&amp;) {
   </figure>
   <p>Unread-message red dot / numeric badge, typically overlaid on the top-right of an avatar or icon. <code>SetCount(0)</code> hides it; <code>SetCount(-1)</code> shows a plain red dot; <code>&gt;= 1</code> shows the number ("99+" past 99).</p>
 
+  <p>Also supports a <b>leading dot</b> (<code>SetLeadingDot(color)</code>): a small filled circle in an independent color, drawn to the left of the text with a gap, the whole group centered inside the badge. Typical use: status indicators such as "<span style="color:#3cc878">●</span> Running" / "<span style="color:#dc3c3c">●</span> Stopped" / "<span style="color:#dc9628">●</span> Warning". The dot + gap is automatically counted into the badge width, orthogonal to the existing red-circle / numeric pill modes.</p>
+
+  <p><b>Shape parameterization (chip extension):</b> <code>DuiBadge</code> now covers both the "short count / red dot" form and the "long-text status label" form:</p>
+  <ul>
+    <li><code>SetCornerRadius(int r)</code> — corner radius. <code>-1</code> (default) = automatic pill shape (radius = height/2, matches historical behavior); <code>&gt;= 0</code> = fixed radius (chip form, recommend 4 or 6); <code>0</code> = square corners. The final radius is also clamped by <code>DuiAA::FillRoundRect</code> to <code>min(w,h)/2</code>, so over-large values are safe.</li>
+    <li><code>SetMaxDisplayChars(int n)</code> — display character cap. <code>4</code> (default, matches history — the "99+" path is at most 3 chars); <code>0</code> = no truncation (required for long text labels); <code>&gt; 0</code> = truncate to n chars (raw chop, <u>no</u> ellipsis). <u>Truncation moved into <code>OnPaint</code>; <code>SetText</code> stores the raw text</u> — <code>GetText()</code> returns the raw value, not the displayed version (semantically different from the historical "truncate at <code>SetText</code>", but the default 4 keeps display identical).</li>
+  </ul>
+
+  <p>With these, <code>DuiBadge</code> serves both as the original "unread red dot" and as the "rounded-rect + light gray fill + dark text + semantic leading dot" chip previously implemented by <code>flamingoAdmin::ui::DrawChip</code> / <code>DrawStatusChip</code>. The OnPaint background path is unified through <code>DuiAA::FillRoundRect</code> (GDI+ anti-aliased); the old separate "circle / pill" branches are gone.</p>
+
+  <p><b>Typical chip usage (matches the ServicesPanel status badge):</b></p>
+<pre><code>auto chip = std::make_unique&lt;balloonwjui::DuiBadge&gt;();
+chip-&gt;SetText(_T("Enabled"));
+chip-&gt;SetCornerRadius(4);             // chip form (default is pill)
+chip-&gt;SetMaxDisplayChars(0);          // no truncation (default 4)
+chip-&gt;SetLeadingDot(RGB(60, 200, 120)); // green = OK
+chip-&gt;SetBgColor   (RGB(245, 246, 248)); // light gray fill
+chip-&gt;SetTextColor (RGB( 80,  88, 102)); // dark text
+</code></pre>
+
   <p><b>Typical parent:</b> two patterns —<br>
   ① Normal leaf: nest inside any layout container (VBox / HBox / Grid, ...) as a stand-alone numeric badge;<br>
   ② <u>Corner overlay</u>: the <u>parent control</u> (DuiAvatar / DuiTab / DuiButton, ...) owns the DuiBadge as a child and <u>explicitly positions</u> its rect to the top-right corner inside its own OnPaint / Layout — not laid out automatically by a layout container, but positioned by the parent based on its "top-right corner" geometry.</p>
@@ -1931,15 +2016,33 @@ hbox-&gt;AddChild(std::move(badge), balloonwjui::DuiLayout::Hint().Fixed(20));
 //   m_badge is a member of DuiAvatar; override Layout() to place badge rect at the top-right corner:
 //     RECT av = GetRect();
 //     m_badge-&gt;SetRect(RECT{ av.right - 18, av.top - 4, av.right + 4, av.top + 14 });
+
+// Pattern ③: status badge with a leading colored dot (e.g. "● Running" / "● Stopped")
+auto status = std::make_unique&lt;balloonwjui::DuiBadge&gt;();
+status-&gt;SetText(_T("Running"));
+status-&gt;SetTextColor(RGB(80, 80, 80));
+status-&gt;SetBgColor  (RGB(245, 246, 248));
+status-&gt;SetLeadingDot(RGB(60, 200, 120));   // green = OK
+// Optional: SetLeadingDotRadius(4), SetLeadingGap(6)
+hbox-&gt;AddChild(std::move(status), balloonwjui::DuiLayout::Hint().Fixed(20));
 </code></pre>
   <h4>Key API</h4>
   <table>
-    <tr><td><code>SetText(LPCTSTR)</code></td><td>Raw text (at most 4 chars are shown; the rest is truncated).</td></tr>
+    <tr><td><code>SetText(LPCTSTR)</code> / <code>GetText()</code></td><td><b>Stores the raw text</b> (no truncation here; truncation happens in <code>OnPaint</code> based on <code>MaxDisplayChars</code>). <code>GetText()</code> returns the raw value, <u>not</u> the displayed version.</td></tr>
     <tr><td><code>SetCount(int)</code></td><td>Integer count, automatically converted to text: 0 → hidden; 1-99 → number; 100+ → "99+".</td></tr>
     <tr><td><code>SetBgColor / SetTextColor</code></td><td>Background / text color (default: white on red).</td></tr>
     <tr><td><code>SetHideWhenEmpty(bool)</code></td><td>Whether empty text skips drawing entirely (default true).</td></tr>
     <tr><td><code>IsShowing()</code></td><td>Whether the badge currently draws.</td></tr>
     <tr><td><code>FormatCount(int)</code> [static]</td><td>Pure helper: turns N into "<n>" / "99+" / "".</td></tr>
+    <tr><td><code>SetLeadingDot(COLORREF)</code> / <code>GetLeadingDotColor()</code> / <code>HasLeadingDot()</code></td><td>Turn the leading colored dot on / off; pass <code>CLR_INVALID</code> to clear. Dot + gap auto-count into the badge width.</td></tr>
+    <tr><td><code>SetLeadingDotRadius(int)</code></td><td>Dot radius (pixels); <code>&lt;= 0</code> (default) auto-fits to the font as <code>max(3, fontHeight/4)</code>.</td></tr>
+    <tr><td><code>SetLeadingGap(int)</code></td><td>Gap between dot and text (pixels); default 4.</td></tr>
+    <tr><td><code>SetCornerRadius(int r)</code> / <code>GetCornerRadius()</code></td><td>Corner radius. <code>-1</code> (default) = pill shape (height/2); <code>&gt;= 0</code> = fixed radius (chip form, recommend 4 or 6); <code>0</code> = square corners; <code>&lt; -1</code> (misuse) falls back to 0.</td></tr>
+    <tr><td><code>SetMaxDisplayChars(int n)</code> / <code>GetMaxDisplayChars()</code></td><td>Display character cap. <code>0</code> = no truncation (chip usage requires this); <code>&gt; 0</code> = truncate to n chars (raw chop, no ellipsis); default <code>4</code> matches history; <code>&lt; 0</code> falls back to no truncation.</td></tr>
+    <tr><td><code>ContentWidth(textW, r, gap, hasDot)</code> [static]</td><td>Pure helper: badge content width (excluding padding).</td></tr>
+    <tr><td><code>AutoDotRadius(fontHeight)</code> [static]</td><td>Pure helper: the dot-radius auto-fit rule.</td></tr>
+    <tr><td><code>EffectiveCornerRadius(rawRadius, height)</code> [static]</td><td>Pure helper: compute effective corner radius. <code>-1</code> → <code>height/2</code>; <code>&gt;= 0</code> → raw; <code>&lt; -1</code> → 0.</td></tr>
+    <tr><td><code>ApplyMaxChars(text, maxChars)</code> [static]</td><td>Pure helper: apply truncation. <code>maxChars &lt;= 0</code> → no truncation; otherwise truncate to the first <code>n</code> characters (by <code>CString::GetLength()</code>, one CJK char = one character).</td></tr>
   </table>
   <h4>XML-based creation</h4>
 <pre><code>&lt;hbox padding="8" gap="4"&gt;
@@ -1957,6 +2060,60 @@ host.SetRoot(std::move(root));
     <tr><th>Detailed attribute reference</th><td><a href="#xml-badge">§3.3.7 badge</a></td></tr>
     <tr><th>Events</th><td>None (pure drawing).</td></tr>
   </table>
+</div>
+
+<div class="control" id="DuiToast">
+  <h3>DuiToast <span class="tag dui">DUI</span></h3>
+  <p>Top-floating lightweight notification. Typical form: dark rounded fill, centered at the top of the host client area, with a leading icon + text, auto-fading out after ~3 seconds. <b>Non-interactive</b> (HitTest always returns nullptr) — clicks pass through to the underlying controls without stealing focus.</p>
+
+  <p><b>Typical parent:</b> any container hosting a page (e.g. the admin RootContainer or a DuiGallery page VBox). <u>Add DuiToast as the last child of the parent</u> — the base OnPaint draws children in order, so being last means top-most.</p>
+
+  <h4>Code usage</h4>
+<pre><code>auto toast = std::make_unique&lt;balloonwjui::DuiToast&gt;();
+toast-&gt;SetBgColor(RGB(245, 158, 11));        // warning orange
+toast-&gt;SetTextColor(RGB(255, 255, 255));     // white text
+toast-&gt;SetIcon(myWarningBitmap);             // caller-owned 32bpp PARGB
+toast-&gt;SetDurationMs(3000);                  // 3 seconds
+m_root-&gt;AddChild(std::move(toast));          // last = top-most
+
+// Trigger from business code:
+m_toast-&gt;Show(_T("Please pick an agent on the left first"));
+</code></pre>
+
+  <h4>Internals</h4>
+  <ul>
+    <li><b>Animation chain</b>: Show → fade-in (default 200 ms, alpha 0→1) → display hold (default 3000 ms) → fade-out (200 ms, alpha 1→0) → SetVisible(false). The whole chain is self-driven by <code>DuiAnimMgr</code>; callers don't need their own SetTimer.</li>
+    <li><b>Multiple Shows don't stack</b>: an internal generation counter <code>m_animGen</code> retires in-flight callbacks; the new text fades in from the current alpha with no visual jump.</li>
+    <li><b>Rendering: PARGB Bitmap + ::AlphaBlend</b>: both the <b>rounded background and the text</b> are drawn on a GDI+ <code>PixelFormat32bppPARGB</code> Bitmap (background via <code>FillPath</code>, text via <code>DrawString</code>) so GDI+ manages the alpha channel uniformly; after LockBits-copy to a BI_RGB DIB, the <b>icon</b> is composited via GDI <code>::AlphaBlend</code> (icon HBITMAP is 32bpp premultiplied alpha); finally the whole DIB is composited to the host via <code>AC_SRC_ALPHA + SourceConstantAlpha=255×m_alpha</code> — supports both transparent corners and global fade. <u>Note</u>: text must go through GDI+, not GDI <code>::DrawText</code> — the latter pollutes the alpha channel of BI_RGB 32bpp DIBs and produces "ghosting" (empirically verified).</li>
+    <li><b>Self-positioning</b>: <code>Layout</code> ignores the rcAvail given by the parent and always uses <code>GetParent()-&gt;GetRect()</code> to compute "top-center + topOffset". <code>Show()</code> proactively calls <code>Layout(parent rect)</code> once so the first display has a valid <code>m_rcItem</code> immediately.</li>
+  </ul>
+
+  <h4>Key API</h4>
+  <table>
+    <tr><th>Method</th><th>Description</th></tr>
+    <tr><td><code>Show(LPCTSTR text)</code></td><td>Show a message. Multiple Shows replace the previous text and reset the timer. Empty text degenerates to HideNow.</td></tr>
+    <tr><td><code>HideNow()</code></td><td>Hide immediately. Cancels in-flight animations and resets m_alpha to 0.</td></tr>
+    <tr><td><code>IsActive()</code></td><td>Whether the toast is currently visible (during fade-in / hold / fade-out).</td></tr>
+    <tr><td><code>SetDurationMs(int ms) / GetDurationMs()</code></td><td>Display duration (excluding fades), default 3000. <= 0 clamps to 1.</td></tr>
+    <tr><td><code>SetFadeMs(int ms) / GetFadeMs()</code></td><td>Fade-in / fade-out duration, default 200. 0 = hard cut; negative clamps to 0.</td></tr>
+    <tr><td><code>SetTextColor(COLORREF) / GetTextColor()</code></td><td>Text color, default white <code>RGB(255,255,255)</code>.</td></tr>
+    <tr><td><code>SetBgColor(COLORREF) / GetBgColor()</code></td><td>Background color, default dark gray <code>RGB(50,50,50)</code>.</td></tr>
+    <tr><td><code>SetCornerRadius(int) / GetCornerRadius()</code></td><td>Corner radius (px), default 16; negative clamps to 0. Drawn via <code>DuiAA::FillRoundRect</code> (anti-aliased).</td></tr>
+    <tr><td><code>SetIcon(HBITMAP) / GetIcon()</code></td><td>Leading icon bitmap. HBITMAP is caller-owned (the control never deletes it); nullptr (default) = no icon. Composited via <code>::AlphaBlend</code>, supporting 32bpp premultiplied alpha.</td></tr>
+    <tr><td><code>SetIconSize(int) / GetIconSize()</code></td><td>Icon edge length (square px), default 16; <= 0 clamps to 1.</td></tr>
+    <tr><td><code>SetIconGap(int) / GetIconGap()</code></td><td>Gap between icon and text (px), default 8; < 0 clamps to 0.</td></tr>
+    <tr><td><code>SetFont(HFONT) / GetFont()</code></td><td>Custom font. HFONT is caller-owned; nullptr (default) uses the toast's internal default font (YaHei 9pt + ANTIALIASED_QUALITY). <u>Note</u>: because toast composites through PARGB + AlphaBlend, ClearType fonts cause sub-pixel "ghosting"; callers should pass an HFONT with <code>lfQuality=ANTIALIASED_QUALITY</code>, or just use SetTextPointSize (which picks an AA-cached font internally).</td></tr>
+    <tr><td><code>SetTextPointSize(int pt, bool bold=false)</code></td><td>Convenience setter: pulls an AA-cached font from <code>DuiResMgr::GetAntiAliasedFontByPointSize</code> by (pt, bold) and calls SetFont. pt <= 0 degenerates to the default font.</td></tr>
+    <tr><td><code>SetTopOffset(int) / GetTopOffset()</code></td><td>Offset from the top of the parent client area (px), default 40.</td></tr>
+    <tr><td><code>SetMaxWidth(int) / GetMaxWidth()</code></td><td>Max width (px), default 0 = unlimited; > 0 truncates text exceeding (maxWidth - icon - gap - 2×padding) with "…".</td></tr>
+    <tr><td><code>MeasureWidth(textPx, hasIcon, iconSize, iconGap)</code> [static]</td><td>Pure helper: total toast width.</td></tr>
+    <tr><td><code>ApplyEllipsis(text, maxChars)</code> [static]</td><td>Pure helper: truncate to maxChars and append "…". <=0 means no truncation; <3 falls back to hard truncation.</td></tr>
+  </table>
+
+  <h4>XML</h4>
+  <p>Not natively supported via a <code>&lt;toast&gt;</code> tag — toast is a runtime overlay, not part of the static layout description. If you need static registration, go through <code>DuiXmlBuilder::CustomFactory</code>.</p>
+
+  <p class="note">Events: none (pure visual, doesn't participate in WM_DUI_NOTIFY).</p>
 </div>
 
 <div class="control" id="DuiAvatar">
@@ -2589,6 +2746,8 @@ host.SetRoot(std::move(root));
 
   <p><b>Typical parent:</b> any layout container (VBox / HBox / Grid / GroupBox content area / Splitter pane / Dock child area). The editable flavor embeds an EDIT child, so after attaching you must call <code>cb-&gt;EnsureCreated(host.m_hWnd)</code> once the host HWND is ready (required for editable mode only; can be skipped for read-only).</p>
 
+  <p><b>Down arrow:</b> the right-side triangle renders through <code>DuiAA::FillPolygon</code> (anti-aliased; no stair-stepping on the diagonals). The color is configurable via <code>SetArrowColor(COLORREF)</code> — default <code>RGB(80,100,140)</code> blue-gray. Only the enabled state is overridden; the disabled state stays at the internal <code>kArrowDisabled = RGB(160,160,160)</code> (business code rarely needs to customize the disabled tint separately).</p>
+
   <h4>Code-based creation</h4>
 <pre><code>auto cb = std::make_unique&lt;balloonwjui::DuiComboBox&gt;();
 cb-&gt;SetCtrlId(IDC_FRUIT);
@@ -2610,6 +2769,8 @@ cbRaw-&gt;EnsureCreated(host.m_hWnd);
     <tr><td><code>GetCount / GetItemText(idx)</code></td><td>Query.</td></tr>
     <tr><td><code>SetCurSel(idx) / GetCurSel()</code></td><td>Current selection.</td></tr>
     <tr><td><code>SetEditable(bool)</code></td><td>Whether input is allowed.</td></tr>
+    <tr><td><code>SetBgColor(COLORREF)</code> / <code>SetShowBorder(bool)</code> / <code>SetShowArrow(bool)</code></td><td>Body fill / border / right-side arrow toggles.</td></tr>
+    <tr><td><code>SetArrowColor(COLORREF)</code> / <code>GetArrowColor()</code></td><td>Down arrow color (default <code>RGB(80,100,140)</code>). Only overrides the enabled state; disabled stays at the internal gray. The triangle renders via <code>DuiAA::FillPolygon</code> (anti-aliased).</td></tr>
     <tr><td><code>SetIncrementalSearch(bool)</code></td><td>Type-to-filter the dropdown.</td></tr>
     <tr><td><code>ComputeFilteredIndices(query)</code></td><td>Pure helper: returns the real-index list after filtering.</td></tr>
   </table>
@@ -2948,6 +3109,47 @@ sv-&gt;SetContentHeight(tvRaw-&gt;GetContentHeight());
 vbox-&gt;AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 </code></pre>
 
+  <h4>Multi-level nesting (arbitrary depth)</h4>
+  <p><code>AddRoot/AddChild</code> support <u>unlimited nesting depth</u> — each <code>AddChild(parentId, ...)</code> can hang under any existing node, not just a root. Internally <code>Node</code> carries <code>parentIdx</code> and <code>depth</code> fields; PaintRow indents by <code>depth * m_indent</code> (default 18 px). Collapsing any intermediate node makes <code>RebuildVisible</code> skip the whole subtree via <code>hideUntilDepth</code> (excluded from the visible-rows list entirely).</p>
+<pre><code>auto tv = std::make_unique&lt;balloonwjui::DuiTreeView&gt;();
+
+// Depth 0
+int gCompany = tv-&gt;AddRoot(_T("CloudCorp"));
+
+// Depth 1
+int gRD  = tv-&gt;AddChild(gCompany, _T("R&amp;D Center"));
+int gOps = tv-&gt;AddChild(gCompany, _T("Operations Center"));
+
+// Depth 2
+int gFE  = tv-&gt;AddChild(gRD, _T("Frontend"));
+int gBE  = tv-&gt;AddChild(gRD, _T("Backend"));
+
+// Depth 3
+int gWeb    = tv-&gt;AddChild(gFE, _T("Web Team"));
+int gMobile = tv-&gt;AddChild(gFE, _T("Mobile Team"));
+
+// Depth 4 (leaves)
+tv-&gt;AddChild(gWeb,    _T("Project Aurora"));
+tv-&gt;AddChild(gMobile, _T("Project Comet"));
+// ... depth 5+ is fine too, no built-in cap.
+</code></pre>
+  <p>Live demo: DuiGallery → TreeView tab → <b>"Multi-level nesting (arbitrary depth)"</b> section (a 5-level org chart with Expand-all / Collapse-all buttons).</p>
+
+  <h4>Per-node icons</h4>
+  <p>Each node can carry its own HBITMAP, painted in the 18×18 slot (<code>kIconSizePx</code>) between the ▶ glyph and the label. Ownership stays with the caller (the control only stores a raw pointer), so the same bitmap can be shared across many nodes.</p>
+<pre><code>// Pre-load or generate the small icons; the control does NOT copy pixel data.
+HBITMAP hDir = LoadProjectIconBitmap(IconKind::Folder);
+HBITMAP hDoc = LoadProjectIconBitmap(IconKind::Document);
+
+int gProj = tv-&gt;AddRoot(_T("project-alpha"), hDir);
+tv-&gt;AddChild(gProj, _T("README.md"),  hDoc);
+tv-&gt;AddChild(gProj, _T("design.pdf"), hDoc);
+tv-&gt;AddChild(gProj, _T("(no icon, label only)"));   // icon arg omitted = no icon
+</code></pre>
+  <p>Runtime swap: <code>SetItemIcon(id, hbm)</code> / <code>GetItemIcon(id)</code>.</p>
+  <p>Further visual variant: <code>SetItemIconGrayed(id, true)</code> outputs the icon through NTSC luma <code>(R*299 + G*587 + B*114) / 1000</code>, leaving the original HBITMAP untouched — typical use case is the "offline buddy / disabled item" visual.</p>
+  <p>Live demo: DuiGallery → TreeView tab → <b>"Per-node icons (HBITMAP via SetItemIcon)"</b> section (two roots + multiple children mixing icon / no-icon nodes).</p>
+
   <h4>Multi-column mode</h4>
   <figure class="ctl-fig">
     <img src="images/ctl-treeview-multicol.png" alt="DuiTreeView multi-column — 5 columns + frozen + 6 cell types">
@@ -3089,6 +3291,51 @@ case TV::DUITVN_CELLEDITED: {
 }
 </code></pre>
 
+  <h4>Extension APIs (single-column enhancements)</h4>
+  <p>These APIs apply in single-column mode. Typical scenarios: grouped buddy lists, contact trees, file browsers. Multi-column mode ignores them (use <code>SetCellText</code> / <code>SetCellIcon</code> / etc. instead).</p>
+
+  <p><b>Node sub-label (two-line nodes)</b></p>
+  <p><code>SetItemSubLabel(id, text)</code> adds a smaller second line beneath the main label (smaller font, lighter colour). Empty string falls back to single-line vcenter rendering (back-compat). Two-line layout requires the caller to raise the row height (<code>SetRowHeight(40)</code> recommended). Global font / colour: <code>SetSubLabelPointSize(pt)</code> / <code>SetSubLabelTextColor(c)</code> (defaults: 8 pt + <code>RGB(140,140,140)</code>).</p>
+
+  <p><b>Node right-side auxiliary text</b></p>
+  <p><code>SetItemRightText(id, text)</code> right-aligns a short auxiliary string at the row's right edge, inside the status dot (or against <code>kRightPad</code> if no dot). Typical use cases: group nodes' "online / total" count, file size / time. The rendered width shrinks <code>textRight</code>, so the main label automatically ellipsises. Font / colour: <code>SetRightTextPointSize(pt)</code> (0 = match main label at 9 pt) / <code>SetRightTextColor(c)</code> (default light grey).</p>
+
+  <p><b>Greyed icon</b></p>
+  <p><code>SetItemIconGrayed(id, true)</code> paints the icon through an NTSC luma conversion, leaving the original HBITMAP untouched. Pure GDI implementation (no GDI+ dependency); per-pixel walk with alpha preserved.</p>
+
+  <p><b>Expanded-state snapshot (life-saver API)</b></p>
+<pre><code>// "Save → mutate → restore" pattern: preserve the user's expand/collapse
+// choices across a destructive refresh.
+std::vector&lt;int&gt; snap = tv-&gt;GetExpandedSnapshot();
+tv-&gt;CollapseAll();
+// ... business code rebuilds nodes from the data source ...
+tv-&gt;RestoreExpanded(snap);     // Incremental: ids in snap get Expand;
+                               // nodes outside snap keep their current state.
+</code></pre>
+  <p><code>RestoreExpanded</code> silently skips ids in <code>snap</code> that no longer exist (intervening <code>Remove</code>). One RebuildVisible at the end avoids N invalidations from N <code>SetExpanded</code> calls.</p>
+
+  <p><b>Node visibility / global filter</b></p>
+<pre><code>// Per-node switch: hides the node and its descendants without losing data
+tv-&gt;SetItemVisible(idBob, false);
+
+// Global predicate: return true to KEEP visible, false to hide
+tv-&gt;SetFilter([&amp;tv](int id) -&gt; bool {
+    CString lbl = tv-&gt;GetItemLabel(id);
+    return lbl.Find(_T("Eng")) == 0;       // keep only "Eng*" prefix
+});
+tv-&gt;ClearFilter();                         // remove filter
+</code></pre>
+  <p>Final visibility = <code>SetItemVisible</code> flag is true <u>and</u> (no filter OR filter returns true). Descendants of a hidden parent are skipped (by depth range), regardless of their own flag.</p>
+
+  <p><b>Hover events</b></p>
+  <table class="prop-table">
+    <tr><th>code</th><th>Fires when</th><th>extra</th></tr>
+    <tr><td><code>DUITVN_HOVER_ENTER</code></td><td>Mouse enters a new node (m_hoverId changed)</td><td>new node itemId</td></tr>
+    <tr><td><code>DUITVN_HOVER_LEAVE</code></td><td>Mouse left the previous node / left the control</td><td>old node itemId</td></tr>
+  </table>
+  <p>The library has <u>no built-in delay</u>: every hover change fires immediately. For tooltip-style "hover ~500 ms before popping a card" semantics, the caller starts a <code>SetTimer</code> on ENTER and <code>KillTimer</code>s on LEAVE. Use <code>::GetCursorPos()</code> at the time of receipt for screen coordinates.</p>
+  <p>Live demo: DuiGallery → TreeView tab → <b>"Hover notify (DUITVN_HOVER_ENTER/LEAVE) &amp; auto-hide scrollbar"</b> section (includes a live-updating hover label plus the scrollbar's auto-hide behaviour).</p>
+
   <h4>Performance characteristics</h4>
 
   <p><b>What is dirty-rect row clipping?</b></p>
@@ -3186,6 +3433,24 @@ tab-&gt;AddTab(_T("View"));
 tab-&gt;SetCurSel(0, /*notify*/false);
 vbox-&gt;AddChild(std::move(tab), balloonwjui::DuiLayout::Hint().Fixed(28));
 </code></pre>
+
+  <h4>Leading icon + auto-fit width</h4>
+  <p>Each tab can show a 16x16 PARGB icon to the left of its text (<code>HBITMAP</code>, caller-owned; the control neither copies nor releases it; pass <code>nullptr</code> to clear). Tab width is clamped to <code>[60, 200]</code> by default; switch the whole strip to <b>auto-fit-text</b> to skip the clamp so short tabs hug their padding and long titles aren't ellipsized.</p>
+<pre><code>// Icon: either pass it with AddTab, or set it later with SetTabIcon.
+tab-&gt;AddTab(_T("Inbox"), /*closeable*/false, /*dropdown*/false, /*lParam*/0, hIconRed);
+tab-&gt;SetTabIcon(1, hIconGreen);
+
+// Adjust the icon size and the gap between icon and text (shared by all tabs; defaults 16 / 6).
+tab-&gt;SetIconSize(18);
+tab-&gt;SetIconGap(8);
+
+// Width auto-fit: when on, each tab's width strictly matches its content
+// (text + padding + optional icon / close / dropdown widths), skipping the
+// [m_minTabW, m_maxTabW] clamp. Default false.
+tab-&gt;SetAutoFitTabWidth(true);
+</code></pre>
+  <p>Icons render through <code>::AlphaBlend</code> exactly the same way as <code>DuiButton::SetLeadingIcon</code>; create the <code>HBITMAP</code> as a 32-bpp PARGB <code>CreateDIBSection</code>.</p>
+
   <h4>Events</h4>
   <table class="ev-table">
     <tr><th>code</th><th>When it fires</th><th>extra (LPARAM)</th></tr>
@@ -3200,7 +3465,7 @@ if (n-&gt;ctrlId == IDC_MAIN_TAB) {
     int idx = (int)n-&gt;extra;
     switch (n-&gt;code) {
     case DUIN_VALUECHANGED:
-        m_tabPage-&gt;SetActivePage(idx);
+        m_tabPage-&gt;SetCurSel(idx, /*notify*/false);
         break;
     case balloonwjui::DuiTab::DUITN_CLOSE:
         if (CanCloseSession(idx)) m_tab-&gt;RemoveTab(idx);
@@ -3222,33 +3487,43 @@ if (n-&gt;ctrlId == IDC_MAIN_TAB) {
     <img src="images/ctl-tabpage-content.png" alt="DuiTabPage paired with DuiTab">
     <figcaption>Top DuiTab + bottom content area combination; switching tabs swaps content.</figcaption>
   </figure>
-  <p>Multi-page container: each page is any DuiControl subtree; <code>SetActivePage(i)</code> switches which one is shown.</p>
+  <p>Composite control: internally = one tab header strip (a private <code>DuiTab</code>) + N page subtrees (each an arbitrary <code>DuiControl</code>). <code>AddPage(title, page)</code> adds a page; <code>SetCurSel(i, notify)</code> switches the visible one. <u>DuiTabPage already owns its tab strip — you don't need to attach a separate <code>DuiTab</code> next to it.</u></p>
 
-  <p><b>Typical parent:</b> any layout container (VBox / HBox / Grid / GroupBox content area / Splitter pane / Dock child area). <u>Usually placed directly below a <code>DuiTab</code></u> and paired with it; on its own it behaves like a "container that shows the child at SetCurSel."</p>
+  <p><b>Typical parent:</b> any layout container (VBox / HBox / Grid / GroupBox content area / Splitter pane / Dock child area). On its own it behaves like a "container that shows the child at SetCurSel."</p>
 
   <h4>Code-based creation</h4>
 <pre><code>auto tp = std::make_unique&lt;balloonwjui::DuiTabPage&gt;();
 tp-&gt;SetCtrlId(IDC_TABPAGE);
-tp-&gt;AddPage(BuildFilesPage());
-tp-&gt;AddPage(BuildEditPage());
-tp-&gt;SetActivePage(0);
+tp-&gt;AddPage(_T("Files"), BuildFilesPage());
+tp-&gt;AddPage(_T("Edit"),  BuildEditPage());
+tp-&gt;SetCurSel(0, /*notify*/false);
 vbox-&gt;AddChild(std::move(tp), balloonwjui::DuiLayout::Hint().Weight(1));
-// The DuiTab was already added to vbox above; DuiTabPage follows it and fills the remaining space
 </code></pre>
-  <p>Commonly paired with <code>DuiTab</code>: route the tab's <code>DUIN_VALUECHANGED</code> into <code>tabPage-&gt;SetActivePage(extra)</code>.</p>
+  <p>The internal header strip is reachable via <code>GetHeader()</code> as a <code>DuiTab*</code>, useful for tweaking colors / closeable flags on individual tabs; <u>but do not</u> call AddTab / RemoveTab on it directly — that would desync it from the page list.</p>
+
+  <h4>Leading icon + auto-fit width (forwarded to the inner DuiTab)</h4>
+  <p>DuiTabPage forwards icon / auto-fit / icon-size / icon-gap APIs to the inner <code>DuiTab</code>; behavior matches the <a href="#DuiTab">DuiTab</a> section above. <code>AddPage</code> takes an optional trailing <code>HBITMAP icon</code>.</p>
+<pre><code>tp-&gt;AddPage(_T("Inbox"),   BuildInboxPage(),   hIconRed);
+tp-&gt;AddPage(_T("Sent"),    BuildSentPage(),    hIconGreen);
+tp-&gt;SetPageIcon(1, nullptr);    // clear an existing icon
+
+tp-&gt;SetIconSize(20);
+tp-&gt;SetIconGap(8);
+tp-&gt;SetAutoFitTabWidth(true);   // long-vs-short titles at a glance (filter-strip style)
+</code></pre>
+
   <h4>Events</h4>
   <table class="ev-table">
     <tr><th>code</th><th>When it fires</th><th>extra (LPARAM)</th></tr>
-    <tr><td><code>DUIN_VALUECHANGED</code></td><td>Current active page changed (also fires on programmatic <code>SetActivePage</code>).</td><td>New active-page index</td></tr>
+    <tr><td><code>DUIN_VALUECHANGED</code></td><td>Active page changed (user clicked a header tab, or code called <code>SetCurSel(_, /*notify*/true)</code>); <code>ctrlId = the DuiTabPage's id</code> — the inner DuiTab's selection event is redirected.</td><td>New active-page index</td></tr>
   </table>
-<pre><code>// Typical usage: the DuiTab's DUIN_VALUECHANGED drives the DuiTabPage's page switch
+<pre><code>// App code only listens for the DuiTabPage's own ctrlId; the inner header is opaque.
 auto* n = (balloonwjui::DuiNotify*)lp;
-if (n-&gt;ctrlId == IDC_TAB &amp;&amp; n-&gt;code == DUIN_VALUECHANGED) {
-    m_tabPage-&gt;SetActivePage((int)n-&gt;extra);
+if (n-&gt;ctrlId == IDC_TABPAGE &amp;&amp; n-&gt;code == DUIN_VALUECHANGED) {
+    int idx = (int)n-&gt;extra;
+    // e.g. persist the user's most recent page index
+    SaveLastTabIndex(idx);
 }
-// IDC_TABPAGE's own DUIN_VALUECHANGED usually doesn't need to be handled — the
-// reverse notification from SetActivePage is mainly for peripheral logic like
-// "persist the user's most recent page index".
 </code></pre>
 </div>
 
@@ -3630,7 +3905,11 @@ frame.ShowWindow(nCmdShow);
     <tr><td><code>SetTitleBarHeight(int)</code></td><td><b>Title-bar height, default 36 px</b>, minimum 18.<br>Typical values: 32 (tighter, the old default), 36 (balanced, current default), 40 (pairs well with a 9-grid gradient title bar).</td></tr>
     <tr><td><code>SetBorderPx(int)</code></td><td><b>Resize-grip width, default 8 px</b> (96-dpi logical pixels; scaled at runtime by monitor DPI: 125% → 10 physical px, 150% → 12 physical px). Set to 0 = no edge-resize allowed.</td></tr>
     <tr><td><code>SetResizable(bool)</code></td><td>Whether edge-resize is allowed.</td></tr>
-    <tr><td><code>SetMinSize(w, h)</code></td><td>Minimum window size.</td></tr>
+    <tr><td><code>SetMinSize(w, h)</code></td><td>Minimum tracked window size (drag-resize stops at this value). Default 200×150.</td></tr>
+    <tr><td><code>SetMaxSize(w, h)</code></td><td>Maximum tracked window size (drag-resize stops at this value). <code>w</code> / <code>h</code> = 0 means unlimited (default). Setting it to the same value as <code>SetMinSize</code> yields "fixed size but resize hit-test still active".</td></tr>
+    <tr><td><code>AddCaptionIcon(HBITMAP, tooltip)</code></td><td>Append a clickable icon to the title bar, just left of the close button. Returns captionId (>= 1, monotonically increasing). Clicking fires the <code>DUIFW_CAPTION_ICON_CLICK</code> notification (<code>extra</code> = captionId). When tooltip is non-empty it is registered automatically with <code>DuiToolTipMgr</code>. HBITMAP ownership stays with the caller (the library only holds a raw pointer).</td></tr>
+    <tr><td><code>RemoveCaptionIcon(captionId)</code></td><td>Remove a single icon by captionId; silently ignores unknown ids. Tooltip is unregistered automatically.</td></tr>
+    <tr><td><code>ClearCaptionIcons()</code></td><td>Remove all caption icons.</td></tr>
     <tr><td><code>SetClientContent(unique_ptr&lt;DuiControl&gt;)</code></td><td>The client-area root control — <b>do not</b> use SetRoot.</td></tr>
     <tr><td><code>SetTitleBarTransparent(bool)</code></td><td>Transparent title bar (lets the 9-grid background's top decoration band show through). Pair with <code>SetTitleTextColor</code> + <code>SetCaptionGlyphColor</code> changed to white text/glyphs for dark gradients. See <a href="#nine-patch-bg">§10 9-grid background image</a>.</td></tr>
     <tr><td><code>SetTitleTextColor(COLORREF)</code></td><td>Title text color, default <code>RGB(40,40,40)</code> dark gray. With a transparent title bar over a colored background, manually change to a contrasting color (usually white).</td></tr>
@@ -3640,6 +3919,54 @@ frame.ShowWindow(nCmdShow);
   <h4>Events</h4>
   <p>The <code>DUIN_CLICK</code> events from the three caption buttons (min / max / close) are <b>automatically translated</b> by <code>DuiFrameWindow</code> internally into <code>WM_SYSCOMMAND</code> (<code>SC_MINIMIZE / SC_MAXIMIZE / SC_RESTORE / SC_CLOSE</code>); the app <u>does not</u> need to listen for them. To block closing, handle <code>WM_CLOSE</code> as usual.</p>
   <p>Client-area child-control events are routed via <code>WM_DUI_NOTIFY</code> to the frame window itself (i.e. <code>m_hWnd</code>) as usual.</p>
+
+  <table class="prop-table">
+    <tr><th>code</th><th>Fires when</th><th>extra</th></tr>
+    <tr><td><code>DUIFW_CAPTION_ICON_CLICK</code></td><td>A title-bar caption icon (added with <code>AddCaptionIcon</code>) is clicked</td><td>captionId (the value returned by <code>AddCaptionIcon</code>)</td></tr>
+  </table>
+
+  <h4>Title-bar caption icons</h4>
+  <p>Insert clickable icons in the title bar, just left of the close button. Each icon occupies one standard caption-button cell (<code>kCaptionBtnW</code> = 46 px) and fires <code>DUIFW_CAPTION_ICON_CLICK</code> when clicked. Typical use case: VS Code / Chrome-style "Settings / Notifications / Help" icons on the upper-right.</p>
+<pre><code>// Frame subclass intercepting caption icon clicks
+class MyFrame : public balloonwjui::DuiFrameWindow
+{
+public:
+    BEGIN_MSG_MAP(MyFrame)
+        MESSAGE_HANDLER(WM_DUI_NOTIFY, OnDuiNotify)
+        CHAIN_MSG_MAP(balloonwjui::DuiFrameWindow)
+    END_MSG_MAP()
+private:
+    LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lp, BOOL&amp; bHandled) {
+        auto* n = reinterpret_cast&lt;balloonwjui::DuiNotify*&gt;(lp);
+        if (n &amp;&amp; n->code == balloonwjui::DuiFrameWindow::DUIFW_CAPTION_ICON_CLICK) {
+            int captionId = (int)n->extra;
+            // ... business handling ...
+            bHandled = TRUE;
+            return 0;
+        }
+        bHandled = FALSE;
+        return 0;
+    }
+};
+
+// Setup
+HBITMAP hSettings = LoadCaptionIcon(...);
+HBITMAP hBell     = LoadCaptionIcon(...);
+int idSettings = frame.AddCaptionIcon(hSettings, _T("Settings"));    // tooltip auto-registered
+int idBell     = frame.AddCaptionIcon(hBell,     _T("Notifications"));
+// ... in OnDuiNotify, dispatch on captionId == idSettings / idBell
+</code></pre>
+  <p>HBITMAP ownership stays with the caller (the control only holds a raw pointer). Source bitmaps should be at least 16×16; <code>StretchBlt</code> HALFTONE scales them to 16×16 centered. Hover / press colors follow <code>SetTitleBarTransparent</code>: opaque mode uses the light-gray hover (same as min/max); transparent mode uses brand blue (does NOT use the close-red variant).</p>
+  <p>DuiGallery demo: FrameWindow tab → the "DuiFrameWindow" section's demo frame starts with 3 caption icons; clicking pops a MessageBox showing the captionId. The "Caption icons — add / remove dynamically" section demonstrates <code>AddCaptionIcon</code> / <code>ClearCaptionIcons</code> at runtime.</p>
+
+  <h4>Drag-resize size limits (min / max)</h4>
+  <p><code>SetMinSize(w, h)</code> / <code>SetMaxSize(w, h)</code> feed ptMinTrackSize / ptMaxTrackSize to <code>WM_GETMINMAXINFO</code>; the OS clamps during drag-resize. <code>SetMaxSize(0, 0)</code> = unlimited (default), letting the OS use the work-area cap.</p>
+  <ul>
+    <li><b>Normal resizable window:</b> <code>SetMinSize(360, 240)</code>; no SetMaxSize call needed.</li>
+    <li><b>Bounded resize:</b> <code>SetMinSize(360, 240); SetMaxSize(800, 600);</code> — drag is constrained to 360×240 .. 800×600.</li>
+    <li><b>"Fixed size but resize hit-test still active":</b> <code>SetMinSize(480, 320); SetMaxSize(480, 320);</code>. Differs from <code>SetResizable(false)</code>: this still activates the 8-way resize cursor, the OS just refuses to actually change the size; <code>SetResizable(false)</code> turns off NCHITTEST resize matching entirely.</li>
+  </ul>
+  <p>DuiGallery demo: FrameWindow tab → "Min / Max drag size limits" section; switch between the three buttons (Default / Unlimited / Fixed) and drag a window edge to verify.</p>
 
   <h4>Default visual comparison</h4>
   <p>The same client-area content (one <code>BuildBuddyInfoContent</code>) shown in four configurations side-by-side — rows are construction mode (top: pure C++ / bottom: XML-driven); columns are style (left: default / right: 9-grid bg):</p>
@@ -3779,13 +4106,15 @@ CImageEx* img = balloonwjui::DuiResMgr::Inst().AcquireImage(_T("button_normal.pn
     <img src="images/ctl-paintaa-comparison.png" alt="GDI vs DuiPaintAA comparison">
     <figcaption>Top row: native GDI Polygon / Ellipse / LineTo (visible jaggies on diagonals). Bottom row: DuiPaintAA::FillPolygon / FillEllipse / DrawLine (smooth).</figcaption>
   </figure>
-  <p>A namespace with three functions. Every non-axis-aligned shape (circle, diagonal line, polygon) must go through these, or it will alias.</p>
+  <p>A namespace with four functions. Every non-axis-aligned shape (circle, diagonal line, polygon, rounded rect) must go through these, or it will alias.</p>
 <pre><code>POINT tri[3] = { {10, 2}, {18, 14}, {2, 14} };
-balloonwjui::DuiAA::FillPolygon(hdc, tri, 3, RGB(45,108,223));
-balloonwjui::DuiAA::FillEllipse(hdc, RECT{0,0,16,16}, RGB(220,40,40));
-balloonwjui::DuiAA::DrawLine   (hdc, 0, 0, 100, 50, RGB(0,0,0), 1.5f);
+balloonwjui::DuiAA::FillPolygon  (hdc, tri, 3, RGB(45,108,223));
+balloonwjui::DuiAA::FillEllipse  (hdc, RECT{0,0,16,16}, RGB(220,40,40));
+balloonwjui::DuiAA::FillRoundRect(hdc, RECT{0,0,80,32}, RGB(45,108,223), /*radius*/8,
+                                  /*outline*/RGB(30,74,153), /*outlineWidth*/1.0f);
+balloonwjui::DuiAA::DrawLine     (hdc, 0, 0, 100, 50, RGB(0,0,0), 1.5f);
 </code></pre>
-  <p>GDI+ is initialized lazily on the first call (the token lives for the process lifetime). Axis-aligned rectangles can still use <code>::Rectangle / FillRect / RoundRect</code> (no diagonals → no aliasing).</p>
+  <p>GDI+ is initialized lazily on the first call (the token lives for the process lifetime). Axis-aligned rectangles can still use <code>::Rectangle / FillRect</code>. GDI <code>::RoundRect</code> has been superseded by <code>DuiAA::FillRoundRect</code> because <code>::RoundRect</code> still produces stair-stepping at an 8px radius; <code>DuiButton</code> defaults to the AA path and exposes <code>SetAntiAlias(false)</code> as an opt-out. <code>FillRoundRect</code> clamps <code>radius</code> to <code>min(w,h)/2</code> (degenerates to a capsule shape beyond that); <code>radius&lt;=0</code> degenerates to a plain rectangle. Passing <code>CLR_INVALID</code> for <code>fill</code> or <code>outline</code> skips that step.</p>
 </div>
 
 <div class="control" id="DuiTheme">

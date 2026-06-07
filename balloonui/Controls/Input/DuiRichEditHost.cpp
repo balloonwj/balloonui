@@ -6,10 +6,20 @@
 #include "../Media/DuiImageOle.h"
 #include "../../DuiHost.h"
 #include "../../DuiResMgr.h"
+#include "EditContextMenu.h"   // 右键菜单的纯逻辑模型
+#if defined(BUI_FEATURE_MENU)
+#include "../List/DuiMenu.h"   // 自绘弹出菜单（仅启用 MENU 特性时用）
+#endif
 #include <richedit.h>
 #include <gdiplus.h>
+#include <commctrl.h>          // SetWindowSubclass / DefSubclassProc / RemoveWindowSubclass
+#include <windowsx.h>          // GET_X_LPARAM / GET_Y_LPARAM
 #include <algorithm>
 #include <vector>
+
+// 子窗口滚动子类化依赖 comctl32(SetWindowSubclass 等)。balloonui 作为静态库,
+// 此处声明依赖,最终由可执行程序链接 comctl32。
+#pragma comment(lib, "comctl32.lib")
 
 namespace balloonwjui {
 
@@ -67,6 +77,15 @@ namespace {
         static UINT s_next = 0xE800;
         return s_next++;
     }
+
+    // 行高兜底值(像素):取不到字体度量时用,避免除零 / 退化。
+    const int kFallbackLineH = 16;
+
+    // 滚轮每格滚动的行数(标准手感)。
+    const int kWheelLinesPerNotch = 3;
+
+    // SetWindowSubclass 的 uIdSubclass：本控件滚动子类过程的唯一标识。
+    const UINT_PTR kScrollSubclassId = 0xB011;
 }
 
 DuiRichEditHost::DuiRichEditHost()
@@ -74,7 +93,338 @@ DuiRichEditHost::DuiRichEditHost()
     SetTabStop(true);
 }
 
-DuiRichEditHost::~DuiRichEditHost() = default;
+DuiRichEditHost::~DuiRichEditHost()
+{
+    // 子窗口尚未被基类析构销毁(派生析构先于基类析构),此时摘掉滚动子类过程。
+    RemoveScrollSubclass();
+}
+
+// ============================================================
+// 外部悬浮滚动条接入 + 子 HWND 滚动子类化
+// ============================================================
+
+void DuiRichEditHost::SetOnVScrollChanged(VScrollChangedFn fn, void* ctx)
+{
+    m_onVScroll    = fn;
+    m_onVScrollCtx = ctx;
+}
+
+int DuiRichEditHost::LineHeightPx() const
+{
+    // 行高 = 默认字体的 tmHeight + tmExternalLeading。优先用注入的 m_defaultFont,
+    // 否则退回 DuiResMgr 默认字体;取不到度量时用兜底值。
+    HFONT f = m_defaultFont ? m_defaultFont : DuiResMgr::Inst().GetDefaultFont();
+    HWND  h = GetHostedHwnd();
+    HDC   dc = ::GetDC(h);          // h 为 null 时取屏幕 DC,字体度量同样有效
+    if (dc == nullptr)
+    {
+        return kFallbackLineH;
+    }
+    HFONT old = f ? static_cast<HFONT>(::SelectObject(dc, f)) : nullptr;
+    TEXTMETRIC tm;
+    ::ZeroMemory(&tm, sizeof(tm));
+    int lh = kFallbackLineH;
+    if (::GetTextMetrics(dc, &tm))
+    {
+        lh = tm.tmHeight + tm.tmExternalLeading;
+    }
+    if (old != nullptr)
+    {
+        ::SelectObject(dc, old);
+    }
+    ::ReleaseDC(h, dc);
+    if (lh <= 0)
+    {
+        lh = kFallbackLineH;
+    }
+    return lh;
+}
+
+int DuiRichEditHost::FirstVisibleLine() const
+{
+    HWND h = GetHostedHwnd();
+    if (h == nullptr)
+    {
+        return 0;
+    }
+    return static_cast<int>(::SendMessage(h, EM_GETFIRSTVISIBLELINE, 0, 0));
+}
+
+void DuiRichEditHost::GetVScrollMetrics(int& contentH, int& scrollPos, int& viewH) const
+{
+    contentH  = 0;
+    scrollPos = 0;
+    viewH     = 0;
+    HWND h = GetHostedHwnd();
+    if (h == nullptr)
+    {
+        return;
+    }
+    // 可视区高度 = 子窗口客户区高。
+    RECT rc;
+    ::GetClientRect(h, &rc);
+    viewH = rc.bottom - rc.top;
+
+    // 视觉行数(EM_GETLINECOUNT 含自动换行后的行)× 行高 = 内容总高;
+    // 当前首个可见行 × 行高 = 已滚动偏移。
+    const int lineH = LineHeightPx();
+    const int lines = static_cast<int>(::SendMessage(h, EM_GETLINECOUNT, 0, 0));
+    contentH  = lines * lineH;
+    scrollPos = FirstVisibleLine() * lineH;
+
+    // 夹取 scrollPos 到 [0, contentH - viewH]。
+    const int maxScroll = (contentH > viewH) ? (contentH - viewH) : 0;
+    if (scrollPos > maxScroll)
+    {
+        scrollPos = maxScroll;
+    }
+    if (scrollPos < 0)
+    {
+        scrollPos = 0;
+    }
+}
+
+void DuiRichEditHost::SetVScrollPos(int pixelPos)
+{
+    HWND h = GetHostedHwnd();
+    if (h == nullptr)
+    {
+        return;
+    }
+    const int lineH = LineHeightPx();
+    if (lineH <= 0)
+    {
+        return;
+    }
+    if (pixelPos < 0)
+    {
+        pixelPos = 0;
+    }
+    // 目标行 = 像素偏移 / 行高;EM_LINESCROLL 按"相对当前首行的行差"滚动,
+    // 越界会被 RichEdit 自动夹取。EM_LINESCROLL 不在子类过程的拦截集合里,
+    // 故拖动悬浮条驱动本函数不会反向触发 m_onVScroll,避免回环。
+    const int targetLine = pixelPos / lineH;
+    const int firstVis   = FirstVisibleLine();
+    const int deltaLines = targetLine - firstVis;
+    if (deltaLines != 0)
+    {
+        ::SendMessage(h, EM_LINESCROLL, 0, static_cast<LPARAM>(deltaLines));
+    }
+}
+
+bool DuiRichEditHost::ScrollByWheelDelta(short zDelta)
+{
+    HWND h = GetHostedHwnd();
+    if (h == nullptr || !m_multiLine)
+    {
+        return false;
+    }
+
+    int contentH = 0;
+    int scrollPos = 0;
+    int viewH = 0;
+    GetVScrollMetrics(contentH, scrollPos, viewH);
+    if (contentH <= viewH)
+    {
+        return false;   // 内容放得下,无需滚动,不消费
+    }
+
+    // 向上滚(zDelta 正)→ 内容上移、首行减小;向下滚(zDelta 负)→ 首行增大。
+    // EM_LINESCROLL 第二参为"相对当前首行的行差",到顶 / 到底会被自动夹取。
+    const int notches = zDelta / WHEEL_DELTA;
+    const int before  = FirstVisibleLine();
+    ::SendMessage(h, EM_LINESCROLL, 0,
+                  static_cast<LPARAM>(-notches * kWheelLinesPerNotch));
+    const int after = FirstVisibleLine();
+    if (after != before && m_onVScroll != nullptr)
+    {
+        m_onVScroll(m_onVScrollCtx);
+    }
+    return true;   // 多行且溢出:消费本次滚轮(到边界也消费,避免再转发)
+}
+
+bool DuiRichEditHost::OnMouseWheel(POINT /*pt*/, short zDelta, UINT /*mkFlags*/)
+{
+    // 走"宿主收到滚轮"的路径:DUI 宿主按鼠标位置命中本控件并调本函数。与子
+    // 窗口直收滚轮(ScrollSubclassProc)互斥,不会重复滚动。
+    return ScrollByWheelDelta(zDelta);
+}
+
+void DuiRichEditHost::InstallScrollSubclass()
+{
+    // 不按 m_scrollSubclassed 提前返回:SetMultiLine / SetWordWrap / SetShowVScroll
+    // 会销毁旧子窗口并重建(旧窗口子类随销毁自动清掉),需在新窗口重挂。
+    // SetWindowSubclass 对"同一 proc + 同一 uId"幂等:已存在则仅更新 refData。
+    HWND h = GetHostedHwnd();
+    if (h == nullptr || !::IsWindow(h))
+    {
+        return;
+    }
+    if (::SetWindowSubclass(h, &DuiRichEditHost::ScrollSubclassProc,
+                            kScrollSubclassId,
+                            reinterpret_cast<DWORD_PTR>(this)))
+    {
+        m_scrollSubclassed = true;
+    }
+}
+
+void DuiRichEditHost::RemoveScrollSubclass()
+{
+    if (!m_scrollSubclassed)
+    {
+        return;
+    }
+    HWND h = GetHostedHwnd();
+    if (h != nullptr && ::IsWindow(h))
+    {
+        ::RemoveWindowSubclass(h, &DuiRichEditHost::ScrollSubclassProc,
+                               kScrollSubclassId);
+    }
+    m_scrollSubclassed = false;
+}
+
+LRESULT CALLBACK DuiRichEditHost::ScrollSubclassProc(HWND hwnd, UINT msg,
+                                                     WPARAM wParam, LPARAM lParam,
+                                                     UINT_PTR /*uIdSubclass*/,
+                                                     DWORD_PTR dwRefData)
+{
+    DuiRichEditHost* self = reinterpret_cast<DuiRichEditHost*>(dwRefData);
+
+    if (msg == WM_MOUSEWHEEL && self != nullptr)
+    {
+        // 滚轮直达子窗口(Win10 默认"悬停滚动非活动窗口"):由本控件主动按行
+        // 滚动。消费成功则返回 0、不再交默认过程(避免转发父窗口造成二次滚动);
+        // 未消费(单行 / 放得下)才落到默认过程。
+        const short zDelta = static_cast<short>(HIWORD(wParam));
+        if (self->ScrollByWheelDelta(zDelta))
+        {
+            return 0;
+        }
+    }
+
+    if (msg == WM_CONTEXTMENU && self != nullptr && self->m_contextMenuEnabled)
+    {
+        // lParam 为屏幕坐标;键盘触发(Shift+F10 / 菜单键)时为 (-1, -1),此时取
+        // 控件中心作为弹出点。弹出自绘菜单成功则消费消息、压掉 RichEdit 原生菜单。
+        POINT pt;
+        pt.x = GET_X_LPARAM(lParam);
+        pt.y = GET_Y_LPARAM(lParam);
+        if (pt.x == -1 && pt.y == -1)
+        {
+            RECT rc;
+            ::GetWindowRect(hwnd, &rc);
+            pt.x = rc.left + (rc.right - rc.left) / 2;
+            pt.y = rc.top + (rc.bottom - rc.top) / 2;
+        }
+        if (self->ShowContextMenu(pt))
+        {
+            return 0;
+        }
+    }
+    return ::DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+void DuiRichEditHost::SetContextMenuEnabled(bool b)
+{
+    // 滚动子类过程(ScrollSubclassProc)一直挂着,这里只切换标志:下次 WM_CONTEXTMENU
+    // 到来时按新值决定弹自绘菜单还是落到默认过程(原生菜单)。
+    m_contextMenuEnabled = b;
+}
+
+#if defined(BUI_FEATURE_MENU)
+
+bool DuiRichEditHost::ShowContextMenu(POINT screenPt)
+{
+    HWND h = GetHostedHwnd();
+    if (h == nullptr || !::IsWindow(h))
+    {
+        return false;
+    }
+
+    // ---- 读取文本框当前状态 ----
+    EditContextState state;
+    state.m_readOnly   = m_readonly;
+    state.m_isPassword = false;                 // RichEdit 不作密码框用
+    state.m_hasText    = (GetTextLength() > 0);
+
+    // 选区:GetSel 取起止字符位置,cpMin != cpMax 即有非空选区。
+    long cpMin = 0;
+    long cpMax = 0;
+    GetSel(cpMin, cpMax);
+    state.m_hasSelection = (cpMin != cpMax);
+
+    // 剪贴板有无文本:CF_UNICODETEXT / CF_TEXT 任一可用即可粘贴。
+    state.m_clipboardHasText =
+        (::IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE) ||
+        (::IsClipboardFormatAvailable(CF_TEXT) != FALSE);
+
+    // ---- 构建模型并填充 DuiMenu ----
+    std::vector<EditContextMenuItem> model = BuildEditContextMenu(state);
+    DuiMenu menu;
+    for (std::vector<EditContextMenuItem>::const_iterator it = model.begin();
+         it != model.end(); ++it)
+    {
+        if (it->m_cmd == EditCtxCmd_Separator)
+        {
+            menu.AppendSeparator();
+        }
+        else if (it->m_enabled)
+        {
+            menu.AppendItem((UINT)it->m_cmd, EditContextCommandLabel(it->m_cmd));
+        }
+        else
+        {
+            menu.AppendDisabled((UINT)it->m_cmd, EditContextCommandLabel(it->m_cmd));
+        }
+    }
+
+    // ownerHwnd 用子 HWND 的父窗口(即 DUI host 窗口),与 codebase 里其它
+    // TrackPopup 调用约定一致(菜单关掉后焦点回该窗口)。
+    HWND owner = ::GetParent(h);
+    if (owner == nullptr)
+    {
+        owner = h;
+    }
+    UINT chosen = menu.TrackPopup(screenPt.x, screenPt.y, owner);
+
+    // 菜单期间焦点在弹出窗口上,关闭后 TrackPopup 把焦点交回的是 owner(宿主
+    // 窗口)而非 RichEdit 子窗口。执行命令前先把焦点交回 RichEdit —— 否则"全选"
+    // 虽已 SetSel 选中,但失焦时默认不画选区高亮(粘贴的光标位置同理需要持有焦点)。
+    if (chosen != 0)
+    {
+        ::SetFocus(h);
+    }
+
+    switch (chosen)
+    {
+    case EditCtxCmd_Cut:
+        Cut();
+        break;
+    case EditCtxCmd_Copy:
+        Copy();
+        break;
+    case EditCtxCmd_Paste:
+        Paste();        // 沿用 m_pastePlain(纯文本粘贴)设定
+        break;
+    case EditCtxCmd_SelectAll:
+        SelectAll();
+        break;
+    default:
+        // 0 = 用户没选(点空白 / ESC dismiss);无操作。
+        break;
+    }
+    return true;
+}
+
+#else  // !BUI_FEATURE_MENU
+
+// MENU 特性被裁掉时不弹自绘菜单,WM_CONTEXTMENU 落回默认过程(RichEdit 原生菜单)。
+bool DuiRichEditHost::ShowContextMenu(POINT /*screenPt*/)
+{
+    return false;
+}
+
+#endif // BUI_FEATURE_MENU
 
 void DuiRichEditHost::SetMultiLine(bool b)
 {
@@ -136,7 +486,15 @@ bool DuiRichEditHost::EnsureCreated(HWND hwndParent)
         // WS_VSCROLL = scrollbar slot reserved; RichEdit auto-hides it
         // when the document fits in the visible area. WS_HSCROLL only when
         // word-wrap is off (lines can extend horizontally).
-        style |= ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL;
+        // WS_VSCROLL 槽位预留可关 —— SetShowVScroll(false) 时不画滚动条
+        // 槽,RichEdit 内部仍 ES_AUTOVSCROLL 可滚(键盘 / 滚轮),只是没
+        // 显示用滚动条。典型用法:外层容器接管滚动 + 自己高度足够装下全部
+        // 内容,不希望预留右侧 ~17px 空白。
+        style |= ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN;
+        if (m_showVScroll)
+        {
+            style |= WS_VSCROLL;
+        }
         if (!m_wordWrap)
         {
             style |= ES_AUTOHSCROLL | WS_HSCROLL;
@@ -182,8 +540,13 @@ bool DuiRichEditHost::EnsureCreated(HWND hwndParent)
         return false;
     }
 
-    // DUI default font; honors the project's 9pt Microsoft YaHei rule.
-    HFONT hFont = DuiResMgr::Inst().GetDefaultFont();
+    // 字体选择优先级:SetDefaultFontFromHFONT 注入的 m_defaultFont > DuiResMgr
+    // 默认(9pt 微软雅黑) > 父 HWND 当前字体(WM_GETFONT 兜底)。
+    HFONT hFont = m_defaultFont;
+    if (!hFont)
+    {
+        hFont = DuiResMgr::Inst().GetDefaultFont();
+    }
     if (!hFont)
     {
         hFont = (HFONT)::SendMessage(hwndParent, WM_GETFONT, 0, 0);
@@ -222,6 +585,10 @@ bool DuiRichEditHost::EnsureCreated(HWND hwndParent)
     }
 
     Attach(h);
+
+    // 挂滚动子类过程:正文是真子窗口,滚轮多数情况下直达它(而非 DUI 宿主),
+    // 故在子窗口层拦 WM_MOUSEWHEEL 主动滚动。
+    InstallScrollSubclass();
 
     // Default char format (color + font name) - applied AFTER Attach so
     // ApplyDefaultCharFormat sees a valid GetHostedHwnd().
@@ -324,6 +691,59 @@ void DuiRichEditHost::SetBackgroundColor(COLORREF cr)
         ::SendMessage(h, EM_SETBKGNDCOLOR, 0, (LPARAM)cr);
     }
     Invalidate();
+}
+
+void DuiRichEditHost::SetShowBorder(bool b)
+{
+    if (m_showBorder == b)
+    {
+        return;
+    }
+    m_showBorder = b;
+    // 仅影响 OnPaint 是否绘制外边框,RichEdit 子 HWND 行为不变 —— 一次 Invalidate
+    // 让 host 重画本控件的 m_rcItem 区域即可。
+    Invalidate();
+}
+
+void DuiRichEditHost::SetShowVScroll(bool b)
+{
+    if (m_showVScroll == b)
+    {
+        return;
+    }
+    m_showVScroll = b;
+    // WS_VSCROLL 是 baked-in 风格位 —— HWND 已建则按 SetMultiLine / SetWordWrap
+    // 的同 pattern 销毁重建,让新风格生效。
+    if (HWND h = GetHostedHwnd())
+    {
+        HWND parent = ::GetParent(h);
+        ::DestroyWindow(h);
+        Detach();
+        if (parent)
+        {
+            EnsureCreated(parent);
+        }
+    }
+}
+
+void DuiRichEditHost::SetDefaultFontFromHFONT(HFONT font)
+{
+    m_defaultFont = font;
+    // HWND 已建则立即 WM_SETFONT 让新字体马上对现有文字 + 未来输入生效;
+    // redraw=TRUE 让 RichEdit 自动 invalidate。HWND 未建则只缓存,
+    // EnsureCreated 会在 CreateWindowEx 之后按字体优先级拿到 m_defaultFont。
+    if (HWND h = GetHostedHwnd())
+    {
+        HFONT use = m_defaultFont;
+        if (!use)
+        {
+            use = DuiResMgr::Inst().GetDefaultFont();
+        }
+        if (use)
+        {
+            ::SendMessage(h, WM_SETFONT, (WPARAM)use, MAKELPARAM(TRUE, 0));
+        }
+    }
 }
 
 void DuiRichEditHost::SetTextColor(COLORREF cr)
@@ -772,13 +1192,18 @@ void DuiRichEditHost::OnPaint(HDC hdc, const RECT&)
     ::FillRect(hdc, &m_rcItem, hbr);
     ::DeleteObject(hbr);
 
-    HPEN hpen = ::CreatePen(PS_SOLID, 1, BorderColor());
-    HPEN oldPen = (HPEN)::SelectObject(hdc, hpen);
-    HBRUSH oldBr = (HBRUSH)::SelectObject(hdc, ::GetStockObject(NULL_BRUSH));
-    ::Rectangle(hdc, m_rcItem.left, m_rcItem.top, m_rcItem.right, m_rcItem.bottom);
-    ::SelectObject(hdc, oldBr);
-    ::SelectObject(hdc, oldPen);
-    ::DeleteObject(hpen);
+    // 边框可选 —— 调用方调 SetShowBorder(false) 后跳过整段绘制,让 RichEdit
+    // 与父容器卡片底完全融合(典型用途:卡片内嵌的只读多行可选文本)。
+    if (m_showBorder)
+    {
+        HPEN hpen = ::CreatePen(PS_SOLID, 1, BorderColor());
+        HPEN oldPen = (HPEN)::SelectObject(hdc, hpen);
+        HBRUSH oldBr = (HBRUSH)::SelectObject(hdc, ::GetStockObject(NULL_BRUSH));
+        ::Rectangle(hdc, m_rcItem.left, m_rcItem.top, m_rcItem.right, m_rcItem.bottom);
+        ::SelectObject(hdc, oldBr);
+        ::SelectObject(hdc, oldPen);
+        ::DeleteObject(hpen);
+    }
 
     // Placeholder painted on top - only when EDIT is empty + unfocused.
     // Until the HWND is created, the strip itself is what the user sees.

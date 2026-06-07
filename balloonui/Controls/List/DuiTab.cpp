@@ -6,6 +6,10 @@
 #include "../../DuiResMgr.h"
 #include "../../DuiPaintAA.h"
 
+// tab 左侧 LeadingIcon 用 ::AlphaBlend 画 32bpp 预乘 alpha 位图,
+// 与 DuiButton 取齐; AlphaBlend 在 msimg32.lib。
+#pragma comment(lib, "msimg32.lib")
+
 namespace balloonwjui {
 
 namespace {
@@ -61,7 +65,7 @@ DuiTab::DuiTab()
     SetTabStop(true);
 }
 
-int DuiTab::AddTab(LPCTSTR text, bool closeable, bool dropdown, LPARAM lParam)
+int DuiTab::AddTab(LPCTSTR text, bool closeable, bool dropdown, LPARAM lParam, HBITMAP icon)
 {
     Tab t;
     t.text      = text ? text : _T("");
@@ -69,6 +73,7 @@ int DuiTab::AddTab(LPCTSTR text, bool closeable, bool dropdown, LPARAM lParam)
     t.dropdown  = dropdown;
     t.lParam    = lParam;
     t.widthPx   = 0;
+    t.icon      = icon;
     m_tabs.push_back(t);
     if (m_curSel < 0)
     {
@@ -78,7 +83,7 @@ int DuiTab::AddTab(LPCTSTR text, bool closeable, bool dropdown, LPARAM lParam)
     return (int)m_tabs.size() - 1;
 }
 
-void DuiTab::InsertTab(int index, LPCTSTR text, bool closeable, bool dropdown, LPARAM lParam)
+void DuiTab::InsertTab(int index, LPCTSTR text, bool closeable, bool dropdown, LPARAM lParam, HBITMAP icon)
 {
     if (index < 0)
     {
@@ -94,6 +99,7 @@ void DuiTab::InsertTab(int index, LPCTSTR text, bool closeable, bool dropdown, L
     t.dropdown = dropdown;
     t.lParam = lParam;
     t.widthPx = 0;
+    t.icon = icon;
     m_tabs.insert(m_tabs.begin() + index, t);
     if (m_curSel >= index)
     {
@@ -258,6 +264,63 @@ void DuiTab::SetMaxTabWidth(int w)
     Invalidate();
 }
 
+void DuiTab::SetTabIcon(int i, HBITMAP hBmp)
+{
+    if (i < 0 || i >= (int)m_tabs.size())
+    {
+        return;
+    }
+    if (m_tabs[i].icon == hBmp)
+    {
+        return;
+    }
+    m_tabs[i].icon = hBmp;
+    Invalidate();
+}
+
+HBITMAP DuiTab::GetTabIcon(int i) const
+{
+    return (i >= 0 && i < (int)m_tabs.size()) ? m_tabs[i].icon : nullptr;
+}
+
+void DuiTab::SetIconSize(int px)
+{
+    if (px < 1)
+    {
+        px = 1;     // 防御性钳, 至少 1 像素才有视觉
+    }
+    if (m_iconSize == px)
+    {
+        return;
+    }
+    m_iconSize = px;
+    Invalidate();
+}
+
+void DuiTab::SetIconGap(int px)
+{
+    if (px < 0)
+    {
+        px = 0;     // gap 不能为负
+    }
+    if (m_iconGap == px)
+    {
+        return;
+    }
+    m_iconGap = px;
+    Invalidate();
+}
+
+void DuiTab::SetAutoFitTabWidth(bool b)
+{
+    if (m_autoFit == b)
+    {
+        return;
+    }
+    m_autoFit = b;
+    Invalidate();
+}
+
 int DuiTab::TextWidthOf(LPCTSTR text) const
 {
     if (!text || !*text)
@@ -282,6 +345,12 @@ void DuiTab::MeasureTabs() const
     for (auto& t : m_tabs)
     {
         int w = TextWidthOf(t.text) + 2 * m_tabPad;
+        // 有图标的 tab: 左侧再加 iconSize + iconGap; 无图标不加, 不影响
+        // 历史调用方的 tab 宽。
+        if (t.icon)
+        {
+            w += m_iconSize + m_iconGap;
+        }
         if (t.closeable)
         {
             w += m_closeSize + 6;
@@ -290,13 +359,20 @@ void DuiTab::MeasureTabs() const
         {
             w += m_dropSize  + 6;
         }
-        if (w < m_minTabW)
+        // m_autoFit = true: 跳过 min / max clamp, tab 严格贴合内容真实宽度
+        // (适合"分类条 / 过滤条"等希望 tab 宽窄一目了然的场景)。
+        // m_autoFit = false (默认): 维持历史 [minTabW, maxTabW] 钳取行为,
+        // 保证连续 tab 视觉宽度相近、避免极短文字 tab 像窄缝。
+        if (!m_autoFit)
         {
-            w = m_minTabW;
-        }
-        if (w > m_maxTabW)
-        {
-            w = m_maxTabW;
+            if (w < m_minTabW)
+            {
+                w = m_minTabW;
+            }
+            if (w > m_maxTabW)
+            {
+                w = m_maxTabW;
+            }
         }
         t.widthPx = w;
     }
@@ -643,6 +719,32 @@ void DuiTab::DrawTab(HDC hdc, int index) const
         rText.right -= m_dropSize  + 6;
     }
 
+    // LeadingIcon —— 在 padding 之后、文字之前画。32bpp 预乘 alpha 位图
+    // 走 ::AlphaBlend (同 DuiButton::SetLeadingIcon)。画完把 rText.left
+    // 推到"图标右侧 + iconGap"开始, 后面 DrawText 自然就在图标右边。
+    HBITMAP icon = m_tabs[index].icon;
+    if (icon)
+    {
+        int tabH  = rc.bottom - rc.top;
+        int iconY = rc.top + (tabH - m_iconSize) / 2;
+        BITMAP bi = {};
+        ::GetObject(icon, sizeof(bi), &bi);
+        int srcW = bi.bmWidth  > 0 ? bi.bmWidth  : m_iconSize;
+        int srcH = bi.bmHeight > 0 ? bi.bmHeight : m_iconSize;
+        HDC memDc = ::CreateCompatibleDC(hdc);
+        HBITMAP oldBmp = (HBITMAP)::SelectObject(memDc, icon);
+        BLENDFUNCTION bf;
+        bf.BlendOp             = AC_SRC_OVER;
+        bf.BlendFlags          = 0;
+        bf.SourceConstantAlpha = 255;
+        bf.AlphaFormat         = AC_SRC_ALPHA;
+        ::AlphaBlend(hdc, rText.left, iconY, m_iconSize, m_iconSize,
+                     memDc, 0, 0, srcW, srcH, bf);
+        ::SelectObject(memDc, oldBmp);
+        ::DeleteDC(memDc);
+        rText.left += m_iconSize + m_iconGap;
+    }
+
     HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
     HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
     int oldBk = ::SetBkMode(hdc, TRANSPARENT);
@@ -684,16 +786,16 @@ void DuiTab::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
 
     // Clip tab painting to the content band when scroll is on so tabs
     // don't bleed under the arrow strips on either side.
+    // 用 IntersectClipRect 而不是 SelectClipRgn —— 后者是替换语义,
+    // 会撤销外层(如果 tab 被嵌在某个收紧 clip 的容器内)的 clip。
+    // RestoreDC 会还原 clip 与其余 dc 状态。
     bool clipped = NeedsScroll();
     int saved = 0;
     if (clipped)
     {
         saved = ::SaveDC(hdc);
-        RECT clip = { ContentLeftEdge(), m_rcItem.bottom - m_tabH,
-                      ContentRightEdge(), m_rcItem.bottom };
-        HRGN rgn = ::CreateRectRgnIndirect(&clip);
-        ::SelectClipRgn(hdc, rgn);
-        ::DeleteObject(rgn);
+        ::IntersectClipRect(hdc, ContentLeftEdge(), m_rcItem.bottom - m_tabH,
+                            ContentRightEdge(), m_rcItem.bottom);
     }
     for (size_t i = 0; i < m_tabs.size(); ++i)
     {

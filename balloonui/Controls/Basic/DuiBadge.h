@@ -54,9 +54,13 @@ class BUI_API DuiBadge : public DuiControl
 public:
     DuiBadge();
 
-    // 直接设置 / 读取文本（最多 4 字符显示，超出截断）。
+    // 直接设置 / 读取文本。
     //   text：任意字符串；可中可英；nullptr 视为空。
+    // 注意：本 setter 保存的是「原始文本」，不在此处截断。实际显示长度由
+    // MaxDisplayChars 决定（默认 4，与历史行为一致 —— 仅"显示时"截到 4
+    // 字符，<u>不</u>改写 m_text）。设 MaxDisplayChars(0) 即可呈现长文字标签。
     void    SetText(LPCTSTR text);
+    // 返回的是 SetText 时传入的原始文本，<u>不是</u>截断后的显示文本。
     CString GetText() const { return m_text; }
 
     // 便捷方法：把整数计数转成显示文本（FormatCount 规则）：
@@ -84,6 +88,58 @@ public:
     // 当前是否会画出徽章（综合考虑 m_text 是否空 + HideWhenEmpty）。
     bool    IsShowing() const;
 
+    // ---- 前导小圆点（leading dot） ----
+    //
+    // 用于状态指示徽章，如「● 运行中」「● 停机」。圆点画在文字左侧、
+    // 徽章垂直居中，圆点 + gap 计入宽度（自动撑宽）。HideWhenEmpty=true
+    // 且文本空时圆点也不画（整体不显）。圆点颜色独立于 m_bg / m_fg。
+
+    // 设置前导小圆点颜色。c != CLR_INVALID 时显示圆点；CLR_INVALID 清除。
+    //   c：填充色，常用 RGB(60,200,120) 绿"运行中" / RGB(220,60,60) 红
+    //       "停机" / RGB(220,150,40) 橙"警告"；CLR_INVALID 关闭圆点。
+    void     SetLeadingDot(COLORREF c);
+
+    // 当前圆点颜色；无圆点时返回 CLR_INVALID。
+    COLORREF GetLeadingDotColor() const  { return m_dotColor; }
+
+    // 是否启用了前导圆点（即 GetLeadingDotColor() != CLR_INVALID）。
+    bool     HasLeadingDot() const       { return m_dotColor != CLR_INVALID; }
+
+    // 设置 / 读取圆点半径（像素）。<= 0（默认 0）表示按字体高度自适配，
+    // 自适配规则见 AutoDotRadius。
+    void     SetLeadingDotRadius(int r);
+    int      GetLeadingDotRadius() const { return m_dotRadius; }
+
+    // 设置 / 读取圆点与文字之间的间距（像素）。默认 4。
+    void     SetLeadingGap(int gap);
+    int      GetLeadingGap() const       { return m_leadingGap; }
+
+    // ---- 圆角半径（形状参数化） ----
+    //
+    // 默认 -1 = 自动胶囊形（圆角 = 高/2，与历史行为一致：短计数 / 红点 /
+    // "99+" 走这条）。>= 0 = 固定圆角半径（像素），用于"标签 chip"形态
+    // （如「● 已启用」「待审核」等长文字状态徽章，推荐 4 或 6）。
+    // 0 = 直角矩形。最终半径还会被 DuiAA::FillRoundRect 自动夹到
+    // min(w,h)/2 —— 设过大也安全。
+
+    // 设置圆角半径。
+    //   r：-1 = 胶囊形（默认）；>= 0 = 固定半径；< -1 视作 0。
+    void     SetCornerRadius(int r);
+    int      GetCornerRadius() const     { return m_cornerRadius; }
+
+    // ---- 文字显示最大字符数（截断） ----
+    //
+    // 默认 4，与历史"超 4 字符截断"行为一致 —— 现有调用零影响。
+    // 0 = 不截（长文字标签 chip 用法，业务侧自己保证 SetRect 够宽）。
+    // <0 视作 0（不截，防御性）。
+    // 截断时直接砍后缀，不加省略号；按 CString::GetLength() 计算（中文
+    // 1 字算 1 个字符）。
+
+    // 设置最大显示字符数。
+    //   n：0 = 不截；> 0 = 截到 n；< 0 视作 0。
+    void     SetMaxDisplayChars(int n);
+    int      GetMaxDisplayChars() const  { return m_maxChars; }
+
     // ---- DuiControl 覆写 ----
     void    OnPaint(HDC hdc, const RECT& rcDirty) override;
 
@@ -94,11 +150,51 @@ public:
     //   返回：FormatCount 规则的字符串 —— 0 → ""、1-99 → "<n>"、100+ → "99+"。
     static  CString FormatCount(int n);
 
+    // 算徽章「内容宽度」（不含左右 padding）：dotDiameter + leadingGap + textWidth。
+    // hasDot=false 时退化为 textWidth；textWidth<0 视为 0；dotRadius<0 视为 0；
+    // leadingGap<0 视为 0。
+    //   textWidth：文字宽（像素）；
+    //   dotRadius：圆点半径（像素）；
+    //   leadingGap：圆点与文字间距（像素）；
+    //   hasDot：true 才把圆点 + gap 计入。
+    //   返回：内容宽度（像素，>= 0）。
+    static int ContentWidth(int textWidth, int dotRadius,
+                            int leadingGap, bool hasDot);
+
+    // 自适配圆点半径：fontHeight <= 0 → 3（fallback）；否则 max(3, fontHeight / 4)。
+    //   fontHeight：文字像素高度（如 GetTextExtentPoint32 的 sz.cy / 或 tmHeight）。
+    //   返回：建议的圆点半径（像素，>= 3）。
+    static int AutoDotRadius(int fontHeight);
+
+    // 算「实际生效」的圆角半径。
+    //   rawRadius：来自 GetCornerRadius()，-1 表示胶囊形；
+    //   height：当前徽章实际高度（像素）。
+    //   返回：rawRadius == -1 → height / 2（胶囊）；
+    //         rawRadius >= 0 → rawRadius；
+    //         rawRadius < -1（误用）→ 0。
+    //   注：返回值还会被 DuiAA::FillRoundRect 二次夹到 min(w,h)/2。
+    static int EffectiveCornerRadius(int rawRadius, int height);
+
+    // 应用文字截断规则。
+    //   text：原始文本（nullptr 视为空）；
+    //   maxChars：来自 GetMaxDisplayChars()，<= 0 表示不截。
+    //   返回：截断后的字符串；<= 0 / 文本长度 <= maxChars → 原样返回。
+    static CString ApplyMaxChars(LPCTSTR text, int maxChars);
+
 private:
     CString  m_text;
     COLORREF m_bg = RGB(220, 60, 60);
     COLORREF m_fg = RGB(255, 255, 255);
     bool     m_hideEmpty = true;
+
+    // ---- 前导小圆点状态（HasLeadingDot()=false 时不被读写） ----
+    COLORREF m_dotColor   = CLR_INVALID;   // CLR_INVALID = 不画圆点
+    int      m_dotRadius  = 0;             // 0 = 按字体高度自适配
+    int      m_leadingGap = 4;             // 圆点与文字间距（像素）
+
+    // ---- 形状参数化（chip 用法）----
+    int      m_cornerRadius = -1;          // -1 = 胶囊形（高/2），>= 0 = 固定半径
+    int      m_maxChars     = 4;           // 0 = 不截，>0 = 截到 n 字；默认 4 保持现行为
 };
 
 } // namespace balloonwjui

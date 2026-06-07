@@ -87,6 +87,32 @@ public:
     void    SetEditable(bool b);
     bool    IsEditable() const { return m_style == StyleEditable; }
 
+    // ---- 整体底色 / 边框（与 DuiEditHost 同名 API 对齐）----
+
+    // 设置 combo 主体底色。默认 RGB(255,255,255) 白底。editable 模式下
+    // 会一并把该色传给内嵌 EDIT，避免主体与 EDIT 内部出现色差。常用于
+    // 把 combo 嵌进自带底色的容器（如圆角输入框）：SetBgColor(浅灰)。
+    void     SetBgColor(COLORREF c);
+    COLORREF GetBgColor() const { return m_bgColor; }
+
+    // 是否绘制 1px 边框（默认 true）。设为 false 时主体只填充底色、不
+    // 描边 —— 把 combo 嵌进自带圆角 / 边框的容器时关掉，避免方框边压在
+    // 容器圆角上。editable 模式下一并作用于内嵌 EDIT。
+    void     SetShowBorder(bool b);
+    bool     IsShowBorder() const { return m_showBorder; }
+
+    // 是否绘制右侧下拉箭头（默认 true）。设为 false 时不画箭头 —— 外观
+    // 像纯输入框，但点击右侧箭头区域仍可弹出下拉列表。
+    void     SetShowArrow(bool b);
+    bool     IsShowArrow() const { return m_showArrow; }
+
+    // 设置 / 读取右侧下拉箭头的颜色（默认 RGB(80,100,140) 蓝灰色）。
+    // 仅覆盖 enabled 态;disabled 态沿用内部 kArrowDisabled = RGB(160,160,160)
+    // 不变(业务一般不需要单独换 disabled 色)。三角形走 DuiAA::FillPolygon
+    // 抗锯齿绘制,设任意颜色都是平滑边。
+    void     SetArrowColor(COLORREF c);
+    COLORREF GetArrowColor() const { return m_arrowColor; }
+
     // ---- 文本（editable 模式下用户面对的文本）----
 
     // 当前文本：editable 模式直接读 EDIT 内容；read-only 模式返回
@@ -190,6 +216,11 @@ private:
     int                   m_maxVisible   = 8;
     int                   m_itemH        = 22;
     Style                 m_style        = StyleReadOnly;
+
+    COLORREF              m_bgColor      = RGB(255, 255, 255);  // 主体底色
+    bool                  m_showBorder   = true;                // 是否描 1px 边框
+    bool                  m_showArrow    = true;                // 是否画下拉箭头
+    COLORREF              m_arrowColor   = RGB( 80, 100, 140);  // 下拉箭头 enabled 态色;默认蓝灰
 
     DuiComboBoxPopup*     m_popup        = nullptr;
     bool                  m_popupOpen    = false;

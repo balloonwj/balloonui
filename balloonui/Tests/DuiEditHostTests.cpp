@@ -4,6 +4,7 @@
 #if BUI_FEATURE_EDIT
 
 #include "../Controls/Layout/DuiLayout.h"
+#include "../Controls/Input/EditContextMenu.h"   // 右键菜单纯逻辑模型(被测对象)
 
 
 namespace balloonwjui {
@@ -508,6 +509,180 @@ static Result Test_ComputeIconRect_ZeroWidth()
     return OK(_T("ComputeIconRectZeroWidth"));
 }
 
+// ─── 右键菜单模型 BuildEditContextMenu（纯函数，无 HWND）─────────────
+
+// 构造一个 EditContextState（EditContextState 含默认成员初始化，C++11 下非
+// aggregate，无法直接花括号初始化，故用本 helper 逐字段赋值）。
+static EditContextState MakeCtxState(bool ro, bool sel, bool clip,
+                                     bool text, bool pwd)
+{
+    EditContextState s;
+    s.m_readOnly         = ro;
+    s.m_hasSelection     = sel;
+    s.m_clipboardHasText = clip;
+    s.m_hasText          = text;
+    s.m_isPassword       = pwd;
+    return s;
+}
+
+// 把菜单模型编码成紧凑字符串，便于和期望值整体比对。
+//   命令缩写：Cut / Copy / Paste / All / Sep；命令后缀 "+"=可用、"-"=灰显
+//   （分隔条 Sep 无后缀）。例："Cut+,Copy+,Paste+,Sep,All+"。
+static CString CtxModelToString(const std::vector<EditContextMenuItem>& m)
+{
+    CString s;
+    for (size_t i = 0; i < m.size(); ++i)
+    {
+        if (i != 0)
+        {
+            s += _T(",");
+        }
+        switch (m[i].m_cmd)
+        {
+        case EditCtxCmd_Cut:
+            s += _T("Cut");
+            break;
+        case EditCtxCmd_Copy:
+            s += _T("Copy");
+            break;
+        case EditCtxCmd_Paste:
+            s += _T("Paste");
+            break;
+        case EditCtxCmd_SelectAll:
+            s += _T("All");
+            break;
+        case EditCtxCmd_Separator:
+            s += _T("Sep");
+            break;
+        default:
+            s += _T("?");
+            break;
+        }
+        if (m[i].m_cmd != EditCtxCmd_Separator)
+        {
+            s += m[i].m_enabled ? _T("+") : _T("-");
+        }
+    }
+    return s;
+}
+
+// 覆盖方案确认过的 8 种状态组合 → 期望菜单。
+static Result Test_ContextMenuModel()
+{
+    struct Case
+    {
+        EditContextState st;
+        LPCTSTR          expect;
+        LPCTSTR          name;
+    };
+    Case cases[] = {
+        // 读写：剪切 / 复制 / 粘贴 /（分隔条）/ 全选
+        { MakeCtxState(false, true,  true,  true,  false),
+          _T("Cut+,Copy+,Paste+,Sep,All+"), _T("rw/sel/clip/text") },
+        { MakeCtxState(false, false, true,  true,  false),
+          _T("Cut-,Copy-,Paste+,Sep,All+"), _T("rw/nosel") },
+        { MakeCtxState(false, true,  false, true,  false),
+          _T("Cut+,Copy+,Paste-,Sep,All+"), _T("rw/noclip") },
+        { MakeCtxState(false, false, false, false, false),
+          _T("Cut-,Copy-,Paste-,Sep,All-"), _T("rw/empty") },
+        // 只读：复制 /（分隔条）/ 全选（无剪切、无粘贴）
+        { MakeCtxState(true,  true,  true,  true,  false),
+          _T("Copy+,Sep,All+"),             _T("ro/sel/text") },
+        { MakeCtxState(true,  false, true,  true,  false),
+          _T("Copy-,Sep,All+"),             _T("ro/nosel") },
+        { MakeCtxState(true,  false, true,  false, false),
+          _T("Copy-,Sep,All-"),             _T("ro/empty") },
+        // 密码框（读写）：复制 / 剪切 灰显（OS 禁止），粘贴 / 全选可用
+        { MakeCtxState(false, true,  true,  true,  true),
+          _T("Cut-,Copy-,Paste+,Sep,All+"), _T("pwd/rw/sel") },
+    };
+
+    for (size_t i = 0; i < _countof(cases); ++i)
+    {
+        std::vector<EditContextMenuItem> model =
+            BuildEditContextMenu(cases[i].st);
+        CString got = CtxModelToString(model);
+        if (got != cases[i].expect)
+        {
+            CString d;
+            d.Format(_T("%s: expected[%s] got[%s]"),
+                     cases[i].name, cases[i].expect, (LPCTSTR)got);
+            return Fail(_T("ContextMenuModel"), d);
+        }
+    }
+    return OK(_T("ContextMenuModel"));
+}
+
+// 命令文案 helper：带 & 助记符；分隔条 / None 返回空串。
+static Result Test_ContextMenuLabels()
+{
+    if (CString(EditContextCommandLabel(EditCtxCmd_Cut))       != _T("剪切(&T)") ||
+        CString(EditContextCommandLabel(EditCtxCmd_Copy))      != _T("复制(&C)") ||
+        CString(EditContextCommandLabel(EditCtxCmd_Paste))     != _T("粘贴(&P)") ||
+        CString(EditContextCommandLabel(EditCtxCmd_SelectAll)) != _T("全选(&A)"))
+    {
+        return Fail(_T("ContextMenuLabels"), _T("label mismatch"));
+    }
+    if (CString(EditContextCommandLabel(EditCtxCmd_Separator)) != _T("") ||
+        CString(EditContextCommandLabel(EditCtxCmd_None))      != _T(""))
+    {
+        return Fail(_T("ContextMenuLabels"), _T("non-command should be empty"));
+    }
+    return OK(_T("ContextMenuLabels"));
+}
+
+// SetContextMenuEnabled 开关：默认开，可关可再开（不依赖 HWND）。
+static Result Test_ContextMenuEnabledFlag()
+{
+    DuiEditHost e;
+    EXPECT_BOOL(e.IsContextMenuEnabled(), true,  _T("Ctx/default"));
+    e.SetContextMenuEnabled(false);
+    EXPECT_BOOL(e.IsContextMenuEnabled(), false, _T("Ctx/off"));
+    e.SetContextMenuEnabled(true);
+    EXPECT_BOOL(e.IsContextMenuEnabled(), true,  _T("Ctx/on"));
+    return OK(_T("ContextMenuEnabledFlag"));
+}
+
+// EnsureCreated 后右键菜单子类过程应已挂到 EDIT 子 HWND（仅 MENU 特性启用
+// 时；关掉菜单后应摘掉）。需要真 HWND，建一个隐藏 STATIC 当父窗口。
+static Result Test_ContextMenuSubclassInstalled()
+{
+#if defined(BUI_FEATURE_MENU)
+    HINSTANCE hInst = ::GetModuleHandle(nullptr);
+    HWND hParent = ::CreateWindowEx(0, _T("STATIC"), _T(""),
+                                    WS_OVERLAPPED | WS_POPUP,
+                                    0, 0, 1, 1, nullptr, nullptr, hInst, nullptr);
+    if (!hParent)
+    {
+        return Fail(_T("CtxSubclass/parent"), _T("CreateWindowEx failed"));
+    }
+
+    DuiEditHost e;
+    if (!e.EnsureCreated(hParent))
+    {
+        ::DestroyWindow(hParent);
+        return Fail(_T("CtxSubclass/create"), _T("EnsureCreated failed"));
+    }
+    bool installed = e.Test_IsContextMenuSubclassed();
+    // 关掉菜单应摘掉子类过程。
+    e.SetContextMenuEnabled(false);
+    bool afterOff = e.Test_IsContextMenuSubclassed();
+    ::DestroyWindow(hParent);
+
+    if (!installed)
+    {
+        return Fail(_T("CtxSubclass/installed"), _T("not subclassed after EnsureCreated"));
+    }
+    if (afterOff)
+    {
+        return Fail(_T("CtxSubclass/removed"), _T("still subclassed after disable"));
+    }
+    return OK(_T("ContextMenuSubclassInstalled"));
+#else
+    return OK(_T("ContextMenuSubclassInstalled(skipped:no MENU)"));
+#endif
+}
+
 #undef EXPECT_BOOL
 #undef EXPECT_INT
 
@@ -557,6 +732,11 @@ CString RunAll()
                                          &Test_EffectivelyVisible_HiddenAncestor},
         { _T("EffectivelyVisibleDeepChain"),
                                          &Test_EffectivelyVisible_DeepChain     },
+        { _T("ContextMenuModel"),        &Test_ContextMenuModel        },
+        { _T("ContextMenuLabels"),       &Test_ContextMenuLabels       },
+        { _T("ContextMenuEnabledFlag"),  &Test_ContextMenuEnabledFlag  },
+        { _T("ContextMenuSubclassInstalled"),
+                                         &Test_ContextMenuSubclassInstalled     },
     };
 
     CString out;

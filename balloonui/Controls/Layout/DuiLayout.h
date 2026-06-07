@@ -119,6 +119,56 @@ public:
     // 读取已存在子控件的 hint；不存在则返回默认 Hint。
     Hint    GetHint(DuiControl* child) const;
 
+    // ---- LayoutGuard：Layout 自递归护栏 ----
+    //
+    // 历史问题：DuiLayout::SetHint / SetPadding / SetGap 改完数据后会主动
+    // 调一次 Layout(m_rcItem) + Invalidate()，方便"运行期改完 hint 立刻重
+    // 排"。但若调用方本身就在 Layout 体内（例如某个业务 panel 的
+    // Layout override 想根据可用宽度临时把子的 Fixed 高度算出来再 SetHint），
+    // 这次回调就会再次触发 panel.Layout() → 又一次 SetHint → 又一次
+    // Layout() ... 无限递归直至栈溢出（2026-05-26 排查过一次现场实例）。
+    //
+    // 解法：Layout 实现的函数体首行构造一个 LayoutGuard；它会把容器置成
+    // "Layout 进行中"状态，期间 SetHint / SetPadding / SetGap 只更新内部
+    // 数据、不再二次触发 Layout / Invalidate（让本次 Layout 自然收尾即可）。
+    // LayoutGuard 析构时自动复位状态。
+    //
+    // 用法（每个 override 了 Layout 的容器子类都需要写这一行）：
+    //
+    //     void MyPanel::Layout(const RECT& rcAvail)
+    //     {
+    //         balloonwjui::DuiLayout::LayoutGuard _g(*this);
+    //         // ... 任意 SetHint(child, ...) 在这里都不会递归 ...
+    //         DuiVBox::Layout(rcAvail);
+    //     }
+    //
+    // 注意：DuiHBox / DuiVBox / DuiGrid 自带的 Layout 已经各自在开头写了
+    // LayoutGuard；业务侧只在自己 override Layout 时才需要补写。
+    class LayoutGuard
+    {
+    public:
+        // 构造时把 self 标记为 "Layout 进行中"；同时记录原值,析构时恢复,
+        // 以正确支持嵌套(业务侧 panel Layout override 内部调用基类 Layout
+        // 也会再套一层 LayoutGuard,内层析构时不能把外层的 true 误清成 false)。
+        //   self：本守卫归属的 DuiLayout 容器（自身或基类）。
+        explicit LayoutGuard(DuiLayout& self)
+            : m_self(self), m_prev(self.m_layouting)
+        {
+            m_self.m_layouting = true;
+        }
+        // 析构时恢复进入前的标记值;最外层退出时 m_layouting 自然回到 false,
+        // SetHint / SetPadding / SetGap 恢复主动触发 Layout + Invalidate。
+        ~LayoutGuard()
+        {
+            m_self.m_layouting = m_prev;
+        }
+    private:
+        DuiLayout& m_self;     // 被守护的容器
+        bool       m_prev;     // 进入时的 m_layouting 旧值(用于嵌套恢复)
+        LayoutGuard(const LayoutGuard&);
+        LayoutGuard& operator=(const LayoutGuard&);
+    };
+
 protected:
     // 子类实现具体布局算法。
     void    Layout(const RECT& rcAvail) override = 0;
@@ -140,6 +190,12 @@ protected:
     // side table：key 是 raw 子指针。m_children 持有所有权，这里只按
     // 地址存 hint。child 被 RemoveChild 时一并清掉。
     std::vector<std::pair<DuiControl*, Hint>> m_hints;
+    // "Layout 进行中" 标记。由 LayoutGuard 在 Layout 体内置 true / 析构时
+    // 清回 false；SetHint / SetPadding / SetGap 检查此位，若为 true 则只
+    // 更新数据、跳过 Layout(m_rcItem) + Invalidate，避免 Layout 自递归。
+    bool    m_layouting = false;
+
+    friend class LayoutGuard;
 };
 
 // =================================================================
@@ -218,6 +274,54 @@ public:
     // 在主轴上贡献 0。DuiScrollView::SetAutoContentHeight(true) 走这条；
     // DuiGallery 各 page-VBox 由此报准实际高度，避免之前硬编码 1500。
     SIZE    GetDesiredSize() const override;
+
+    // ---- 可选的卡片样式 ----
+    //
+    // 默认 4 个 setter 全关闭(bg/border CLR_INVALID, radius 0, width 1),
+    // OnPaint 与基类完全一致 —— 现有不调这些 setter 的 DuiVBox 行为不变。
+    // 调任意 setter 设值后, OnPaint 先在 m_rcItem 上绘制"底色 + 圆角 + 描边"
+    // 装饰, 再调基类继续绘制子控件 —— 让 DuiVBox 直接担当"卡片容器"。
+    // 底色 / 描边走 DuiAA::FillRoundRect, 自带抗锯齿。
+
+    // 卡片底色。CLR_INVALID(默认) = 不画底, 与历史一致。
+    void     SetBgColor(COLORREF c);
+    COLORREF GetBgColor() const            { return m_bgColor; }
+
+    // 卡片圆角半径(像素)。默认 0 = 直角矩形;>= 0 = 圆角。最终半径会被
+    // DuiAA::FillRoundRect 二次夹到 min(w,h)/2, 设过大也安全。
+    void     SetCornerRadius(int px);
+    int      GetCornerRadius() const       { return m_cornerRadius; }
+
+    // 卡片描边色。CLR_INVALID(默认) = 不描边。
+    void     SetBorderColor(COLORREF c);
+    COLORREF GetBorderColor() const        { return m_borderColor; }
+
+    // 卡片描边宽度(像素, 浮点)。默认 1.0; <= 0 视作不描边。
+    void     SetBorderWidth(float w);
+    float    GetBorderWidth() const        { return m_borderWidth; }
+
+    void    OnPaint(HDC hdc, const RECT& rcDirty) override;
+
+    // 静态 helper:不构造 DuiVBox 实例也能在任意 HDC 上画卡片底, 供
+    // owner-draw 流程统一走同一段绘制逻辑(与 OnPaint 一致), 替代业务侧
+    // 自封装的 DrawCard / FillRoundRect+StrokeRoundRect 双调用。
+    //   hdc:目标 DC;
+    //   rc:卡片矩形(含右下边界,与 GDI ::RoundRect 语义一致);
+    //   bg:底色;CLR_INVALID 跳过填充;
+    //   radius:圆角半径(像素);
+    //   border:描边色;默认 CLR_INVALID(不描边);
+    //   borderWidth:描边宽度;默认 1.0;<= 0 视作不描边。
+    static void PaintBackground(HDC hdc, const RECT& rc,
+                                COLORREF bg,
+                                int radius,
+                                COLORREF border = CLR_INVALID,
+                                float borderWidth = 1.0f);
+
+private:
+    COLORREF m_bgColor      = CLR_INVALID;    // 卡片底色;CLR_INVALID = 不画底
+    int      m_cornerRadius = 0;              // 圆角半径(像素)
+    COLORREF m_borderColor  = CLR_INVALID;    // 描边色;CLR_INVALID = 不描边
+    float    m_borderWidth  = 1.0f;           // 描边宽度;<= 0 视作不描边
 };
 
 // =================================================================

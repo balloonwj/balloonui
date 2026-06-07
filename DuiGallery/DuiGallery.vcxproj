@@ -237,6 +237,7 @@
     <ClCompile Include="..\balloonui\Controls\Basic\DuiLabel.cpp" />
     <ClCompile Include="..\balloonui\Controls\Basic\DuiButton.cpp" />
     <ClCompile Include="..\balloonui\Controls\Basic\DuiBadge.cpp" />
+    <ClCompile Include="..\balloonui\Controls\Basic\DuiToast.cpp" />
     <ClCompile Include="..\balloonui\Controls\Basic\DuiAvatar.cpp" />
     <ClCompile Include="..\balloonui\Controls\Basic\DuiSeparator.cpp" />
     <ClCompile Include="..\balloonui\Controls\Basic\DuiGroupBox.cpp" />

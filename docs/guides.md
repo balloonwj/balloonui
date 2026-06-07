@@ -50,7 +50,7 @@ balloonui 是一个面向 Windows 桌面客户端的 **DUI（DirectUI）UI 库**
 - **XML 声明式布局**：`DuiXmlBuilder` 把 XML 解析成控件树，业务可注册自定义标签工厂插入自绘节点。
 - **事件冒泡**：子控件通过 `NotifyParent(DUIN_*, extra)` 向上发 `WM_DUI_NOTIFY`。
 - **Per-Monitor V2 DPI 感知**：`DuiDpi::OptInPerMonitorV2()` 一行启用。
-- **GDI+ 抗锯齿统一封装**：`DuiPaintAA::FillEllipse / FillPolygon / DrawLine`，所有非轴对齐图形（圆 / 三角 / 斜线）走同一接口。
+- **GDI+ 抗锯齿统一封装**：`DuiPaintAA::FillEllipse / FillPolygon / FillRoundRect / DrawLine`，所有非轴对齐图形（圆 / 三角 / 斜线 / 圆角矩形）走同一接口。
 - **无依赖编译**：仅依赖 ATL/WTL 9.0、GDI、GDI+、comctl32、richedit。
 
 <a id="how-to-use"></a>
@@ -873,7 +873,7 @@ private:
             break;
 
         case IDC_TAB_MAIN:
-            if (n->code == DUIN_VALUECHANGED) m_tabPage->SetActivePage((int)n->extra);
+            if (n->code == DUIN_VALUECHANGED) m_tabPage->SetCurSel((int)n->extra, /*notify*/false);
             else if (n->code == balloonwjui::DuiTab::DUITN_CLOSE)
                                               CloseTabAt((int)n->extra);
             break;
@@ -1175,6 +1175,34 @@ host.SetRoot(std::move(root));
 
 `Hint().Fixed(main, cross=-1).Weight(w).Margin(all).AlignM(...).AlignC(...)`
 
+#### 卡片样式（可选；默认全关闭、向后兼容）
+
+设任意一项后，`OnPaint` 先在 `m_rcItem` 上绘"底色 + 圆角 + 描边"，再调基类绘制子控件 —— 让 `DuiVBox` 直接担当卡片容器（替代业务自封装的 `CardBox`）。底色 / 描边走 `DuiAA::FillRoundRect`，自带抗锯齿。
+
+| 方法 | 说明 |
+| --- | --- |
+| `SetBgColor(COLORREF)` / `GetBgColor()` | 卡片底色。`CLR_INVALID`（默认）= 不画底 |
+| `SetCornerRadius(int px)` / `GetCornerRadius()` | 圆角半径（像素）。默认 `0` = 直角；`>= 0` = 圆角；负值钳到 0；最终半径会被 `DuiAA::FillRoundRect` 二次夹到 `min(w,h)/2` |
+| `SetBorderColor(COLORREF)` / `GetBorderColor()` | 描边色。`CLR_INVALID`（默认）= 不描边 |
+| `SetBorderWidth(float w)` / `GetBorderWidth()` | 描边宽度（像素，浮点）。默认 `1.0`；`<= 0` 视作不描边；负值钳到 0 |
+| `PaintBackground(hdc, rc, bg, radius, border=CLR_INVALID, width=1.0)` [static] | 纯函数：不构造 `DuiVBox` 也能在任意 HDC 上画卡片底。供 owner-draw 流程与 `OnPaint` 共用同一段绘制逻辑 —— 替代业务侧的 `DrawCard` / `FillRoundRect + StrokeRoundRect` 双调用 |
+
+```
+// 子控件容器写法:
+auto card = std::unique_ptr<balloonwjui::DuiVBox>(new balloonwjui::DuiVBox());
+card->SetBgColor    (RGB(255, 255, 255));
+card->SetCornerRadius(8);
+card->SetBorderColor(RGB(232, 236, 240));
+card->SetBorderWidth(1.0f);
+card->SetPadding(12);
+card->AddChild(std::move(title), balloonwjui::DuiLayout::Hint().Fixed(24));
+card->AddChild(std::move(body),  balloonwjui::DuiLayout::Hint().Weight(1));
+
+// owner-draw 流程写法(不构造控件):
+balloonwjui::DuiVBox::PaintBackground(hdc, rcCard,
+    RGB(255,255,255), 8, RGB(232,236,240), 1.0f);
+```
+
 #### XML 速查
 
 |   |   |
@@ -1405,12 +1433,14 @@ host.SetRoot(std::move(dock));    // dock 当顶层；嵌套时改 outer->AddChi
 
 *从上到下：单行 / 多行 wrap / 末尾省略 / 链接默认 vs hover 态。*
 
-静态文本 + 超链接。三种模式：
+静态文本 + 超链接。两种模式（与**可选中**能力正交）：
 
 - `ModeText`（默认）：纯文本
 - `ModeLink`：下划线 + hover 高亮 + IDC_HAND 光标 + 点击发 `DUIN_CLICK` 或自动 ShellExecute（`SetAutoNavigate`）
 
 支持 **多行 wrap**（`SetWordWrap(true)`）+ **测高**（`MeasureHeight(width)`）— 这是聊天气泡 / 流式列表所必需。
+
+支持 **可选中**（`SetSelectable(true)`）：鼠标拖选高亮 + `Ctrl+C` 复制 + `Ctrl+A` 全选；空选区下 `Ctrl+C` 复制整段。**仅单行模式有效**（与 `SetWordWrap(true)` 共存时本能力自动失效）。典型用途：详情页 / 个人资料的只读值字段，让用户能直接复制不必"先编辑再粘贴"。
 
 **典型父：**任意 layout 容器（VBox / HBox / Grid / GroupBox 内容区 / Splitter pane / Dock 子区）。
 
@@ -1431,6 +1461,13 @@ link->SetText(_T("打开网站"));
 link->SetUrl (_T("https://example.com"));
 link->SetAutoNavigate(true);
 vbox->AddChild(std::move(link), balloonwjui::DuiLayout::Hint().Fixed(22));
+
+// 可选中的只读值字段（详情页 / 个人资料常用）
+auto val = std::make_unique<balloonwjui::DuiLabel>();
+val->SetText(_T("EMP100086"));
+val->SetSelectable(true);              // 拖选 + Ctrl+C / Ctrl+A
+val->SetSelectionColor(RGB(217, 232, 252));  // 可选；默认就是这个淡蓝
+vbox->AddChild(std::move(val), balloonwjui::DuiLayout::Hint().Fixed(22));
 ```
 
 #### XML 创建
@@ -1459,6 +1496,8 @@ host.SetRoot(std::move(root));
 | `MeasureHeight(width)` | 返回给定宽度下渲染所需高度（DT_CALCRECT） |
 | `SetUrl(LPCTSTR)` + `SetAutoNavigate(true)` | 链接点击自动 ShellExecute |
 | `GetMnemonicChar()` | `"打开(&O)"` → `'o'` |
+| `SetSelectable(bool)` / `IsSelectable()` | 开启可选中模式（拖选 + Ctrl+C 复制 + Ctrl+A 全选）；默认关。开启后控件可获焦点。**仅单行模式有效**，与 `SetWordWrap(true)` 共存时本能力自动失效 |
+| `SetSelectionColor(COLORREF)` / `GetSelectionColor()` | 选区高亮背景色；默认 `RGB(217, 232, 252)` 淡蓝 |
 
 #### 事件
 
@@ -1504,16 +1543,40 @@ if (n->ctrlId == IDC_FORGOT_LINK && n->code == DUIN_CLICK) {
 
 支持 **per-state 背景位图**（`SetBgBitmap(normal, hover, pressed, disabled)`）+ **9-grid 拉伸**（`SetBgInsets`）。位图调用方拥有，按钮不拷贝不释放。
 
+另外支持 **视觉变体 `Variant`**（与 `Style` 正交，**仅对 `StylePushButton` 生效**）—— 一组语义化的"按钮皮肤"：
+
+| Variant | 视觉 / 语义 | 典型用途 |
+| --- | --- | --- |
+| `Primary` | 品牌主色实心 + 白字（默认；与历史 PushButton 一致） | 主操作（Save / 登录 / 创建） |
+| `Default` | 白底 + 1px 灰边 + 深字 | 次操作（取消 / 导出） |
+| `Outlined` | 透明底 + 1px 品牌色边 + 品牌色字 | 强次操作 / 表单内的辅助主操作 |
+| `Ghost` | 透明 + 深字，hover 才有浅底，无边 | 弱操作 / 工具栏按钮 |
+| `Danger` | 危险红实心 + 白字 | 不可逆操作（删除 / 重置 / 停用） |
+| `Text` | 纯文字、无底无边、hover 才浮出浅底 | 链接式按钮（"忘记密码？"） |
+
+`StyleIcon` 忽略 Variant，始终按既有 kLight 色板渲染。`SetBgBitmap` 设了位图皮肤时位图优先于 Variant —— 不要同时使用两者。各 Variant 在 4 个状态（Normal / Hover / Pressed / Disabled）下的具体颜色由 `PaletteFor(v, s)` 静态纯函数返回，可单测、无 HDC 依赖。
+
+**`StyleCheckbox` / `StyleRadio` 的特例：**三个透明 Variant（`Ghost` / `Outlined` / `Text`）会接管<u>外框</u>色板，让 Checkbox / Radio 也能呈现「无边框无背景」样式 —— 适合放在列表行 / 紧凑表单里。其余 Variant（`Primary` / `Default` / `Danger`）在 Checkbox / Radio 上会兜底回 kLight 色板，与历史视觉一致。内部 glyph（小方框 / 圆环）始终走 kLight 色板以保证可见；透明 Variant 下 glyph 内部填充也跟着透明（呈"空心"形态）。
+
+**抗锯齿：**外框圆角与 Checkbox 方框 glyph 默认走 `DuiAA::FillRoundRect`（GDI+ 抗锯齿），8px 圆角无可见阶梯像素。可通过 `SetAntiAlias(false)` 退回 GDI `::RoundRect` 兜底路径（用于极致性能或对比测试）。Radio 的圆形 glyph 始终 AA（走 `DuiAA::FillEllipse`），与该开关无关。
+
 **典型父：**任意 layout 容器（VBox / HBox / Grid / GroupBox 内容区 / Splitter pane / Dock 子区）。
 
 #### 代码创建
 
 ```
+// 默认 PushButton + Primary（最常见的主操作按钮）
 auto btn = std::make_unique<balloonwjui::DuiButton>();
 btn->SetButtonType(balloonwjui::DuiButton::StylePushButton);
 btn->SetText(_T("&Save"));        // & 标记快捷键 'S'
 btn->SetCtrlId(IDC_SAVE);
 vbox->AddChild(std::move(btn), balloonwjui::DuiLayout::Hint().Fixed(32));
+
+// 改成 Danger 变体（不可逆操作）：
+btn->SetVariant(balloonwjui::DuiButton::Variant::Danger);
+
+// 改成 Ghost 变体（弱操作，工具栏按钮）：
+btn->SetVariant(balloonwjui::DuiButton::Variant::Ghost);
 
 // 父对话框 WM_DUI_NOTIFY:
 //   if (n->code == DUIN_CLICK && n->ctrlId == IDC_SAVE) Save();
@@ -1546,8 +1609,15 @@ host.SetRoot(std::move(root));
 | `SetRadioGroup(int gid)` | 非 0 group id 的同父 Radio 组成互斥组 |
 | `SetBgBitmap(n,h,p,d)` | per-state 背景位图（caller-owned） |
 | `SetBgInsets(l,t,r,b)` | 9-grid 切边 |
-| `SetTextColor / SetTextAlign` | 文字色与 DT_* 对齐 |
+| `SetTextColor / SetTextAlign` | 文字色与 DT_* 对齐（StylePushButton 文字色被 Variant palette 覆盖） |
 | `GetMnemonicChar()` | 取出 `&` 后的字符 |
+| `SetVariant(Variant) / GetVariant()` | 视觉变体 Primary / Default / Outlined / Ghost / Danger / Text。`StylePushButton` 全部 6 个 Variant 都生效；`StyleCheckbox` / `StyleRadio` 仅 Ghost / Outlined / Text 三个透明 Variant 接管外框色板，其余 Variant 兜底回 kLight；`StyleIcon` 忽略。与 `SetBgBitmap` 冲突时位图优先 |
+| `PaletteFor(Variant, ButtonState)` [static] | 纯函数：返回 `ButtonPalette{ bg, text, border }`。`bg` / `border` 取 `CLR_INVALID` 表示透明 / 不描边 |
+| `SetAntiAlias(bool) / IsAntiAlias()` | 外框 / Checkbox 方框 glyph 是否走抗锯齿绘制（默认 `true`）。关时退回 GDI `::RoundRect` 兜底（8px 圆角可见锯齿）；开时走 `DuiAA::FillRoundRect`。Radio 圆形 glyph 始终 AA，与该开关无关 |
+| `SetFont(HFONT) / GetFont()` | 设置自定义文字字体。HFONT caller-owned，控件不释放。`nullptr`（默认）走 `DuiResMgr::GetDefaultFont()`（YaHei 9pt） |
+| `SetTextPointSize(int pt, bool bold = false)` | 便捷 setter：按磅值 + 粗细从 `DuiResMgr::GetFontByPointSize` 拿缓存字体并 `SetFont`。`pt <= 0` 退化为默认字体 |
+| `SetLeadingIcon(HBITMAP) / GetLeadingIcon()` | 设置文字左侧图标位图。**仅 `StylePushButton` 生效**；其它 Style 忽略。HBITMAP caller-owned。图标走 `::AlphaBlend`，支持 32bpp 预乘 alpha。整组（图标 + gap + 文字）按 `m_dtFlags` 对齐（默认水平居中） |
+| `SetLeadingIconSize(int px)` / `SetLeadingIconGap(int px)` | 图标绘制边长（默认 `16`，`<= 0` 钳到 1）/ 图标与文字间距（默认 `6`，`< 0` 钳到 0） |
 
 #### 事件
 
@@ -1585,6 +1655,27 @@ LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lp, BOOL&) {
 
 未读消息红点 / 数字徽章，常叠在头像或图标的右上角。`SetCount(0)` 隐藏；`SetCount(-1)` 显示纯红圆点；`>= 1` 显示数字（>99 显示 "99+"）。
 
+另支持 **前导小圆点**（`SetLeadingDot(color)`）：在文字左侧画一个独立色的小圆点 + 间距，整组在徽章内居中。典型用于状态指示如「● 运行中」「● 停机」「● 警告」。圆点 + gap 自动计入徽章宽度，与既有的红色圆形 / 数字胶囊正交。
+
+**形状参数化（chip 扩展）：**`DuiBadge` 现可覆盖「短计数 / 红点」与「长文字状态标签」两种形态：
+
+- `SetCornerRadius(int r)` —— 圆角半径。`-1`（默认）= 自动胶囊形（圆角 = 高/2，与历史一致）；`>= 0` = 固定半径（chip 形态，推荐 4 或 6）；`0` = 直角矩形。最终半径会被 `DuiAA::FillRoundRect` 二次夹到 `min(w,h)/2`，设过大也安全。
+- `SetMaxDisplayChars(int n)` —— 显示字符数上限。`4`（默认，与历史一致，"99+" 链路天然不超 4）；`0` = 不截（长文字标签必用）；`> 0` = 截到 n 字（直接砍，<u>不</u>加省略号）。<u>截断逻辑搬到 `OnPaint`，`SetText` 保存的是原始文本</u> —— `GetText()` 返回原始，不是显示版本（与历史的"`SetText` 时截"语义不同，但默认 4 仍能保持显示一致）。
+
+合并后，`DuiBadge` 既能担任原"未读红点"，也能担任 `flamingoAdmin::ui::DrawChip` / `DrawStatusChip` 那种「圆角矩形 + 浅灰底 + 深字 + 语义圆点」的状态徽章。OnPaint 背景统一走 `DuiAA::FillRoundRect`（GDI+ 抗锯齿），不再分"圆 / 胶囊"两条绘制路径。
+
+**典型 chip 用法（与 ServicesPanel 状态徽章一致）：**
+
+```
+auto chip = std::make_unique<balloonwjui::DuiBadge>();
+chip->SetText(_T("已启用"));
+chip->SetCornerRadius(4);             // chip 形态(默认胶囊)
+chip->SetMaxDisplayChars(0);          // 不截(默认 4)
+chip->SetLeadingDot(RGB(60, 200, 120)); // 绿点 = OK
+chip->SetBgColor   (RGB(245, 246, 248)); // 浅灰底
+chip->SetTextColor (RGB( 80,  88, 102)); // 深字
+```
+
 **典型父：**两种用法 ——
 
   ① 普通 leaf：嵌任意 layout 容器（VBox/HBox/Grid 等），独立显示数字徽章；
@@ -1605,18 +1696,36 @@ hbox->AddChild(std::move(badge), balloonwjui::DuiLayout::Hint().Fixed(20));
 //   m_badge 是 DuiAvatar 的成员；override Layout() 把 badge rect 设到右上角：
 //     RECT av = GetRect();
 //     m_badge->SetRect(RECT{ av.right - 18, av.top - 4, av.right + 4, av.top + 14 });
+
+// 用法 ③：带前导小圆点的状态徽章（如「● 运行中」「● 停机」）
+auto status = std::make_unique<balloonwjui::DuiBadge>();
+status->SetText(_T("运行中"));
+status->SetTextColor(RGB(80, 80, 80));
+status->SetBgColor  (RGB(245, 246, 248));
+status->SetLeadingDot(RGB(60, 200, 120));   // 绿点 = OK
+// 可选：SetLeadingDotRadius(4)，SetLeadingGap(6)
+hbox->AddChild(std::move(status), balloonwjui::DuiLayout::Hint().Fixed(20));
 ```
 
 #### 关键 API
 
 |   |   |
 | --- | --- |
-| `SetText(LPCTSTR)` | 原始文本（最多 4 字符显示，超出截断） |
+| `SetText(LPCTSTR)` / `GetText()` | **保存原始文本**（不在此处截断；显示时按 `MaxDisplayChars` 截）。`GetText()` 返回的是原始值，<u>不</u>是显示版本 |
 | `SetCount(int)` | 整数计数自动转文字：0 → 隐藏；1-99 → 数字；100+ → "99+" |
 | `SetBgColor / SetTextColor` | 底色 / 字色（默认红底白字） |
 | `SetHideWhenEmpty(bool)` | 空文本是否完全跳过绘制（默认 true） |
 | `IsShowing()` | 当前是否会画出 |
 | `FormatCount(int)` [static] | 纯函数：把 N 转成 "" / "99+" / "" |
+| `SetLeadingDot(COLORREF)` / `GetLeadingDotColor()` / `HasLeadingDot()` | 开 / 关前导小圆点；传 `CLR_INVALID` 清除。圆点 + gap 自动计入徽章宽度 |
+| `SetLeadingDotRadius(int)` | 圆点半径（像素）；`<= 0`（默认）按字体高度自适配 = `max(3, fontHeight/4)` |
+| `SetLeadingGap(int)` | 圆点与文字间距（像素）；默认 4 |
+| `SetCornerRadius(int r)` / `GetCornerRadius()` | 圆角半径。`-1`（默认）= 胶囊形（高/2）；`>= 0` = 固定半径（chip 形态，推荐 4 或 6）；`0` = 直角；`< -1`（误用）兜底为 0 |
+| `SetMaxDisplayChars(int n)` / `GetMaxDisplayChars()` | 显示字符数上限。`0` = 不截（chip 用法必用）；`> 0` = 截到 n 字（直接砍，不加省略号）；默认 `4`，与历史一致；`< 0` 兜底为不截 |
+| `ContentWidth(textW, r, gap, hasDot)` [static] | 纯函数：算徽章内容宽度（不含 padding） |
+| `AutoDotRadius(fontHeight)` [static] | 纯函数：自适配圆点半径规则 |
+| `EffectiveCornerRadius(rawRadius, height)` [static] | 纯函数：算实际生效圆角。`-1` → `height/2`；`>= 0` → 原值；`< -1` → 0 |
+| `ApplyMaxChars(text, maxChars)` [static] | 纯函数：应用截断规则。`maxChars <= 0` → 不截；否则截到前 `n` 字（按 `CString::GetLength()`，中文 1 字算 1 个） |
 
 #### XML 创建
 
@@ -1640,6 +1749,63 @@ host.SetRoot(std::move(root));
 | 标签 | `<badge count="3" bg-color="220,60,60"/>` 或 `<badge text="NEW" bg-color="40,140,80"/>` |
 | 详细属性参考 | [§3.3.7 badge](#xml-badge) |
 | 事件 | 无（纯绘制） |
+
+<a id="DuiToast"></a>
+
+### DuiToast  `[DUI]`
+
+顶层浮出的轻量提示控件。典型形态:窗口顶部水平居中、深色圆角底 + 左侧图标 + 文字, 持续约 3 秒后自动渐隐消失。**非交互**(HitTest 永远返回 nullptr) —— 点击穿透到下层控件, 不会抢焦。
+
+**典型父:**任意承载 page 的容器(如 admin 的 RootContainer / DuiGallery 的 page VBox)。<u>把 DuiToast 加在父 m_children 末尾</u> —— 基类 OnPaint 按子顺序绘制, 末尾即最上层, 自动顶层显示。
+
+#### 代码用法
+
+```
+auto toast = std::make_unique<balloonwjui::DuiToast>();
+toast->SetBgColor(RGB(245, 158, 11));      // 警告橙
+toast->SetTextColor(RGB(255, 255, 255));   // 白字
+toast->SetIcon(myWarningBitmap);           // caller-owned 32bpp PARGB
+toast->SetDurationMs(3000);                // 3 秒
+m_root->AddChild(std::move(toast));        // 末尾 = 最上层
+
+// 业务事件触发:
+m_toast->Show(_T("请先在左侧选择一个 agent"));
+```
+
+#### 工作机制
+
+- **动画链路**: Show → 渐入(默认 200ms, alpha 0→1) → 显示等待(默认 3000ms) → 渐出(200ms, alpha 1→0) → SetVisible(false)。全部走 `DuiAnimMgr` 自驱, caller 不需要 SetTimer。
+- **多次 Show 不堆积**: 内部代际号 `m_animGen` 让旧链路 callback 自废, 新文本立刻从当前 alpha 起渐入, 视觉无跳变。
+- **渲染走 PARGB Bitmap + ::AlphaBlend**: **背景圆角与文字**都在 GDI+ `PixelFormat32bppPARGB` Bitmap 上画(背景走 `FillPath`、文字走 `DrawString`),alpha 通道由 GDI+ 统一管理;LockBits 复制到 BI_RGB DIB 后,**图标**走 GDI `::AlphaBlend`(图标本身是 32bpp 预乘 alpha HBITMAP);最后整张 DIB 用 `AC_SRC_ALPHA + SourceConstantAlpha=255×m_alpha` 合成到 host —— 既支持圆角外透明、又支持整体渐入渐出。<u>注</u>:文字必须走 GDI+ 而非 GDI ::DrawText —— 后者在 BI_RGB 32bpp DIB 上会污染 alpha 通道,产生"重影"(已实证)。
+- **位置自定位**: `Layout` 忽略父分配的 rcAvail, 始终用 `GetParent()->GetRect()` 算"顶居中 + topOffset"。`Show()` 时主动调一次 `Layout(parent rect)` 立刻刷 m_rcItem,避免首次显示时父 layout 还没传 rect 导致 0×0 看不见。
+
+#### 关键 API
+
+| 方法 | 说明 |
+| --- | --- |
+| `Show(LPCTSTR text)` | 显示一条提示;多次 Show 替换前一条 + 重置计时。空文本退化为 HideNow。 |
+| `HideNow()` | 立即隐藏, 取消未完成动画, m_alpha 归 0。 |
+| `IsActive()` | 当前是否处于显示态(含渐入 / 显示 / 渐出)。 |
+| `SetDurationMs(int ms) / GetDurationMs()` | 显示时长(不含淡入淡出);默认 3000。<= 0 钳到 1。 |
+| `SetFadeMs(int ms) / GetFadeMs()` | 渐入 / 渐出动画时长;默认 200。0 = 硬切;负值钳到 0。 |
+| `SetTextColor(COLORREF) / GetTextColor()` | 文字色;默认白 `RGB(255,255,255)`。 |
+| `SetBgColor(COLORREF) / GetBgColor()` | 背景色;默认深灰 `RGB(50,50,50)`。 |
+| `SetCornerRadius(int) / GetCornerRadius()` | 圆角半径(像素);默认 16;负值钳 0。走 `DuiAA::FillRoundRect` 抗锯齿。 |
+| `SetIcon(HBITMAP) / GetIcon()` | 左侧图标位图。HBITMAP caller-owned, 控件不释放;nullptr(默认) = 无图标。走 `::AlphaBlend` 支持 32bpp 预乘 alpha。 |
+| `SetIconSize(int) / GetIconSize()` | 图标边长(像素, 正方形);默认 16;<= 0 钳到 1。 |
+| `SetIconGap(int) / GetIconGap()` | 图标与文字间距;默认 8;<0 钳 0。 |
+| `SetFont(HFONT) / GetFont()` | 自定义字体。HFONT caller-owned, 控件不释放;nullptr(默认) 走 toast 内部默认字体(YaHei 9pt + ANTIALIASED_QUALITY)。<u>注</u>:由于 toast 走 PARGB + AlphaBlend 合成, ClearType 字体会出现子像素错位"重影",caller 应传 `lfQuality=ANTIALIASED_QUALITY` 的 HFONT;或直接走 SetTextPointSize 内部自动用 AA 字体。 |
+| `SetTextPointSize(int pt, bool bold=false)` | 便捷 setter:按磅值 + 粗细从 `DuiResMgr::GetAntiAliasedFontByPointSize` 拿 AA 缓存字体并 `SetFont`。pt <= 0 退化为默认字体(等同 SetFont(nullptr))。 |
+| `SetTopOffset(int) / GetTopOffset()` | 距父客户区顶的偏移(像素);默认 40。 |
+| `SetMaxWidth(int) / GetMaxWidth()` | 最大宽度(像素);默认 0 = 不限;>0 时文字超出 (maxWidth - icon - gap - 2×padding) 后截断加 "…"。 |
+| `MeasureWidth(textPx, hasIcon, iconSize, iconGap)` [static] | 纯函数:量算 toast 总宽。 |
+| `ApplyEllipsis(text, maxChars)` [static] | 纯函数:按 maxChars 截断 + 加 "…"。<=0 不截;<3 退化硬截。 |
+
+#### XML 创建
+
+暂未原生支持 `<toast>` 标签 —— toast 是运行时浮出, 不在静态布局描述里。需要静态注册请走 `DuiXmlBuilder::CustomFactory`。
+
+事件:无(纯展示, 不参与 WM_DUI_NOTIFY)。
 
 <a id="DuiAvatar"></a>
 
@@ -2397,6 +2563,8 @@ host.SetRoot(std::move(root));
 
 **典型父：**任意 layout 容器（VBox / HBox / Grid / GroupBox 内容区 / Splitter pane / Dock 子区）。可输入风格内含 EDIT 子，挂入后须在 host HWND 就绪时调一次 `cb->EnsureCreated(host.m_hWnd)`（仅可输入模式必须，只读模式可省）。
 
+**下拉箭头：**右侧三角形走 `DuiAA::FillPolygon` 抗锯齿绘制（对角斜边在屏上不会出现阶梯像素）。颜色可通过 `SetArrowColor(COLORREF)` 配置，默认 `RGB(80,100,140)` 蓝灰色；仅覆盖 enabled 态，disabled 态沿用内部 `kArrowDisabled = RGB(160,160,160)` 不变（业务一般不需要单独换 disabled 色）。
+
 #### 代码创建
 
 ```
@@ -2422,6 +2590,8 @@ cbRaw->EnsureCreated(host.m_hWnd);
 | `GetCount / GetItemText(idx)` | 查询 |
 | `SetCurSel(idx) / GetCurSel()` | 当前选中 |
 | `SetEditable(bool)` | 是否允许输入 |
+| `SetBgColor(COLORREF)` / `SetShowBorder(bool)` / `SetShowArrow(bool)` | 主体底色 / 边框 / 右侧箭头开关 |
+| `SetArrowColor(COLORREF)` / `GetArrowColor()` | 下拉箭头颜色（默认 RGB(80,100,140)）。仅覆盖 enabled 态，disabled 态沿用内部灰色不变。三角形走 `DuiAA::FillPolygon` AA 绘制 |
 | `SetIncrementalSearch(bool)` | 键入过滤下拉项 |
 | `ComputeFilteredIndices(query)` | 纯函数：返回过滤后真实索引列表 |
 
@@ -2770,6 +2940,57 @@ sv->SetContentHeight(tvRaw->GetContentHeight());
 vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 ```
 
+#### 多层级嵌套（任意深度）
+
+`AddRoot/AddChild` 支持<u>任意层级嵌套</u> —— 每次 `AddChild(parentId, ...)` 都可以挂在任何已存在节点下（不限根节点）。`Node` 结构内部用 `parentIdx` + `depth` 字段记录关系，PaintRow 按 `depth * m_indent`（默认 18 px）算缩进；折叠任意中间层时 `RebuildVisible` 用 `hideUntilDepth` 整体跳过子树（不进入可见行列表）。
+
+```
+auto tv = std::make_unique<balloonwjui::DuiTreeView>();
+
+// Depth 0
+int gCompany = tv->AddRoot(_T("CloudCorp"));
+
+// Depth 1
+int gRD  = tv->AddChild(gCompany, _T("R&D Center"));
+int gOps = tv->AddChild(gCompany, _T("Operations Center"));
+
+// Depth 2
+int gFE  = tv->AddChild(gRD, _T("Frontend"));
+int gBE  = tv->AddChild(gRD, _T("Backend"));
+
+// Depth 3
+int gWeb    = tv->AddChild(gFE, _T("Web Team"));
+int gMobile = tv->AddChild(gFE, _T("Mobile Team"));
+
+// Depth 4（叶节点）
+tv->AddChild(gWeb,    _T("Project Aurora"));
+tv->AddChild(gMobile, _T("Project Comet"));
+// ... 也可以继续往下挂 depth 5+, 没有上限
+```
+
+DuiGallery 演示：TreeView tab → **"Multi-level nesting (arbitrary depth)"** section（5 层深的组织架构 + Expand all / Collapse all 按钮）。
+
+#### 节点 icon
+
+每个节点可挂一份独立的 HBITMAP 作 icon，绘制在 ▶ glyph 与 label 之间的 18×18 槽位（`kIconSizePx`）。位图所有权由 caller 持有（控件只存裸指针），相同位图可被多个节点共享。
+
+```
+// 头像 / 文件夹 / 文件 等小图，建议提前生成或加载，控件不复制位图字节。
+HBITMAP hDir  = LoadProjectIconBitmap(IconKind::Folder);
+HBITMAP hDoc  = LoadProjectIconBitmap(IconKind::Document);
+
+int gProj = tv->AddRoot(_T("project-alpha"), hDir);
+tv->AddChild(gProj, _T("README.md"),  hDoc);
+tv->AddChild(gProj, _T("design.pdf"), hDoc);
+tv->AddChild(gProj, _T("(no icon, label only)"));    // icon 参数省略 = 无 icon
+```
+
+也支持运行期改：`SetItemIcon(id, hbm)`、`GetItemIcon(id)`。
+
+进一步视觉变体：`SetItemIconGrayed(id, true)` 把 icon 按 NTSC luma `(R*299 + G*587 + B*114) / 1000` 转灰输出，原 HBITMAP 不动 —— 典型用例是"离线好友 / 已禁用项"的视觉表达。
+
+DuiGallery 演示：TreeView tab → **"Per-node icons (HBITMAP via SetItemIcon)"** section（两个根节点 + 多个有 / 无 icon 子节点混排）。
+
 #### 多列模式
 
 ![DuiTreeView 多列模式 — 5 列 + 冻结 + 6 种 cell](images/ctl-treeview-multicol.png)
@@ -2922,6 +3143,62 @@ case TV::DUITVN_CELLEDITED: {
 }
 ```
 
+#### 扩展 API（单列模式增强）
+
+下面几组 API 在单列模式生效，配合"分组好友 / 联系人 / 文件树"等场景常用；多列模式忽略（多列请用 `SetCellText` / `SetCellIcon` 等等价 API）。
+
+**节点副标签（两行节点）**
+
+`SetItemSubLabel(id, text)` 给节点加第二行小字（在主 label 下方、字号更小、颜色更淡）。空字符串 = 回退单行垂直居中绘（向后兼容）。两行排版需要 caller 自己抬高行高（建议 `SetRowHeight(40)`），全局字号 / 颜色用 `SetSubLabelPointSize(pt)` / `SetSubLabelTextColor(c)` 调整（默认 8pt + `RGB(140,140,140)`）。
+
+**节点右侧辅助文字**
+
+`SetItemRightText(id, text)` 在行右端 status dot 内侧右对齐绘一小段辅助文字 —— 典型用例：分组节点的"在线数 / 总数"、单元格的尺寸 / 时间。绘制时按文字实际宽度收缩 textRight，主 label 自动 ellipsis。字号 / 颜色用 `SetRightTextPointSize(pt)`（0 = 与主 label 同字号 9pt）/ `SetRightTextColor(c)`（默认浅灰）调整。
+
+**Icon 灰显**
+
+`SetItemIconGrayed(id, true)` 把节点 icon 按 NTSC luma 系数转灰度后绘出，原 HBITMAP 不动。纯 GDI 实现（无 GDI+ 依赖），逐像素遍历 + 保留 alpha 通道。
+
+**展开状态快照（救命 API）**
+
+```
+// "存 → 改数据 → 还" 模式：刷新前后保留用户的展开 / 折叠选择
+std::vector<int> snap = tv->GetExpandedSnapshot();
+tv->CollapseAll();
+// ... 业务从数据源全量重建节点 ...
+tv->RestoreExpanded(snap);     // 增量恢复：snap 内 id 调 Expand，
+                               // 不在 snap 里的节点保持当前状态不变
+```
+
+`RestoreExpanded` 对 snapshot 内已不存在的节点 id 静默跳过；一次性 RebuildVisible，避免 N 次 SetExpanded 触发 N 次 Invalidate。
+
+**节点可见性 / 全局过滤**
+
+```
+// 单节点开关：连同后代一起隐藏，数据保留
+tv->SetItemVisible(idBob, false);
+
+// 全局过滤器：predicate 返回 true 表示保留可见，false 隐藏
+tv->SetFilter([&tv](int id) -> bool {
+    CString lbl = tv->GetItemLabel(id);
+    return lbl.Find(_T("Eng")) == 0;       // 只留 "Eng*" 开头的
+});
+tv->ClearFilter();                         // 移除过滤器
+```
+
+最终可见 = `SetItemVisible` 标志为 true <u>且</u>（无 filter 或 filter 返回 true）。父节点被任一条件隐藏时，后代也一起隐藏（按 `depth` 范围跳过）。
+
+**Hover 事件**
+
+| code | 触发 | extra |
+| --- | --- | --- |
+| `DUITVN_HOVER_ENTER` | 鼠标进入新节点（m_hoverId 变化） | 新节点 itemId |
+| `DUITVN_HOVER_LEAVE` | 鼠标离开之前节点 / 鼠标离开控件 | 旧节点 itemId |
+
+库本身<u>无延时</u>：每次 m_hoverId 变化都立即 fire。业务侧若要"悬停 ~500ms 才弹卡片"语义，自己在 ENTER 时启 `SetTimer`、LEAVE 时 `KillTimer` 实现。屏幕坐标用 `::GetCursorPos()` 现场取。
+
+DuiGallery 演示：TreeView tab → **"Hover notify (DUITVN_HOVER_ENTER/LEAVE) & auto-hide scrollbar"** section（含 hover label 实时更新 + 滚动条 auto-hide 行为）。
+
 #### 性能特征
 
 **什么是 dirty-rect 行裁剪？**
@@ -3031,6 +3308,26 @@ tab->SetCurSel(0, /*notify*/false);
 vbox->AddChild(std::move(tab), balloonwjui::DuiLayout::Hint().Fixed(28));
 ```
 
+#### 图标 + 自适应宽度
+
+每个 tab 可在文字左侧显示一个 16x16 PARGB 图标（`HBITMAP`，caller-owned，控件不拷贝也不释放，传 `nullptr` 清除）。tab 宽度默认 clamp 到 `[60, 200]`，也可整体切换为**自适应文字**，跳过 clamp 让短 tab 紧贴 padding、长 tab 不再被省略号截断。
+
+```
+// 图标：随 AddTab 一起传，或事后用 SetTabIcon 设。
+tab->AddTab(_T("Inbox"), /*closeable*/false, /*dropdown*/false, /*lParam*/0, hIconRed);
+tab->SetTabIcon(1, hIconGreen);
+
+// 调整图标尺寸与图标-文字间距（所有 tab 共用，默认 16 / 6）。
+tab->SetIconSize(18);
+tab->SetIconGap(8);
+
+// 宽度自适应：打开后 tab 宽严格贴合内容（text + padding + 可选 icon / close / dropdown 增量），
+// 跳过 [m_minTabW, m_maxTabW] clamp。默认 false。
+tab->SetAutoFitTabWidth(true);
+```
+
+图标渲染走 `::AlphaBlend`，与 `DuiButton::SetLeadingIcon` 完全一致；HBITMAP 用 `CreateDIBSection` 造 32 位 PARGB 位图即可。
+
 #### 事件
 
 | code | 触发 | extra (LPARAM) |
@@ -3047,7 +3344,7 @@ if (n->ctrlId == IDC_MAIN_TAB) {
     int idx = (int)n->extra;
     switch (n->code) {
     case DUIN_VALUECHANGED:
-        m_tabPage->SetActivePage(idx);
+        m_tabPage->SetCurSel(idx, /*notify*/false);
         break;
     case balloonwjui::DuiTab::DUITN_CLOSE:
         if (CanCloseSession(idx)) m_tab->RemoveTab(idx);
@@ -3070,38 +3367,51 @@ if (n->ctrlId == IDC_MAIN_TAB) {
 
 *顶部 DuiTab + 下方内容区组合，切 tab 换内容。*
 
-多页容器：每页是任意 DuiControl 子树，`SetActivePage(i)` 切换显示。
+复合控件：内部 = 一个 tab 头条（私有 `DuiTab`） + N 个 page 子树（任意 `DuiControl`）。`AddPage(title, page)` 加一页，`SetCurSel(i, notify)` 切换显示。<u>DuiTabPage 自带 tab 头条，无需外面再挂一个独立的 `DuiTab`。</u>
 
-**典型父：**任意 layout 容器（VBox / HBox / Grid / GroupBox 内容区 / Splitter pane / Dock 子区）。<u>通常在 `DuiTab` 正下方与之配对</u>；本身像一个"按 SetCurSel 显示指定子的容器"。
+**典型父：**任意 layout 容器（VBox / HBox / Grid / GroupBox 内容区 / Splitter pane / Dock 子区）。本身像一个"按 SetCurSel 显示指定子的容器"。
 
 #### 代码创建
 
 ```
 auto tp = std::make_unique<balloonwjui::DuiTabPage>();
 tp->SetCtrlId(IDC_TABPAGE);
-tp->AddPage(BuildFilesPage());
-tp->AddPage(BuildEditPage());
-tp->SetActivePage(0);
+tp->AddPage(_T("Files"), BuildFilesPage());
+tp->AddPage(_T("Edit"),  BuildEditPage());
+tp->SetCurSel(0, /*notify*/false);
 vbox->AddChild(std::move(tp), balloonwjui::DuiLayout::Hint().Weight(1));
-// vbox 已经先挂了 DuiTab；DuiTabPage 紧随其后填满剩余空间
 ```
 
-常与 `DuiTab` 配对：tab 的 `DUIN_VALUECHANGED` 调 `tabPage->SetActivePage(extra)`。
+内部头条可用 `GetHeader()` 取到 `DuiTab*`，调它的样式 setter（色彩 / closeable 等）；<u>但不要</u>通过 GetHeader() 直接 AddTab / RemoveTab，会与 page 列表失同步。
+
+#### 图标 + 自适应宽度（透传内部 DuiTab）
+
+DuiTabPage 把图标 / 自适应宽度等 tab 头条相关 API 透传到内部 `DuiTab`，行为与上文 [DuiTab](#DuiTab) 一致；`AddPage` 末位可直接传 icon。
+
+```
+tp->AddPage(_T("Inbox"),   BuildInboxPage(),   hIconRed);
+tp->AddPage(_T("Sent"),    BuildSentPage(),    hIconGreen);
+tp->SetPageIcon(1, nullptr);    // 清除已设图标
+
+tp->SetIconSize(20);
+tp->SetIconGap(8);
+tp->SetAutoFitTabWidth(true);   // 标题长短一目了然（适合分类条 / 过滤条）
+```
 
 #### 事件
 
 | code | 触发 | extra (LPARAM) |
 | --- | --- | --- |
-| `DUIN_VALUECHANGED` | 当前激活页变化（程序 `SetActivePage` 时也会发） | 新激活页索引 |
+| `DUIN_VALUECHANGED` | 当前激活页变化（用户点 tab 头切换，或程序调 `SetCurSel(_, /*notify*/true)`）；`ctrlId = DuiTabPage 的 id`，内部 DuiTab 的切换事件已被重定向。 | 新激活页索引 |
 
 ```
-// 典型用法：DuiTab 的 DUIN_VALUECHANGED 直接驱动 DuiTabPage 切页
+// 业务只盯 DuiTabPage 自己的 ctrlId 即可；内部头条对外不可见。
 auto* n = (balloonwjui::DuiNotify*)lp;
-if (n->ctrlId == IDC_TAB && n->code == DUIN_VALUECHANGED) {
-    m_tabPage->SetActivePage((int)n->extra);
+if (n->ctrlId == IDC_TABPAGE && n->code == DUIN_VALUECHANGED) {
+    int idx = (int)n->extra;
+    // 例：把用户最近用的 page 索引持久化
+    SaveLastTabIndex(idx);
 }
-// IDC_TABPAGE 自身的 DUIN_VALUECHANGED 通常不需要处理 — SetActivePage 引发
-// 的反向通知主要给"持久化用户最近用的页索引"这类外围逻辑用。
 ```
 
 <a id="DuiMenu"></a>
@@ -3545,7 +3855,11 @@ frame.ShowWindow(nCmdShow);
 | `SetTitleBarHeight(int)` | **标题栏高，默认 36 px**，最小 18。 典型值：32 偏紧凑（旧默认）、36 平衡（当前默认）、40 配 9-grid 渐变标题栏。 |
 | `SetBorderPx(int)` | **resize 抓握区宽度，默认 8 px**（96-dpi 逻辑像素，运行时按 monitor DPI 缩放：125% → 10 物理 px、150% → 12 物理 px）。设 0 = 不允许拖边 resize。 |
 | `SetResizable(bool)` | 是否允许拖边 resize |
-| `SetMinSize(w, h)` | 最小窗口尺寸 |
+| `SetMinSize(w, h)` | 最小窗口跟踪尺寸（拖动 resize 缩小到此值后挡住）。默认 200×150。 |
+| `SetMaxSize(w, h)` | 最大窗口跟踪尺寸（拖动 resize 放大到此值后挡住）。`w` / `h` = 0 表示不限（默认）。可与 `SetMinSize` 同值实现"固定尺寸但保留 resize 命中"。 |
+| `AddCaptionIcon(HBITMAP, tooltip)` | 在标题栏 close 按钮左侧追加一个可点击图标。返回 captionId（>= 1 单调递增）。点击发 `DUIFW_CAPTION_ICON_CLICK` 通知（`extra` = captionId）。tooltip 非空时自动 register 到 `DuiToolTipMgr`。位图所有权 caller 持有（库只存裸指针）。 |
+| `RemoveCaptionIcon(captionId)` | 按 captionId 移除单个图标；找不到 id 静默忽略。tooltip 自动 unregister。 |
+| `ClearCaptionIcons()` | 清空所有 caption icons。 |
 | `SetClientContent(unique_ptr<DuiControl>)` | 客户区根控件 — **不要** 用 SetRoot |
 | `SetTitleBarTransparent(bool)` | 透明标题栏（让 9-grid bg 顶部装饰带穿透显示）。配合 `SetTitleTextColor` + `SetCaptionGlyphColor` 改成白字白 glyph 用于深色渐变。详见 [§10 9-grid 背景图](#nine-patch-bg)。 |
 | `SetTitleTextColor(COLORREF)` | 标题文字颜色，默认 `RGB(40,40,40)` 深灰。透明标题栏 + 彩色背景下需手动改成对比色（一般白）。 |
@@ -3557,6 +3871,59 @@ frame.ShowWindow(nCmdShow);
 caption 三按钮（min / max / close）发的 `DUIN_CLICK` 由 `DuiFrameWindow` 内部 **自动转** 成 `WM_SYSCOMMAND`（`SC_MINIMIZE / SC_MAXIMIZE / SC_RESTORE / SC_CLOSE`），业务<u>不需要</u>手动监听。如果想阻止关闭，按常规处理 `WM_CLOSE` 即可。
 
 客户区子控件的事件按常规通过 `WM_DUI_NOTIFY` 路由到 frame 窗自身（即 `m_hWnd`）。
+
+| code | 触发 | extra |
+| --- | --- | --- |
+| `DUIFW_CAPTION_ICON_CLICK` | 标题栏自定义图标（由 `AddCaptionIcon` 添加）被点击 | captionId（`AddCaptionIcon` 返回值） |
+
+#### 标题栏自定义图标按钮（caption icons）
+
+在标题栏 close 按钮左侧依次插入可点击图标，每个图标占一个标准按钮宽（`kCaptionBtnW` = 46 px），点击发 `DUIFW_CAPTION_ICON_CLICK` 通知。典型用例：VS Code / Chrome 右上角 "设置 / 通知 / 帮助" 风格的标题栏图标按钮。
+
+```
+// 业务侧的 frame 子类拦截 caption icon click
+class MyFrame : public balloonwjui::DuiFrameWindow
+{
+public:
+    BEGIN_MSG_MAP(MyFrame)
+        MESSAGE_HANDLER(WM_DUI_NOTIFY, OnDuiNotify)
+        CHAIN_MSG_MAP(balloonwjui::DuiFrameWindow)
+    END_MSG_MAP()
+private:
+    LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lp, BOOL& bHandled) {
+        auto* n = reinterpret_cast<balloonwjui::DuiNotify*>(lp);
+        if (n && n->code == balloonwjui::DuiFrameWindow::DUIFW_CAPTION_ICON_CLICK) {
+            int captionId = (int)n->extra;
+            // ... 业务处理 ...
+            bHandled = TRUE;
+            return 0;
+        }
+        bHandled = FALSE;
+        return 0;
+    }
+};
+
+// 设置
+HBITMAP hSettings = LoadCaptionIcon(...);
+HBITMAP hBell     = LoadCaptionIcon(...);
+int idSettings = frame.AddCaptionIcon(hSettings, _T("Settings"));    // 自动 register tooltip
+int idBell     = frame.AddCaptionIcon(hBell,     _T("Notifications"));
+// ... 业务 OnDuiNotify 里按 captionId == idSettings/idBell 分支处理
+```
+
+HBITMAP 所有权由 caller 持有（控件只存裸指针）。位图源建议至少 16×16，`StretchBlt` HALFTONE 缩到 16×16 居中绘。hover/press 配色随 `SetTitleBarTransparent` 切换：不透明态浅灰 hover（与 min/max 同款）；透明态品牌蓝 hover（不走 close 红变体）。
+
+DuiGallery 演示：FrameWindow tab → "DuiFrameWindow" section 的 demo frame 默认带 3 个 caption icons，点击弹 MessageBox 显示 captionId；"Caption icons — add / remove dynamically" section 演示 `AddCaptionIcon` / `ClearCaptionIcons` 运行期增删。
+
+#### 拖动尺寸限制（min / max）
+
+`SetMinSize(w, h)` / `SetMaxSize(w, h)` 把 ptMinTrackSize / ptMaxTrackSize 喂给 `WM_GETMINMAXINFO`，OS 在拖边 resize 时强制 clamp。`SetMaxSize(0, 0)` = 不限（默认），让 OS 沿用 work area 上限。
+
+- **普通可缩放窗口：**`SetMinSize(360, 240)` + 不调 SetMaxSize 即可。
+- **给定上下限：**`SetMinSize(360, 240); SetMaxSize(800, 600);` 拖动只能在 360×240 ~ 800×600 之间。
+- **"固定尺寸但保留 resize 命中"：**`SetMinSize(480, 320); SetMaxSize(480, 320);` ── 与 `SetResizable(false)` 区别：本方式仍激活 8 向 resize cursor、只是 OS 不让真正改变尺寸；`SetResizable(false)` 直接关掉 NCHITTEST resize 命中。
+
+DuiGallery 演示：FrameWindow tab → "Min / Max drag size limits" section 三个按钮（默认 / 不限 / 固定）切换后拖窗口边缘验证。
 
 #### 默认视觉对比
 
@@ -3716,16 +4083,18 @@ CImageEx* img = balloonwjui::DuiResMgr::Inst().AcquireImage(_T("button_normal.pn
 
 *上排：原生 GDI Polygon / Ellipse / LineTo（对角线肉眼可见锯齿）。下排：DuiPaintAA::FillPolygon / FillEllipse / DrawLine（平滑）。*
 
-命名空间，3 个函数。所有非轴对齐图形（圆、对角线、多边形）必须走这套，否则会有锯齿。
+命名空间，4 个函数。所有非轴对齐图形（圆、对角线、多边形、圆角矩形）必须走这套，否则会有锯齿。
 
 ```
 POINT tri[3] = { {10, 2}, {18, 14}, {2, 14} };
-balloonwjui::DuiAA::FillPolygon(hdc, tri, 3, RGB(45,108,223));
-balloonwjui::DuiAA::FillEllipse(hdc, RECT{0,0,16,16}, RGB(220,40,40));
-balloonwjui::DuiAA::DrawLine   (hdc, 0, 0, 100, 50, RGB(0,0,0), 1.5f);
+balloonwjui::DuiAA::FillPolygon  (hdc, tri, 3, RGB(45,108,223));
+balloonwjui::DuiAA::FillEllipse  (hdc, RECT{0,0,16,16}, RGB(220,40,40));
+balloonwjui::DuiAA::FillRoundRect(hdc, RECT{0,0,80,32}, RGB(45,108,223), /*radius*/8,
+                                  /*outline*/RGB(30,74,153), /*outlineWidth*/1.0f);
+balloonwjui::DuiAA::DrawLine     (hdc, 0, 0, 100, 50, RGB(0,0,0), 1.5f);
 ```
 
-GDI+ 在第一次调用时惰性初始化（进程生命期 token）。轴对齐矩形仍用 `::Rectangle / FillRect / RoundRect` 即可（无对角无锯齿）。
+GDI+ 在第一次调用时惰性初始化（进程生命期 token）。轴对齐矩形仍用 `::Rectangle / FillRect` 即可（无对角无锯齿）。`::RoundRect` 现在已被 `DuiAA::FillRoundRect` 替代（GDI `::RoundRect` 在 8px 圆角下仍有可见阶梯，`DuiButton` 默认走 AA 路径，调 `SetAntiAlias(false)` 可退回兜底）。`FillRoundRect` 的 `radius` 自动夹紧到 `min(w,h)/2`，超出则退化成胶囊形；`radius<=0` 退化为普通矩形。`fill` / `outline` 任一取 `CLR_INVALID` 表示不填充 / 不描边。
 
 <a id="DuiTheme"></a>
 

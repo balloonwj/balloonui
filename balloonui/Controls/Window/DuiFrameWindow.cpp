@@ -5,6 +5,9 @@
 
 #include "../../DuiResMgr.h"
 #include "../../DuiPaintAA.h"
+#if BUI_FEATURE_TOOLTIP
+#  include "../Feedback/DuiToolTip.h"      // DuiToolTipMgr —— caption icon 的 tooltip
+#endif
 
 namespace balloonwjui {
 
@@ -295,6 +298,167 @@ private:
     COLORREF m_glyphOverride   = CLR_INVALID;
 };
 
+// Caption icon button: paint-only DuiControl that draws a caller-supplied
+// 16x16 HBITMAP centered in a standard caption button cell (kCaptionBtnW).
+// hover / pressed feedback shares CaptionButton's min/max palette (no
+// close-red variant). Click fires DUIFW_CAPTION_ICON_CLICK with
+// extra = captionId (assigned by DuiFrameWindow::AddCaptionIcon, monotonic
+// across the lifetime of the frame). Optional tooltip is registered with
+// DuiToolTipMgr at construction and unregistered on destruction.
+class CaptionIconButton : public DuiControl
+{
+public:
+    explicit CaptionIconButton(int captionId, HBITMAP icon)
+        : m_captionId(captionId)
+        , m_icon(icon)
+    {
+        SetTabStop(false);
+    }
+
+    ~CaptionIconButton() override
+    {
+#if BUI_FEATURE_TOOLTIP
+        if (m_tooltipRegistered)
+        {
+            DuiToolTipMgr::Inst().Unregister(this);
+        }
+#endif
+    }
+
+    int GetCaptionId() const { return m_captionId; }
+
+    // 透明上下文标志 — 由 DuiFrameTitleBar::SetTransparent 透传。配色规则
+    // 与 CaptionButton min/max 相同（不走 close 红）：透明态 → 品牌蓝
+    // hover/press；不透明态 → 经典浅灰 hover/press。
+    void SetTransparentContext(bool b)
+    {
+        if (m_transparentCtx == b)
+        {
+            return;
+        }
+        m_transparentCtx = b;
+        Invalidate();
+    }
+
+    // 注册 tooltip。仅在 BUI_FEATURE_TOOLTIP 编译开关启用时生效；text 为
+    // nullptr 或空字符串等价于不注册。重复调用先 Unregister 旧的再注册新的。
+    void RegisterTooltip(LPCTSTR text)
+    {
+#if BUI_FEATURE_TOOLTIP
+        if (m_tooltipRegistered)
+        {
+            DuiToolTipMgr::Inst().Unregister(this);
+            m_tooltipRegistered = false;
+        }
+        if (text != nullptr && text[0] != _T('\0'))
+        {
+            DuiToolTipMgr::Inst().Register(this, text);
+            m_tooltipRegistered = true;
+        }
+#else
+        (void)text;
+#endif
+    }
+
+    void OnPaint(HDC hdc, const RECT& /*rcDirty*/) override
+    {
+        if (!m_bVisible)
+        {
+            return;
+        }
+
+        //—— hover/press 背景（与 CaptionButton min/max 同款，无 close 红变体）
+        COLORREF bg = CLR_INVALID;
+        if (m_pressed && m_hover)
+        {
+            bg = m_transparentCtx ? kPressBgBlue : kPressBgOpaque;
+        }
+        else if (m_hover)
+        {
+            bg = m_transparentCtx ? kHoverBgBlue : kHoverBgOpaque;
+        }
+        if (bg != CLR_INVALID)
+        {
+            HBRUSH hbr = ::CreateSolidBrush(bg);
+            ::FillRect(hdc, &m_rcItem, hbr);
+            ::DeleteObject(hbr);
+        }
+
+        //—— icon 居中 16x16 绘
+        if (m_icon)
+        {
+            const int kIcon = 16;
+            int cx = (m_rcItem.left + m_rcItem.right) / 2;
+            int cy = (m_rcItem.top + m_rcItem.bottom) / 2;
+            BITMAP bm = {};
+            ::GetObject(m_icon, sizeof(bm), &bm);
+            if (bm.bmWidth > 0 && bm.bmHeight > 0)
+            {
+                HDC mem = ::CreateCompatibleDC(hdc);
+                HGDIOBJ old = ::SelectObject(mem, m_icon);
+                ::SetStretchBltMode(hdc, HALFTONE);
+                ::SetBrushOrgEx(hdc, 0, 0, nullptr);
+                ::StretchBlt(hdc, cx - kIcon / 2, cy - kIcon / 2,
+                             kIcon, kIcon,
+                             mem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+                ::SelectObject(mem, old);
+                ::DeleteDC(mem);
+            }
+        }
+    }
+
+    bool OnMouseEnter() override
+    {
+        m_hover = true;
+        Invalidate();
+        return false;
+    }
+    bool OnMouseLeave() override
+    {
+        m_hover   = false;
+        m_pressed = false;
+        Invalidate();
+        return false;
+    }
+    bool OnLButtonDown(POINT, UINT) override
+    {
+        m_pressed = true;
+        Capture();
+        Invalidate();
+        return true;
+    }
+    bool OnLButtonUp(POINT pt, UINT) override
+    {
+        bool was = m_pressed;
+        m_pressed = false;
+        ReleaseCapture();
+        Invalidate();
+        if (was && ::PtInRect(&m_rcItem, pt))
+        {
+            //—— 用 DUIFW_CAPTION_ICON_CLICK 直接上冒；不走 DUIN_CLICK 是
+            //   为了不被 DuiFrameWindow::OnDuiChildNotify 的 case 1/2/3
+            //   误识为 min/max/close（caption icon 的 ctrlId 虽然不是
+            //   1/2/3，但 code 用专用类型更清晰、避免后续 ctrlId 冲突）
+            NotifyParent((UINT)DuiFrameWindow::DUIFW_CAPTION_ICON_CLICK,
+                         (LPARAM)m_captionId);
+        }
+        return true;
+    }
+    bool OnSetCursor(POINT) override
+    {
+        ::SetCursor(::LoadCursor(nullptr, IDC_ARROW));
+        return true;
+    }
+
+private:
+    int      m_captionId;
+    HBITMAP  m_icon              = nullptr;
+    bool     m_hover             = false;
+    bool     m_pressed           = false;
+    bool     m_transparentCtx    = false;
+    bool     m_tooltipRegistered = false;
+};
+
 } // anonymous namespace
 
 // =====================================================================
@@ -353,11 +517,74 @@ public:
     DuiControl* GetMaxBtn  () const { return m_btnMax;   }
     DuiControl* GetCloseBtn() const { return m_btnClose; }
 
+    // ---- caption icons（标题栏自定义可点击图标）----
+    //
+    // 视觉顺序（从右到左）：close → max → min → caption icons (按 Add 顺序排)。
+    // 即：Add 的图标排在 min 按钮左侧，新加的更靠左。这与"添加进入 layout
+    // 末端"的直觉略反，但与"close 永远最右"惯例保持一致。
+    void AddCaptionIcon(int captionId, HBITMAP icon, LPCTSTR tooltip)
+    {
+        if (icon == nullptr)
+        {
+            return;
+        }
+        std::unique_ptr<CaptionIconButton> btn(
+            new CaptionIconButton(captionId, icon));
+        //—— 透传当前透明上下文，保证添加进来的 icon 配色与三按钮一致
+        btn->SetTransparentContext(m_transparent);
+        if (tooltip != nullptr && tooltip[0] != _T('\0'))
+        {
+            btn->RegisterTooltip(tooltip);
+        }
+        m_iconBtns.push_back(btn.get());
+        AddChild(std::move(btn));
+        Layout(m_rcItem);
+        Invalidate();
+    }
+
+    // 按 captionId 移除；找不到 id 静默忽略。
+    bool RemoveCaptionIcon(int captionId)
+    {
+        for (auto it = m_iconBtns.begin(); it != m_iconBtns.end(); ++it)
+        {
+            if ((*it)->GetCaptionId() == captionId)
+            {
+                CaptionIconButton* doomed = *it;
+                m_iconBtns.erase(it);
+                //—— RemoveChild 会触发 doomed 的析构（unique_ptr 释放），
+                //   doomed 析构里走 DuiToolTipMgr::Unregister。
+                RemoveChild(doomed);
+                Layout(m_rcItem);
+                Invalidate();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void ClearCaptionIcons()
+    {
+        if (m_iconBtns.empty())
+        {
+            return;
+        }
+        //—— 复制一份指针清单后逐个 RemoveChild。不能直接遍历 m_iconBtns
+        //   清，因为 RemoveChild 触发析构 / 容器变化的 invalidation。
+        std::vector<CaptionIconButton*> doomed = m_iconBtns;
+        m_iconBtns.clear();
+        for (CaptionIconButton* b : doomed)
+        {
+            RemoveChild(b);
+        }
+        Layout(m_rcItem);
+        Invalidate();
+    }
+
     void Layout(const RECT& rc) override
     {
         m_rcItem = rc;
-        // Buttons: kCaptionBtnW px each, packed flush-right in
-        // close->max->min order.
+        // Buttons (right → left): close → max → min → caption icons（按 Add 顺序）
+        // 每个按钮固定 kCaptionBtnW 宽，按上面顺序贴右排列。
         const int btnW = kCaptionBtnW;
         int x = rc.right;
         if (m_btnClose->IsVisible())
@@ -376,6 +603,17 @@ public:
         {
             RECT br = { x - btnW, rc.top, x, rc.bottom };
             m_btnMin->SetRect(br);
+            x -= btnW;
+        }
+        //—— caption icons：按 m_iconBtns 顺序从右到左排（先 Add 的更靠右）
+        for (CaptionIconButton* b : m_iconBtns)
+        {
+            if (!b->IsVisible())
+            {
+                continue;
+            }
+            RECT br = { x - btnW, rc.top, x, rc.bottom };
+            b->SetRect(br);
             x -= btnW;
         }
         m_buttonStripLeft = x;     // for paint + nc-hittest
@@ -442,12 +680,17 @@ public:
         }
 
         // Bottom 1px separator from content.
-        HPEN hpen = ::CreatePen(PS_SOLID, 1, RGB(220, 220, 224));
-        HPEN op = (HPEN)::SelectObject(hdc, hpen);
-        ::MoveToEx(hdc, m_rcItem.left,  m_rcItem.bottom - 1, nullptr);
-        ::LineTo  (hdc, m_rcItem.right, m_rcItem.bottom - 1);
-        ::SelectObject(hdc, op);
-        ::DeleteObject(hpen);
+        // 透明模式跳过 —— 标题栏要让父 host 的 9-grid 背景整体穿透，再画
+        // 一条浅灰线会在渐变标题区与客户区之间留下一道突兀的白线。
+        if (!m_transparent)
+        {
+            HPEN hpen = ::CreatePen(PS_SOLID, 1, RGB(220, 220, 224));
+            HPEN op = (HPEN)::SelectObject(hdc, hpen);
+            ::MoveToEx(hdc, m_rcItem.left,  m_rcItem.bottom - 1, nullptr);
+            ::LineTo  (hdc, m_rcItem.right, m_rcItem.bottom - 1);
+            ::SelectObject(hdc, op);
+            ::DeleteObject(hpen);
+        }
 
         // Children (the three buttons) paint themselves.
         for (auto& c : m_children)
@@ -486,6 +729,11 @@ public:
         if (auto* cl = static_cast<CaptionButton*>(m_btnClose))
         {
             cl->SetTransparentContext(b);
+        }
+        //—— 透传给所有 caption icons，保持 hover/press 配色与三按钮一致
+        for (CaptionIconButton* b2 : m_iconBtns)
+        {
+            b2->SetTransparentContext(b);
         }
         Invalidate();
     }
@@ -527,6 +775,9 @@ private:
     DuiControl* m_btnMin   = nullptr;
     DuiControl* m_btnMax   = nullptr;
     DuiControl* m_btnClose = nullptr;
+    //—— caption icons：所有权由 DuiControl::m_children 持有；m_iconBtns 仅
+    //   存裸指针以便 Layout / RemoveCaptionIcon / SetTransparent 透传。
+    std::vector<CaptionIconButton*> m_iconBtns;
     CString     m_title;
     HBITMAP     m_icon = nullptr;
     int         m_buttonStripLeft = 0;
@@ -556,6 +807,33 @@ DuiFrameWindow::~DuiFrameWindow()
     {
         DestroyWindow();
     }
+}
+
+// WM_DESTROY raw handler。
+// 时序背景：
+//   1) BuildSkeleton 把 m_titleBar / m_skeleton / m_clientContent 三个
+//      裸指针指向新建的子控件，并通过 SetRoot(std::move(sk)) 把所有权
+//      转交给 DuiHost::m_root。
+//   2) 窗口被 DestroyWindow 时，DuiHost::OnDestroy 会 m_root.reset()
+//      释放整棵控件树，上述三个裸指针随之变成悬空指针。
+//   3) 由于这是裸指针、没人清，本类的 SetTitle / SetIcon / SetButtons /
+//      SetTransparent 等带 if(m_titleBar) 守卫的 setter，在窗口对象被
+//      复用（如 CMainDlg::m_LoginDlg 反复 DoModal）的第二次 Create 之后、
+//      BuildSkeleton 重建之前被调用时，会走到 m_titleBar 真分支并解引用
+//      悬空指针，触发 AV 崩溃（SetTitle → CString::operator=(空) →
+//      CString::Empty 访问已释放对象内部）。
+// 本 handler 的职责仅一条：在基类 OnDestroy 释放 m_root 之前先把三个
+// 裸指针置 nullptr。然后置 bHandled=FALSE 让消息继续 chain 到
+// DuiHost::OnDestroy。
+LRESULT DuiFrameWindow::OnFrameDestroyMsg(UINT, WPARAM, LPARAM, BOOL& bHandled)
+{
+    m_titleBar      = nullptr;
+    m_skeleton      = nullptr;
+    m_clientContent = nullptr;
+
+    //继续派发到 CHAIN_MSG_MAP(DuiHost) → DuiHost::OnDestroy
+    bHandled = FALSE;
+    return 0;
 }
 
 void DuiFrameWindow::BuildSkeleton()
@@ -707,6 +985,50 @@ void DuiFrameWindow::SetMinSize(int w, int h)
 {
     m_minW = w < 1 ? 1 : w;
     m_minH = h < 1 ? 1 : h;
+}
+
+void DuiFrameWindow::SetMaxSize(int w, int h)
+{
+    //—— 0 = 不限；其它值原样保存（OS 会进一步 clamp 到 work area）。
+    //   < 0 视为 0（不限），避免拼写错误传 -1 等导致拖动锁死在 0 像素。
+    m_maxW = w < 0 ? 0 : w;
+    m_maxH = h < 0 ? 0 : h;
+}
+
+int DuiFrameWindow::AddCaptionIcon(HBITMAP icon, LPCTSTR tooltip)
+{
+    if (icon == nullptr)
+    {
+        return 0;
+    }
+    //—— skeleton 还没建好时也允许调（典型：ApplyConfig 阶段）。先 BuildSkeleton。
+    if (!m_titleBar)
+    {
+        BuildSkeleton();
+    }
+    if (!m_titleBar)
+    {
+        return 0;
+    }
+    int captionId = m_nextCaptionIconId++;
+    m_titleBar->AddCaptionIcon(captionId, icon, tooltip);
+    return captionId;
+}
+
+void DuiFrameWindow::RemoveCaptionIcon(int captionId)
+{
+    if (m_titleBar)
+    {
+        m_titleBar->RemoveCaptionIcon(captionId);
+    }
+}
+
+void DuiFrameWindow::ClearCaptionIcons()
+{
+    if (m_titleBar)
+    {
+        m_titleBar->ClearCaptionIcons();
+    }
 }
 
 void DuiFrameWindow::ApplyConfig(const DuiFrameWindowConfig& cfg)
@@ -988,6 +1310,16 @@ void DuiFrameWindow::OnGetMinMaxInfo(LPMINMAXINFO mmi)
     {
         mmi->ptMinTrackSize.x = m_minW;
         mmi->ptMinTrackSize.y = m_minH;
+        //—— SetMaxSize 设了正值（!= 0）才填 ptMaxTrackSize；0 表示
+        //   "不限"，让 OS 沿用 work area 默认上限。
+        if (m_maxW > 0)
+        {
+            mmi->ptMaxTrackSize.x = m_maxW;
+        }
+        if (m_maxH > 0)
+        {
+            mmi->ptMaxTrackSize.y = m_maxH;
+        }
     }
     SetMsgHandled(FALSE);
 }

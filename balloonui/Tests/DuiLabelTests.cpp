@@ -301,6 +301,152 @@ static Result Test_StyleSetters()
     return OK(_T("StyleSetters"));
 }
 
+// =================================================================
+// 选中模式（SetSelectable）相关用例
+// =================================================================
+
+// CharIndexFromCumulativeWidths：边界 + 内部最近邻命中 + 平局规则。
+// 平局（距左右边界等距）时返回 i+1（右偏），与实现内 `<` 严格比较一致。
+static Result Test_CharIndexFromCumulativeWidths()
+{
+    // 构造 5 字符、每字符 10px 宽的累计宽度数组：dx[i] = 10*(i+1)。
+    // 字符边界位置：0, 10, 20, 30, 40, 50。
+    const int dx[] = { 10, 20, 30, 40, 50 };
+    const int len = 5;
+
+    // 左外 / 左端：均返回 0（早退）。
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len, -100), 0, _T("CIFCW/leftOut"));
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len,   -1), 0, _T("CIFCW/leftMinus1"));
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len,    0), 0, _T("CIFCW/leftZero"));
+
+    // 右端 / 右外：均返回 len（早退）。
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len,   50), 5, _T("CIFCW/rightEnd"));
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len,  100), 5, _T("CIFCW/rightOut"));
+
+    // 内部最近邻（非平局）：x=4 距 0 近(4) vs 10 远(6) → 0
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len,    4), 0, _T("CIFCW/char0_nearLeft"));
+    // x=6 距 0 远(6) vs 10 近(4) → 1
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len,    6), 1, _T("CIFCW/char0_nearRight"));
+    // x=14 距 10 近(4) vs 20 远(6) → 1
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len,   14), 1, _T("CIFCW/char1_nearLeft"));
+    // x=16 距 10 远(6) vs 20 近(4) → 2
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len,   16), 2, _T("CIFCW/char1_nearRight"));
+
+    // 平局：x=5（恰在 0/10 中点）→ 实现返回 i+1=1（右偏）
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len,    5), 1, _T("CIFCW/char0_tie_rightBias"));
+    // 平局：x=25（恰在 20/30 中点）→ 返回 3
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx, len,   25), 3, _T("CIFCW/char2_tie_rightBias"));
+
+    // 防御性：空 / 非法
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(nullptr,   0,  0), 0, _T("CIFCW/nullEmpty"));
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(dx,        0,  5), 0, _T("CIFCW/zeroLen"));
+    EXPECT_INT(DuiLabel::CharIndexFromCumulativeWidths(nullptr,   5,  5), 0, _T("CIFCW/nullPositiveLen"));
+
+    return OK(_T("CharIndexFromCumulativeWidths"));
+}
+
+// NormalizeSelection：正向、反向、空选区。
+static Result Test_NormalizeSelection()
+{
+    int lo = -1, hi = -1;
+
+    DuiLabel::NormalizeSelection(2, 5, lo, hi);
+    EXPECT_INT(lo, 2, _T("Norm/forward_lo"));
+    EXPECT_INT(hi, 5, _T("Norm/forward_hi"));
+
+    DuiLabel::NormalizeSelection(5, 2, lo, hi);
+    EXPECT_INT(lo, 2, _T("Norm/reverse_lo"));
+    EXPECT_INT(hi, 5, _T("Norm/reverse_hi"));
+
+    DuiLabel::NormalizeSelection(3, 3, lo, hi);
+    EXPECT_INT(lo, 3, _T("Norm/empty_lo"));
+    EXPECT_INT(hi, 3, _T("Norm/empty_hi"));
+
+    DuiLabel::NormalizeSelection(0, 0, lo, hi);
+    EXPECT_INT(lo, 0, _T("Norm/zero_lo"));
+    EXPECT_INT(hi, 0, _T("Norm/zero_hi"));
+
+    return OK(_T("NormalizeSelection"));
+}
+
+// BuildCopyText：全选 / 子串 / 反向 / 空选区 / 空文本 / 越界容错。
+static Result Test_BuildCopyText()
+{
+    // 子串
+    if (DuiLabel::BuildCopyText(_T("hello"), 1, 4) != _T("ell"))
+    {
+        return Fail(_T("BuildCopy/sub"), _T("expected 'ell'"));
+    }
+    // 反向选区被规范化
+    if (DuiLabel::BuildCopyText(_T("hello"), 4, 1) != _T("ell"))
+    {
+        return Fail(_T("BuildCopy/reverse"), _T("expected 'ell'"));
+    }
+    // 全选
+    if (DuiLabel::BuildCopyText(_T("hello"), 0, 5) != _T("hello"))
+    {
+        return Fail(_T("BuildCopy/all"), _T("expected 'hello'"));
+    }
+    // 空选区 → 整段（常见 Ctrl+C 行为）
+    if (DuiLabel::BuildCopyText(_T("hello"), 2, 2) != _T("hello"))
+    {
+        return Fail(_T("BuildCopy/empty_full"), _T("empty sel should copy all"));
+    }
+    // 空文本
+    if (DuiLabel::BuildCopyText(_T(""), 0, 0) != _T(""))
+    {
+        return Fail(_T("BuildCopy/emptyText"), _T("expected empty"));
+    }
+    // 越界裁剪：hi>len 被裁到 len
+    if (DuiLabel::BuildCopyText(_T("hello"), 1, 999) != _T("ello"))
+    {
+        return Fail(_T("BuildCopy/hi_overflow"), _T("expected 'ello'"));
+    }
+    // 越界裁剪：lo<0 被裁到 0
+    if (DuiLabel::BuildCopyText(_T("hello"), -3, 2) != _T("he"))
+    {
+        return Fail(_T("BuildCopy/lo_negative"), _T("expected 'he'"));
+    }
+    return OK(_T("BuildCopyText"));
+}
+
+// SetSelectable：默认关；开启后获得 tab-stop（接焦点收 Ctrl+C/A）；
+// 关闭后恢复（非 Link 模式下）。
+static Result Test_SetSelectableTogglesTabStop()
+{
+    DuiLabel l;
+
+    // 默认状态
+    EXPECT_BOOL(l.IsSelectable(), false, _T("Sel/default_off"));
+    EXPECT_BOOL(l.IsTabStop(),    false, _T("Sel/default_tabStop_off"));
+
+    // 开启 → 既 selectable 又 tabstop
+    l.SetSelectable(true);
+    EXPECT_BOOL(l.IsSelectable(), true,  _T("Sel/on"));
+    EXPECT_BOOL(l.IsTabStop(),    true,  _T("Sel/on_tabStop"));
+
+    // 关闭(非 Link 模式) → 两者都回 false
+    l.SetSelectable(false);
+    EXPECT_BOOL(l.IsSelectable(), false, _T("Sel/off"));
+    EXPECT_BOOL(l.IsTabStop(),    false, _T("Sel/off_tabStop"));
+
+    // Link 模式下开关 selectable，不可破坏 Link 自带的 tab-stop=true
+    DuiLabel link;
+    link.SetMode(DuiLabel::ModeLink);
+    EXPECT_BOOL(link.IsTabStop(), true, _T("Sel/linkBaseline"));
+    link.SetSelectable(true);
+    EXPECT_BOOL(link.IsTabStop(), true, _T("Sel/link_on_tabStop"));
+    link.SetSelectable(false);
+    EXPECT_BOOL(link.IsTabStop(), true, _T("Sel/link_off_tabStop_preserved"));
+
+    // 选区高亮色默认值 + 自定义往返
+    EXPECT_INT((int)l.GetSelectionColor(), (int)RGB(217, 232, 252), _T("Sel/defaultColor"));
+    l.SetSelectionColor(RGB(255, 200, 0));
+    EXPECT_INT((int)l.GetSelectionColor(), (int)RGB(255, 200, 0), _T("Sel/colorRoundtrip"));
+
+    return OK(_T("SetSelectableTogglesTabStop"));
+}
+
 #undef EXPECT_BOOL
 #undef EXPECT_INT
 
@@ -327,7 +473,12 @@ CString RunAll()
         { _T("MeasureWrapNarrows"),     &Test_MeasureWrapNarrows    },
         { _T("MeasureExplicitNewlines"),&Test_MeasureExplicitNewlines },
         { _T("MeasureWidthZero"),       &Test_MeasureWidthZero      },
-        { _T("WrapPreservesText"),      &Test_WrapPreservesText     }
+        { _T("WrapPreservesText"),      &Test_WrapPreservesText     },
+        // ---- 选中模式（SetSelectable） ----
+        { _T("CharIndexFromCumulativeWidths"), &Test_CharIndexFromCumulativeWidths },
+        { _T("NormalizeSelection"),            &Test_NormalizeSelection            },
+        { _T("BuildCopyText"),                 &Test_BuildCopyText                 },
+        { _T("SetSelectableTogglesTabStop"),   &Test_SetSelectableTogglesTabStop   }
     };
 
     CString out;

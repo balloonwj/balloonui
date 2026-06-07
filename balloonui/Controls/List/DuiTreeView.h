@@ -5,6 +5,9 @@
 
 // .cpp must include stdafx.h first.
 #include "../../DuiControl.h"
+#include <functional>
+#include <map>
+#include <memory>
 #include <vector>
 
 namespace balloonwjui {
@@ -155,6 +158,15 @@ public:
         DUITVN_VALUECHANGED_CELL = DUIN_CUSTOM + 7,   // ProgressBar cell 改值
         DUITVN_LINKCLICK        = DUIN_CUSTOM + 8,    // Hyperlink cell 单击
         DUITVN_CELLEDITED       = DUIN_CUSTOM + 9,    // Text cell EDIT 提交
+
+        // ---- hover（鼠标 hover 节点变化；extra = itemId int）----
+        // 鼠标进入新节点时 fire ENTER；离开之前节点时 fire LEAVE。
+        // 库本身<u>无延时</u>：每次 m_hoverId 变化都立即 fire。业务侧若要
+        // "悬停 ~500ms 才弹卡片"语义，自己在 ENTER 时启 SetTimer、LEAVE
+        // 时 KillTimer 实现。两个 notify 都用普通 DuiNotify 载体，extra
+        // 字段为节点 id；屏幕坐标业务侧自取 ::GetCursorPos()。
+        DUITVN_HOVER_ENTER      = DUIN_CUSTOM + 10,   // 鼠标进入新节点
+        DUITVN_HOVER_LEAVE      = DUIN_CUSTOM + 11,   // 鼠标离开之前节点
     };
 
     // 多列事件载体。生命期：仅在父收到 WM_DUI_NOTIFY → SendMessage 同步
@@ -201,6 +213,39 @@ public:
     void  ExpandAll();
     void  CollapseAll();
 
+    // 收集当前所有处于展开态节点的 id 列表，便于"存 → 改数据 → 还"
+    // 模式。返回顺序按 m_nodes 的插入序（与节点 id 单调递增同步），
+    // 业务侧通常无需关心顺序。
+    std::vector<int> GetExpandedSnapshot() const;
+    // 把 snapshot 里包含的节点恢复成展开态。
+    // <u>增量</u>语义：只对 snapshot 内 id 调 Expand；不在 snapshot 里
+    // 的节点保持当前展开状态不变（不会被强制折叠）。snapshot 里如有
+    // 已不存在的 id（节点期间被 Remove）静默跳过。一次刷新触发一次
+    // RebuildVisible + Invalidate。
+    void  RestoreExpanded(const std::vector<int>& ids);
+
+    // ---- 节点可见性 / 过滤（不删数据，只改可见性）----
+    // 单节点可见性开关。设为 false 时本节点 + 其后代（不管是否展开）
+    // 不出现在可见行列表里，但仍在 m_nodes 数据里、不被销毁。
+    // 默认 true。父被隐藏时子节点也跟着隐藏（按 depth 范围跳过）。
+    void  SetItemVisible(int id, bool visible);
+    bool  IsItemVisible (int id) const;
+
+    // 节点是否可被选中。
+    //   true (默认):点击该行,SetCurSel 设此节点为当前选中,PaintRow 画
+    //               选中底色;
+    //   false:      点击该行不变选中态(若有子,仍允许 toggle 展开),
+    //               PaintRow 也不画选中底色。用于把 root 节点当成 grouping
+    //               header 用 —— 业务侧把"我的好友"/"服务号"这类分组标题
+    //               设为 selectable=false,避免点击 root 出现高亮底色。
+    void  SetItemSelectable(int id, bool selectable);
+    // 全局过滤器。Predicate 接收节点 id，返回 true 表示<u>保留可见</u>，
+    // false 表示隐藏（连同其后代）。最终可见 = SetItemVisible 标志
+    // 为 true 且（无 filter 或 filter 返回 true）。设为 nullptr =
+    // 移除过滤器。每次 SetFilter 触发一次 RebuildVisible + Invalidate。
+    void  SetFilter(std::function<bool(int /*nodeId*/)> filter);
+    void  ClearFilter();
+
     // ---- selection ----
     int     GetCurSel() const { return m_curSelId; }
     void    SetCurSel(int id, bool notify = true);     // -1 清空
@@ -215,14 +260,99 @@ public:
     // ---- per-item state（legacy；作用于 col 0）----
     void     SetItemLabel      (int id, LPCTSTR label);
     CString  GetItemLabel      (int id) const;
+    // 节点副标签（仅<u>单列模式</u>有效；多列模式下忽略，多列请用 SetCellText）。
+    // 非空时本节点行内分两行垂直绘制：主标签上方、副标签下方（字号
+    // 较小、颜色更淡）；空字符串表示退回单行（主标签垂直居中）。
+    // 行高沿用 SetRowHeight（默认 28），主+副紧凑放进同一行；要让两行
+    // 视觉宽松，调用方应把行高加到 ~40。副标签字号 / 颜色由
+    // SetSubLabelPointSize / SetSubLabelTextColor 全局控制。
+    void     SetItemSubLabel   (int id, LPCTSTR sub);
+    CString  GetItemSubLabel   (int id) const;
     void     SetItemIcon       (int id, HBITMAP icon);   // tree icon（col 0 文字左侧）
     HBITMAP  GetItemIcon       (int id) const;
+    // 节点 icon 灰显标志（仅<u>单列模式</u>有效；多列模式忽略）。
+    // 设为 true 时本节点的 SetItemIcon 位图在绘制阶段经 GdiPlus
+    // ColorMatrix 转灰度（NTSC luma 权重）后输出，原 HBITMAP 不动；典型用
+    // 例："离线好友 / 已禁用项" 这种"在但不可用"的视觉表达。
+    void     SetItemIconGrayed (int id, bool grayed);
+    bool     IsItemIconGrayed  (int id) const;
     void     SetItemParam      (int id, LPARAM param);
     LPARAM   GetItemParam      (int id) const;
     // 状态点（仅<u>单列模式</u>有效；多列模式下不画，因为右端可能在水平
     // 滚出去）。CLR_INVALID = 不画。
     void     SetItemStatusColor(int id, COLORREF color);
     COLORREF GetItemStatusColor(int id) const;
+    // 节点右侧辅助文字（仅<u>单列模式</u>有效；多列模式忽略）。
+    // 显示位置：行右端的 status dot 左侧（无 dot 时贴 kRightPad 右边距），
+    // 与主 label 同行右对齐。空字符串 = 不绘。典型用例：分组节点的
+    // "在线数 / 总数"、单元格的尺寸 / 时间 / 数量。绘出实际占用宽度后
+    // 会向左收缩 textRight，主 label 自动 ellipsis。
+    void     SetItemRightText  (int id, LPCTSTR rightText);
+    CString  GetItemRightText  (int id) const;
+
+    // ---- sub-label 全局视觉（单列模式两行节点的副文本属性）----
+    // 副标签字号（pt），默认 8（比主标签的 9pt 略小）。调用 0 或负值取默认。
+    void     SetSubLabelPointSize(int pt);
+    int      GetSubLabelPointSize() const { return m_subLabelPt; }
+    // 副标签文字颜色，默认 RGB(140,140,140) ── 浅灰，与主标签拉开层级。
+    void     SetSubLabelTextColor(COLORREF c);
+    COLORREF GetSubLabelTextColor() const { return m_clrSubLabelText; }
+
+    // ---- right-text 全局视觉（单列模式行右端辅助文字属性）----
+    // 右侧文字字号（pt），0 = 用默认字体（与主 label 同字号 9pt）。
+    void     SetRightTextPointSize(int pt);
+    int      GetRightTextPointSize() const { return m_rightTextPt; }
+    // 右侧文字颜色，默认 RGB(140,140,140) ── 浅灰，与主 label 拉开层级。
+    void     SetRightTextColor(COLORREF c);
+    COLORREF GetRightTextColor() const { return m_clrRightText; }
+
+    // ---- icon 视觉（仅<u>单列模式</u>及多列模式 col 0 的 tree icon 生效）----
+    // 节点 icon 显示尺寸(逻辑像素,正方形)。默认 18(向后兼容老行为)。
+    // 调用后影响节点 icon 的绘制大小 + 行内 cursor 偏移 + auto-fit 内容宽,
+    // 不影响多列模式下 CELL_ICON / CELL_IMAGE 类 cell(它们有独立尺寸约束)。
+    // 取值范围 clamp 到 [8, 64];小于 8 当 8,大于 64 当 64。
+    void     SetIconSize(int px);
+    int      GetIconSize() const { return m_iconSizePx; }
+    // 节点 icon 圆角半径(逻辑像素)。默认 0 = 直角(向后兼容)。设为 > 0 时,
+    // 绘 icon 前用 CreateRoundRectRgn 设剪裁区,使 StretchBlt 出的位图呈圆角
+    // 外观;原 HBITMAP 内容不变。圆角半径会被 clamp 到 icon 一半(避免越界)。
+    // 注意:HRGN 是 1-bit mask,圆形边缘没有抗锯齿(像素阶梯)。需要平滑圆形
+    // 时改走 SetIconUsesAlpha(true) 路径——见下方说明。
+    void     SetIconCornerRadius(int px);
+    int      GetIconCornerRadius() const { return m_iconCornerRadiusPx; }
+    // 节点 icon 是否走 alpha-aware 绘制路径。默认 false(向后兼容旧调用方)。
+    //   false:绘制走 StretchBlt(SRCCOPY),icon 当不透明矩形,圆角靠
+    //         ExtSelectClipRgn(round rect HRGN)做硬 mask 剪裁——HRGN 是
+    //         1-bit mask,圆形边缘有锯齿。
+    //   true: 绘制走 AlphaBlend(AC_SRC_OVER + AC_SRC_ALPHA),要求 icon 位图
+    //         为 32bpp premultiplied alpha;圆角应由调用方在位图内自绘
+    //         (推荐 GDI+ AA),DuiTreeView 不再做 HRGN clip(避免硬边)。
+    //         本路径下 SetIconCornerRadius 的值被忽略。
+    //         典型用例:GDI+ 画 AA 圆形头像 / 缩略图,无锯齿。
+    // 全局开关,影响本 tree 所有节点 icon 渲染(单列 + 多列 col 0 的 tree
+    // icon);不影响 CELL_ICON / CELL_IMAGE 类多列 cell。
+    void     SetIconUsesAlpha(bool useAlpha);
+    bool     GetIconUsesAlpha() const { return m_iconUsesAlpha; }
+
+    // ---- 节点自绘控件(custom-node mode)----
+    // 给节点挂自绘控件,接管该节点的内容区绘制和事件。
+    //
+    // 设置后,tree 对该节点行:
+    //   - <u>不再</u>画内置内容(label / icon / sub-label / right-text / status dot)
+    //   - <u>仍</u>画:行 bg(含选中/hover 高亮)、glyph 展开箭头、缩进 indent
+    //   - 把内容区(glyph + indent 右侧的剩余宽度)交给 ctrl:
+    //         ctrl->Layout(rcContent) + ctrl->OnPaint(hdc, rcDirty)
+    //   - 内容区 mouse 事件 先转给 ctrl(ctrl 返 true = 消耗); ctrl 未消耗时
+    //     tree 走默认行为(选中行 / hover 高亮等)。
+    //
+    // 所有权:tree 持有 ctrl;再次设置替换; nullptr 清除回退 legacy 模式。
+    // 节点 Remove / Clear 时自动销毁 ctrl。
+    //
+    // 仅<u>单列模式</u>有效(多列模式已有 CELL_* 系列,本 API 忽略)。
+    // 行高:v1 仍用全局 SetRowHeight;业务保证 ctrl 内容能装得下。按节点
+    // 变高的 SetItemRowHeight(id, px) 留 v2 扩展。
+    void         SetItemCustomControl(int id, std::unique_ptr<DuiControl> ctrl);
+    DuiControl*  GetItemCustomControl(int id) const;
 
     // ---- columns（调过 AddColumn 后切换到多列模式）----
     int     GetColumnCount() const;
@@ -360,15 +490,20 @@ private:
 
     struct Node
     {
-        int                   id;
-        int                   parentIdx;       // -1 for root
-        int                   depth;
-        bool                  expanded;
-        CString               label;           // legacy single-col label（== cells[0].text 的镜像）
-        HBITMAP               icon;            // legacy tree icon（col 0 文字左侧）
-        LPARAM                param;
-        COLORREF              statusColor;     // CLR_INVALID = no dot
-        std::vector<Cell>     cells;           // 多列模式 cells[col]；单列模式空
+        int                   id           = 0;
+        int                   parentIdx    = -1;
+        int                   depth        = 0;
+        bool                  expanded     = false;
+        bool                  visible      = true;    // SetItemVisible 标志；false 时连同后代隐藏
+        bool                  selectable   = true;    // false:点击此行不变选中态(仅切换展开);PaintRow 也不画选中底色。用于把 root 当成 grouping header。
+        CString               label;                  // legacy single-col label（== cells[0].text 的镜像）
+        CString               subLabel;               // 副标签（仅单列模式生效）；空字符串表示不显示，行内单行绘
+        CString               rightText;              // 右侧辅助文字（仅单列模式生效）；空字符串表示不绘
+        bool                  iconGrayed   = false;   // icon 是否灰显（仅单列模式生效）
+        HBITMAP               icon         = nullptr; // legacy tree icon（col 0 文字左侧）
+        LPARAM                param        = 0;
+        COLORREF              statusColor  = CLR_INVALID;  // CLR_INVALID = no dot
+        std::vector<Cell>     cells;                  // 多列模式 cells[col]；单列模式空
     };
 
     struct ColumnDef
@@ -431,6 +566,12 @@ private:
     // ---- hit test ----
     HitInfo HitTest_(POINT pt) const;
 
+    // ---- custom-node mode 事件路由 helper ----
+    // 给 h.visibleRow 处节点的 customControl 调 Layout(rcContent) 把 rcItem
+    // 同步到当前几何,返回 ctrl 指针;未挂 custom ctrl 或行号越界返 nullptr。
+    // OnXxx 事件 handler 据此把事件先转给 ctrl;ctrl 返 true 时认为消耗。
+    DuiControl* LayoutCustomCtrlAtRow_(const HitInfo& h);
+
     // ---- paint ----
     void  PaintHeader  (HDC hdc, const RECT& rcDirty) const;
     void  PaintBody    (HDC hdc, const RECT& rcDirty) const;
@@ -468,8 +609,10 @@ private:
     enum : int
     {
         kGlyphStripPx     = 16,    // ▶ glyph 区宽
-        kIconSizePx       = 18,    // 老 tree icon 尺寸
-        kCellIconPx       = 18,    // CELL_ICON 尺寸
+        kIconSizePx       = 18,    // 老 tree icon 默认尺寸(运行期可由 SetIconSize 覆盖,见 m_iconSizePx)
+        kIconSizePxMin    = 8,     // SetIconSize 下限
+        kIconSizePxMax    = 64,    // SetIconSize 上限
+        kCellIconPx       = 18,    // CELL_ICON 尺寸(多列模式 CELL_ICON 类 cell,不受 SetIconSize 影响)
         kCellPad          = 6,     // cell 文字两侧 padding
         kStatusDotR       = 5,     // 老状态点半径
         kRightPad         = 8,     // 单列模式右端 padding
@@ -543,6 +686,27 @@ private:
     COLORREF  m_clrHeaderText  = RGB( 60,  60,  70);
     COLORREF  m_clrGrid        = RGB(225, 227, 232);    // 列分隔线 / 单元格分隔
     COLORREF  m_clrZebra       = RGB(248, 248, 250);
+
+    // ---- sub-label 全局视觉（单列模式两行节点的副文本字号 / 颜色）----
+    int       m_subLabelPt        = 8;                    // 副标签字号 (pt)
+    COLORREF  m_clrSubLabelText   = RGB(140, 140, 140);   // 副标签文字颜色
+
+    // ---- right-text 全局视觉（单列模式行右端辅助文字字号 / 颜色）----
+    int       m_rightTextPt       = 0;                    // 右侧文字字号 (pt)，0 = 用默认字体
+    COLORREF  m_clrRightText      = RGB(140, 140, 140);   // 右侧文字颜色
+
+    // ---- 节点 icon 全局视觉(单列模式 / 多列模式 col0 的 tree icon)----
+    int       m_iconSizePx          = kIconSizePx;        // icon 显示尺寸(逻辑像素,正方形)
+    int       m_iconCornerRadiusPx  = 0;                  // icon 圆角半径(逻辑像素),0=直角
+    bool      m_iconUsesAlpha       = false;              // icon 是否走 AlphaBlend 绘制路径(默认 false=旧 StretchBlt+HRGN clip 路径)
+
+    // ---- 节点自绘控件(单列模式)----
+    // 按节点 id 索引;value 为 tree 持有的 DuiControl。节点 Remove 时自动 erase;
+    // SetItemCustomControl(id, nullptr) 也从这里清除。
+    std::map<int, std::unique_ptr<DuiControl> >  m_customControls;
+
+    // ---- 节点可见性过滤器 ----
+    std::function<bool(int /*nodeId*/)>  m_filter;        // 空 = 无过滤器
     COLORREF  m_clrFocusBorder = RGB( 45, 108, 223);    // cell focus rect 主色
     COLORREF  m_clrLink        = RGB( 45, 108, 223);
 };

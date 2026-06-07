@@ -575,6 +575,28 @@ void DuiHost::OnLButtonDown(UINT mkFlags, CPoint pt)
     {
         SetDuiFocus(tgt);
     }
+
+    // 双击合成（见 EnableDoubleClick）：开启后按系统双击时限 + 位移容差
+    // 判定本次按下是否构成双击。命中则改派 OnLButtonDblClk —— 与系统
+    // CS_DBLCLKS 语义一致：第二次按下以双击形式派发，不再额外派发一次
+    // OnLButtonDown。
+    if (m_dblClkEnabled)
+    {
+        const DWORD now = static_cast<DWORD>(::GetMessageTime());
+        const bool isDbl =
+            (now - m_lastLDownTick) <= ::GetDoubleClickTime() &&
+            abs(pt.x - m_lastLDownPt.x) <= ::GetSystemMetrics(SM_CXDOUBLECLK) &&
+            abs(pt.y - m_lastLDownPt.y) <= ::GetSystemMetrics(SM_CYDOUBLECLK);
+        if (isDbl)
+        {
+            m_lastLDownTick = 0;   // 复位，避免三击被当成又一次双击
+            tgt->OnLButtonDblClk(pt, mkFlags);
+            return;
+        }
+        m_lastLDownTick = now;
+        m_lastLDownPt   = pt;
+    }
+
     tgt->OnLButtonDown(pt, mkFlags);
 }
 

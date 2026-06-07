@@ -87,6 +87,88 @@ HFONT DuiResMgr::GetDefaultFont()
     return m_hDefaultFont;
 }
 
+HFONT DuiResMgr::GetFontByPointSize(int pt, bool bold)
+{
+    // 退化:磅值非法时回退到默认字体(避免 caller 检查负值)。
+    if (pt <= 0)
+    {
+        return GetDefaultFont();
+    }
+    if (m_dpi <= 0)
+    {
+        m_dpi = DuiDpi::GetSystemDpi();
+    }
+
+    // 缓存 key:磅值左移 1 位 + 粗细标志, 与 admin ui::UiFont 同方案。
+    const int key = (pt << 1) | (bold ? 1 : 0);
+
+    auto it = m_fontCache.find(key);
+    if (it != m_fontCache.end())
+    {
+        return it->second;
+    }
+
+    LOGFONT lf = { 0 };
+    // pt -> 设备单位的负 height:-MulDiv(pt, dpi, 72)。
+    lf.lfHeight = -::MulDiv(pt, m_dpi, 72);
+    lf.lfWeight = bold ? FW_BOLD : FW_NORMAL;
+    lf.lfCharSet = GB2312_CHARSET;
+    lf.lfQuality = CLEARTYPE_QUALITY;
+    lf.lfPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
+    _tcsncpy_s(lf.lfFaceName, _T("Microsoft YaHei"), _TRUNCATE);
+    HFONT hf = ::CreateFontIndirect(&lf);
+    if (!hf)
+    {
+        // YaHei 未装的兜底:用 SimSun 再试一次。
+        _tcsncpy_s(lf.lfFaceName, _T("SimSun"), _TRUNCATE);
+        hf = ::CreateFontIndirect(&lf);
+    }
+    if (hf)
+    {
+        m_fontCache[key] = hf;
+    }
+    return hf;
+}
+
+HFONT DuiResMgr::GetAntiAliasedFontByPointSize(int pt, bool bold)
+{
+    if (pt <= 0)
+    {
+        return GetDefaultFont();    // 默认字体已是 CLEARTYPE_QUALITY, 但
+                                    // pt<=0 是"用默认"语义, 不必返 AA。
+    }
+    if (m_dpi <= 0)
+    {
+        m_dpi = DuiDpi::GetSystemDpi();
+    }
+
+    const int key = (pt << 1) | (bold ? 1 : 0);
+    auto it = m_aaFontCache.find(key);
+    if (it != m_aaFontCache.end())
+    {
+        return it->second;
+    }
+
+    LOGFONT lf = { 0 };
+    lf.lfHeight = -::MulDiv(pt, m_dpi, 72);
+    lf.lfWeight = bold ? FW_BOLD : FW_NORMAL;
+    lf.lfCharSet = GB2312_CHARSET;
+    lf.lfQuality = ANTIALIASED_QUALITY;      // 与 GetFontByPointSize 唯一差别
+    lf.lfPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
+    _tcsncpy_s(lf.lfFaceName, _T("Microsoft YaHei"), _TRUNCATE);
+    HFONT hf = ::CreateFontIndirect(&lf);
+    if (!hf)
+    {
+        _tcsncpy_s(lf.lfFaceName, _T("SimSun"), _TRUNCATE);
+        hf = ::CreateFontIndirect(&lf);
+    }
+    if (hf)
+    {
+        m_aaFontCache[key] = hf;
+    }
+    return hf;
+}
+
 void DuiResMgr::SetDpi(int dpi)
 {
     if (dpi <= 0)
@@ -103,8 +185,26 @@ void DuiResMgr::SetDpi(int dpi)
         ::DeleteObject(m_hDefaultFont);
         m_hDefaultFont = nullptr;
     }
-    // Lazy rebuild on next GetDefaultFont() so we don't pay for the
-    // CreateFontIndirect on a DPI change that no caller cares about.
+    // (pt, bold) 缓存也整张清空,惰性重建。
+    for (auto& kv : m_fontCache)
+    {
+        if (kv.second)
+        {
+            ::DeleteObject(kv.second);
+        }
+    }
+    m_fontCache.clear();
+    for (auto& kv : m_aaFontCache)
+    {
+        if (kv.second)
+        {
+            ::DeleteObject(kv.second);
+        }
+    }
+    m_aaFontCache.clear();
+    // Lazy rebuild on next GetDefaultFont() / GetFontByPointSize() so we
+    // don't pay for the CreateFontIndirect on a DPI change that no caller
+    // cares about.
 }
 
 DuiResMgr::~DuiResMgr()
@@ -114,6 +214,22 @@ DuiResMgr::~DuiResMgr()
         ::DeleteObject(m_hDefaultFont);
         m_hDefaultFont = nullptr;
     }
+    for (auto& kv : m_fontCache)
+    {
+        if (kv.second)
+        {
+            ::DeleteObject(kv.second);
+        }
+    }
+    m_fontCache.clear();
+    for (auto& kv : m_aaFontCache)
+    {
+        if (kv.second)
+        {
+            ::DeleteObject(kv.second);
+        }
+    }
+    m_aaFontCache.clear();
 }
 
 } // namespace balloonwjui

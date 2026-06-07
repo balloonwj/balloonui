@@ -47,10 +47,21 @@ namespace balloonwjui {
 // <tab-page> + 多个 <tab-page-item title="..."> 子元素更合适（详见
 // §3.6）。
 //
-// 事件（ctrlId = DuiTabPage id）：
-//   · DUIN_VALUECHANGED — 切页；extra = 新 page index。
-//   · DUITN_CLOSE / DUITN_DROPDOWN — 来自内部 DuiTab，仍以 DuiTabPage
-//                                   的 id 转出（业务无需关心是哪一层）。
+// 事件：
+//   · DUIN_VALUECHANGED — 切页；extra = 新 page index；ctrlId = DuiTabPage
+//     的 id（HeaderTab 把内部 DuiTab 的切换事件重定向回 DuiTabPage，再由
+//     DuiTabPage 用自己的 ctrlId 发出 DUIN_VALUECHANGED，业务收到的就是
+//     "DuiTabPage 切页"事件，而不是"嵌套的内部 DuiTab 切了"。
+//
+// 关于"关闭 / 下拉" tab 头按钮：
+//   DuiTabPage 当前的公开 API <u>不</u>支持声明 closeable / dropdown 标志的 page；
+//   AddPage 没有 closeable / dropdown 参数，也<u>不</u>提供 SetPageCloseable /
+//   SetPageDropdown。如果通过 GetHeader()->SetTabCloseable(idx, true) 绕路
+//   打开 × 按钮，点击后内部 DuiTab 会以<u>内部 HeaderTab 的 ctrlId</u>
+//   发出 DUITN_CLOSE（不是 DuiTabPage 的 ctrlId），且 DuiTabPage <u>不会</u>自动
+//   RemovePage —— 业务自己负责接事件、调 RemovePage。要把这条用法变成一等公民，
+//   需补 AddPage 的 closeable 参数、HeaderTab 拦截 DUITN_CLOSE 并以 DuiTabPage
+//   的 ctrlId 重发，以及决定是否自动 RemovePage 的行为开关；当前未做。
 class BUI_API DuiTabPage : public DuiControl
 {
 public:
@@ -63,7 +74,9 @@ public:
     // Add / remove pages. AddPage takes ownership of `page` (may be
     // nullptr — the tab still appears, with an empty content area, until
     // a SetPage replaces it). Returns the new page's index.
-    int     AddPage(LPCTSTR title, std::unique_ptr<DuiControl> page);
+    //   icon: 可选 tab 头图标 (HBITMAP, caller-owned, 不 copy 不 DeleteObject);
+    //         nullptr = 无图标。与 DuiTab::AddTab 的 icon 参数语义一致。
+    int     AddPage(LPCTSTR title, std::unique_ptr<DuiControl> page, HBITMAP icon = nullptr);
     void    RemovePage(int index);
     int     GetPageCount() const { return (int)m_pages.size(); }
 
@@ -75,6 +88,21 @@ public:
     // Tab title round-trip. Forwards to the inner DuiTab.
     void    SetPageTitle(int index, LPCTSTR title);
     CString GetPageTitle(int index) const;
+
+    // Tab 头图标 round-trip。转给内部 DuiTab; 不影响 page slot 同步。
+    //   index: page 序号 (即对应 tab 序号); 越界静默返回。
+    //   hBmp:  HBITMAP, caller-owned, 不 copy 不 DeleteObject; nullptr 清除。
+    void    SetPageIcon(int index, HBITMAP hBmp);
+    HBITMAP GetPageIcon(int index) const;
+
+    // 图标尺寸 / 间距 / 自适应宽度 —— 转给内部 DuiTab, 影响所有 tab。
+    // 默认值与 DuiTab 一致 (iconSize=16 / iconGap=6 / autoFit=false)。
+    void    SetIconSize(int px);
+    int     GetIconSize() const;
+    void    SetIconGap(int px);
+    int     GetIconGap() const;
+    void    SetAutoFitTabWidth(bool b);
+    bool    GetAutoFitTabWidth() const;
 
     // Selection.
     int     GetCurSel() const { return m_curSel; }

@@ -208,6 +208,28 @@ public:
     void        SetClientBorderColor(COLORREF c);
     COLORREF    GetClientBorderColor() const { return m_clientBorderColor; }
 
+    // ---- 双击合成（默认关闭）----
+    //
+    // balloonui 的窗口类（__DuiHost__ / __DuiFrameWindow__）未注册
+    // CS_DBLCLKS，系统不会投递 WM_LBUTTONDBLCLK —— 因此 DuiControl 的
+    // OnLButtonDblClk 在默认情况下永不触发。本接口让业务在<u>运行期、
+    // 按需</u>打开"双击合成"。
+    //
+    // 开启后，DuiHost 在 OnLButtonDown 里按系统双击时限（GetDoubleClick
+    // Time）+ 位移容差（SM_CXDOUBLECLK / SM_CYDOUBLECLK）自行判定双击；
+    // 命中时改派一次 OnLButtonDblClk，语义与系统 CS_DBLCLKS 一致 ——
+    // 第二次按下以双击形式派发，<u>不再</u>额外派发一次 OnLButtonDown。
+    //
+    // 本方案不修改窗口类样式，故只影响调用本方法的<u>这一个</u> host
+    // 实例，不波及同窗口类的其他窗口。
+    //
+    //   enable：true 开启双击合成；false 关闭。默认关闭。
+    void        EnableDoubleClick(bool enable) { m_dblClkEnabled = enable; }
+
+    // 查询双击合成当前是否开启。
+    //   返回：已开启返回 true；否则 false。
+    bool        IsDoubleClickEnabled() const { return m_dblClkEnabled; }
+
 protected:
     int     OnCreate(LPCREATESTRUCT lpcs);
     void    OnDestroy();
@@ -250,6 +272,11 @@ private:
     DuiControl* m_pFocus   = nullptr;
     bool        m_bMouseTracking = false;
     int         m_suppressOnCommand = 0;
+
+    // 双击合成状态（见 EnableDoubleClick）。默认关闭。
+    bool        m_dblClkEnabled = false;     // 是否开启双击合成
+    DWORD       m_lastLDownTick = 0;         // 上一次左键按下的消息时刻（GetMessageTime）
+    POINT       m_lastLDownPt   = { 0, 0 };  // 上一次左键按下的客户区坐标
 
     // Back buffer
     HDC     m_hMemDC   = nullptr;

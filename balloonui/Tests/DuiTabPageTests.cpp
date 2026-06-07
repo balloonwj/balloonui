@@ -195,6 +195,42 @@ static Result Test_LayoutSplitsArea()
     return OK(_T("LayoutSplitsArea"));
 }
 
+// ----- icon / auto-fit forwarding -----------------------------------------
+
+// SetPageIcon 透传到内部 DuiTab; GetPageIcon 与 GetHeader()->GetTabIcon
+// 一致(说明 forwarding 没绕路、改的就是同一份状态)。
+static Result Test_Page_IconRoundTrip()
+{
+    DuiTabPage tp;
+    tp.AddPage(_T("A"), std::unique_ptr<DuiControl>(new StubPage()));
+    HBITMAP fake = (HBITMAP)(LONG_PTR)1;
+    tp.SetPageIcon(0, fake);
+    EXPECT_TRUE(tp.GetPageIcon(0) == fake, _T("PI/roundTrip"));
+    EXPECT_TRUE(tp.GetHeader()->GetTabIcon(0) == fake, _T("PI/forwarded"));
+    tp.SetPageIcon(0, nullptr);
+    EXPECT_TRUE(tp.GetPageIcon(0) == nullptr, _T("PI/cleared"));
+    return OK(_T("Page_IconRoundTrip"));
+}
+
+// SetAutoFitTabWidth / SetIconSize / SetIconGap 都透传到内部 DuiTab。
+static Result Test_Page_AutoFitForward()
+{
+    DuiTabPage tp;
+    EXPECT_TRUE(tp.GetAutoFitTabWidth() == false, _T("PAF/default"));
+    tp.SetAutoFitTabWidth(true);
+    EXPECT_TRUE(tp.GetAutoFitTabWidth() == true, _T("PAF/getOn"));
+    EXPECT_TRUE(tp.GetHeader()->GetAutoFitTabWidth() == true, _T("PAF/forwardedOn"));
+
+    tp.SetIconSize(20);
+    EXPECT_INT(tp.GetIconSize(), 20, _T("PAF/iconSize"));
+    EXPECT_INT(tp.GetHeader()->GetIconSize(), 20, _T("PAF/iconSizeFwd"));
+
+    tp.SetIconGap(10);
+    EXPECT_INT(tp.GetIconGap(), 10, _T("PAF/iconGap"));
+    EXPECT_INT(tp.GetHeader()->GetIconGap(), 10, _T("PAF/iconGapFwd"));
+    return OK(_T("Page_AutoFitForward"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_TRUE
 #undef EXPECT_STR
@@ -215,6 +251,8 @@ CString RunAll()
         { _T("AddPageNull"),            &Test_AddPageNull            },
         { _T("SetHeaderHeightClamp"),   &Test_SetHeaderHeightClamp   },
         { _T("LayoutSplitsArea"),       &Test_LayoutSplitsArea       },
+        { _T("Page_IconRoundTrip"),     &Test_Page_IconRoundTrip     },
+        { _T("Page_AutoFitForward"),    &Test_Page_AutoFitForward    },
     };
 
     CString out;

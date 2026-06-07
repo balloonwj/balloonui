@@ -578,6 +578,20 @@ static Result Test_RTFLoadRejectsGarbage()
     return OK(_T("RTFLoadRejectsGarbage"));
 }
 
+// SetContextMenuEnabled 开关：默认开，可关可再开（不依赖 HWND）。右键菜单的
+// 具体项 / 灰显逻辑由共享纯函数 BuildEditContextMenu 承载，已在 DuiEditHostTests
+// 里覆盖，此处只验证本控件的开关状态位。
+static Result Test_ContextMenuEnabledRoundTrip()
+{
+    DuiRichEditHost e;
+    EXPECT_BOOL(e.IsContextMenuEnabled(), true,  _T("Ctx/default"));
+    e.SetContextMenuEnabled(false);
+    EXPECT_BOOL(e.IsContextMenuEnabled(), false, _T("Ctx/off"));
+    e.SetContextMenuEnabled(true);
+    EXPECT_BOOL(e.IsContextMenuEnabled(), true,  _T("Ctx/on"));
+    return OK(_T("ContextMenuEnabledRoundTrip"));
+}
+
 #undef EXPECT_BOOL
 #undef EXPECT_INT
 #undef EXPECT_STR
@@ -611,7 +625,8 @@ CString RunAll()
         { _T("PasteFindDefaultsNoHwnd"), &Test_PasteFindDefaultsNoHwnd },
         { _T("FindTextWithHwnd"),        &Test_FindTextWithHwnd        },
         { _T("PasteAsPlainTextWithHwnd"),&Test_PasteAsPlainTextWithHwnd},
-        { _T("RTFLoadRejectsGarbage"),   &Test_RTFLoadRejectsGarbage   }
+        { _T("RTFLoadRejectsGarbage"),   &Test_RTFLoadRejectsGarbage   },
+        { _T("ContextMenuEnabledRoundTrip"), &Test_ContextMenuEnabledRoundTrip }
     };
 
     CString out;

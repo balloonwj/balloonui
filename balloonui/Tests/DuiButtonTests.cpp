@@ -423,6 +423,454 @@ static Result Test_RadioGroupZeroIsolated()
     return OK(_T("RadioGroupZeroIsolated"));
 }
 
+// ----- DuiButton: Variant 视觉变体 ----------------------------------------
+
+// 默认 Variant=Primary；Setter 往返；Variant 切换不影响 Style。
+static Result Test_VariantSetterDefaults()
+{
+    DuiButton b;
+    EXPECT_INT((int)b.GetVariant(),    (int)DuiButton::Variant::Primary, _T("Var/def"));
+    EXPECT_INT((int)b.GetButtonType(), (int)DuiButton::StylePushButton,  _T("Var/styleDef"));
+
+    b.SetVariant(DuiButton::Variant::Danger);
+    EXPECT_INT((int)b.GetVariant(),    (int)DuiButton::Variant::Danger,  _T("Var/danger"));
+    EXPECT_INT((int)b.GetButtonType(), (int)DuiButton::StylePushButton,  _T("Var/styleUnchanged"));
+
+    b.SetVariant(DuiButton::Variant::Ghost);
+    EXPECT_INT((int)b.GetVariant(),    (int)DuiButton::Variant::Ghost,   _T("Var/ghost"));
+
+    b.SetVariant(DuiButton::Variant::Primary);   // 回 Primary
+    EXPECT_INT((int)b.GetVariant(),    (int)DuiButton::Variant::Primary, _T("Var/backPrimary"));
+    return OK(_T("VariantSetterDefaults"));
+}
+
+// PaletteFor(Primary, *) 四态返回与历史 PushButton 色板一致的实色 / 白字 /
+// 无边框。disabled 灰底浅字。
+static Result Test_PaletteForPrimaryStates()
+{
+    using V = DuiButton::Variant;
+    using S = DuiButton::ButtonState;
+
+    DuiButton::ButtonPalette p;
+
+    p = DuiButton::PaletteFor(V::Primary, S::Normal);
+    EXPECT_INT((int)p.bg,     (int)RGB( 45,108,223), _T("Pri/N/bg"));
+    EXPECT_INT((int)p.text,   (int)RGB(255,255,255), _T("Pri/N/text"));
+    EXPECT_INT((int)p.border, (int)CLR_INVALID,      _T("Pri/N/border"));
+
+    p = DuiButton::PaletteFor(V::Primary, S::Hover);
+    EXPECT_INT((int)p.bg,     (int)RGB( 37, 89,184), _T("Pri/H/bg"));
+    EXPECT_INT((int)p.text,   (int)RGB(255,255,255), _T("Pri/H/text"));
+
+    p = DuiButton::PaletteFor(V::Primary, S::Pressed);
+    EXPECT_INT((int)p.bg,     (int)RGB( 30, 74,153), _T("Pri/P/bg"));
+
+    p = DuiButton::PaletteFor(V::Primary, S::Disabled);
+    EXPECT_INT((int)p.bg,     (int)RGB(180,180,180), _T("Pri/D/bg"));
+    EXPECT_INT((int)p.text,   (int)RGB(220,220,220), _T("Pri/D/text"));
+    return OK(_T("PaletteForPrimaryStates"));
+}
+
+// PaletteFor(其它 Variant, Normal) 关键颜色校验：Default 白底有边、
+// Outlined 透明有边品牌色、Ghost 透明无边深字、Danger 红底白字、
+// Text 透明无边品牌字。
+static Result Test_PaletteForOtherVariantsNormal()
+{
+    using V = DuiButton::Variant;
+    using S = DuiButton::ButtonState;
+    DuiButton::ButtonPalette p;
+
+    // Default —— 白底 + 灰边 + 深字
+    p = DuiButton::PaletteFor(V::Default, S::Normal);
+    EXPECT_INT((int)p.bg,     (int)RGB(255,255,255), _T("Def/bg"));
+    EXPECT_INT((int)p.text,   (int)RGB( 80, 88,102), _T("Def/text"));
+    EXPECT_INT((int)p.border, (int)RGB(208,212,219), _T("Def/border"));
+
+    // Outlined —— 透明 + 品牌边 + 品牌字
+    p = DuiButton::PaletteFor(V::Outlined, S::Normal);
+    EXPECT_INT((int)p.bg,     (int)CLR_INVALID,      _T("Out/bg_invalid"));
+    EXPECT_INT((int)p.text,   (int)RGB( 45,108,223), _T("Out/text_brand"));
+    EXPECT_INT((int)p.border, (int)RGB( 45,108,223), _T("Out/border_brand"));
+
+    // Ghost —— 透明 + 无边 + 深字
+    p = DuiButton::PaletteFor(V::Ghost, S::Normal);
+    EXPECT_INT((int)p.bg,     (int)CLR_INVALID,      _T("Ghost/bg_invalid"));
+    EXPECT_INT((int)p.border, (int)CLR_INVALID,      _T("Ghost/border_invalid"));
+    EXPECT_INT((int)p.text,   (int)RGB(100,108,120), _T("Ghost/text"));
+
+    // Danger —— 红底 + 白字 + 无边
+    p = DuiButton::PaletteFor(V::Danger, S::Normal);
+    EXPECT_INT((int)p.bg,     (int)RGB(220, 60, 60), _T("Dgr/bg_red"));
+    EXPECT_INT((int)p.text,   (int)RGB(255,255,255), _T("Dgr/text_white"));
+    EXPECT_INT((int)p.border, (int)CLR_INVALID,      _T("Dgr/border_invalid"));
+
+    // Text —— 透明 + 无边 + 品牌字
+    p = DuiButton::PaletteFor(V::Text, S::Normal);
+    EXPECT_INT((int)p.bg,     (int)CLR_INVALID,      _T("Txt/bg_invalid"));
+    EXPECT_INT((int)p.border, (int)CLR_INVALID,      _T("Txt/border_invalid"));
+    EXPECT_INT((int)p.text,   (int)RGB( 45,108,223), _T("Txt/text_brand"));
+    return OK(_T("PaletteForOtherVariantsNormal"));
+}
+
+// 透明变体（Ghost / Outlined / Text）的 Normal 态 bg = CLR_INVALID；
+// Hover 态应有可见 bg；实色变体（Primary / Default / Danger）任何态
+// bg 都不能为 CLR_INVALID。
+static Result Test_PaletteTransparentSemantics()
+{
+    using V = DuiButton::Variant;
+    using S = DuiButton::ButtonState;
+
+    // 透明变体 Normal → bg invalid
+    EXPECT_INT((int)DuiButton::PaletteFor(V::Ghost,    S::Normal).bg, (int)CLR_INVALID, _T("Trans/Ghost_N"));
+    EXPECT_INT((int)DuiButton::PaletteFor(V::Outlined, S::Normal).bg, (int)CLR_INVALID, _T("Trans/Out_N"));
+    EXPECT_INT((int)DuiButton::PaletteFor(V::Text,     S::Normal).bg, (int)CLR_INVALID, _T("Trans/Txt_N"));
+
+    // 透明变体 Hover → bg 非 invalid（hover 应可视）
+    EXPECT_BOOL(DuiButton::PaletteFor(V::Ghost,    S::Hover).bg != CLR_INVALID, true, _T("Trans/Ghost_H_visible"));
+    EXPECT_BOOL(DuiButton::PaletteFor(V::Outlined, S::Hover).bg != CLR_INVALID, true, _T("Trans/Out_H_visible"));
+    EXPECT_BOOL(DuiButton::PaletteFor(V::Text,     S::Hover).bg != CLR_INVALID, true, _T("Trans/Txt_H_visible"));
+
+    // 实色变体所有态 bg 都有效
+    DuiButton::ButtonState states[] = {
+        S::Normal, S::Hover, S::Pressed, S::Disabled
+    };
+    for (auto st : states)
+    {
+        EXPECT_BOOL(DuiButton::PaletteFor(V::Primary, st).bg != CLR_INVALID, true, _T("Solid/Primary_bg"));
+        EXPECT_BOOL(DuiButton::PaletteFor(V::Default, st).bg != CLR_INVALID, true, _T("Solid/Default_bg"));
+        EXPECT_BOOL(DuiButton::PaletteFor(V::Danger,  st).bg != CLR_INVALID, true, _T("Solid/Danger_bg"));
+    }
+    return OK(_T("PaletteTransparentSemantics"));
+}
+
+// 位图皮肤与 Variant 各自独立存储 —— SetBgBitmap 不影响 Variant，
+// SetVariant 不影响 GetBgBitmapForCurrentState 的返回。
+static Result Test_BitmapAndVariantCoexist()
+{
+    DuiButton b;
+    // 任意非空指针即可（不会被 OnPaint 调用 → 不会真画）。
+    HBITMAP fakeBmp = reinterpret_cast<HBITMAP>((LPARAM)0xDEADBEEF);
+
+    b.SetVariant(DuiButton::Variant::Ghost);
+    b.SetBgBitmap(fakeBmp, nullptr, nullptr, nullptr);
+
+    // Variant 仍是 Ghost
+    EXPECT_INT((int)b.GetVariant(), (int)DuiButton::Variant::Ghost, _T("Coex/var"));
+    // 位图按当前状态查询：normal 槽返回 fakeBmp
+    EXPECT_BOOL(b.GetBgBitmapForCurrentState() == fakeBmp, true, _T("Coex/bmp"));
+
+    // 改 Variant 不影响位图查询
+    b.SetVariant(DuiButton::Variant::Danger);
+    EXPECT_BOOL(b.GetBgBitmapForCurrentState() == fakeBmp, true, _T("Coex/bmp_afterVarChange"));
+    EXPECT_INT((int)b.GetVariant(), (int)DuiButton::Variant::Danger, _T("Coex/var_kept"));
+
+    // 清掉位图：Variant 仍在
+    b.SetBgBitmap(nullptr, nullptr, nullptr, nullptr);
+    EXPECT_BOOL(b.GetBgBitmapForCurrentState() == nullptr, true, _T("Coex/bmp_cleared"));
+    EXPECT_INT((int)b.GetVariant(), (int)DuiButton::Variant::Danger, _T("Coex/var_stillDanger"));
+    return OK(_T("BitmapAndVariantCoexist"));
+}
+
+// ----- DuiButton: 抗锯齿开关 + Checkbox/Radio 透明 Variant 路由 -----------
+
+// SetAntiAlias 默认 true; setter 往返; 不影响 Variant / Style。
+static Result Test_SetAntiAliasRoundTrip()
+{
+    DuiButton b;
+    EXPECT_BOOL(b.IsAntiAlias(), true, _T("AA/def"));
+
+    b.SetAntiAlias(false);
+    EXPECT_BOOL(b.IsAntiAlias(), false, _T("AA/off"));
+    EXPECT_INT((int)b.GetVariant(),    (int)DuiButton::Variant::Primary, _T("AA/varKept"));
+    EXPECT_INT((int)b.GetButtonType(), (int)DuiButton::StylePushButton,  _T("AA/styleKept"));
+
+    b.SetAntiAlias(true);
+    EXPECT_BOOL(b.IsAntiAlias(), true, _T("AA/on"));
+
+    // Idempotent setter: 重复设置同值不报错。
+    b.SetAntiAlias(true);
+    EXPECT_BOOL(b.IsAntiAlias(), true, _T("AA/idem"));
+    return OK(_T("SetAntiAliasRoundTrip"));
+}
+
+// Checkbox + Ghost Variant: 外框走 Variant palette → Normal 态 bg / border
+// 都应为 CLR_INVALID(透明)。Q4=A2 决定。
+static Result Test_CheckboxVariantGhost_Transparent()
+{
+    using V = DuiButton::Variant;
+    using S = DuiButton::ButtonState;
+
+    // 直接查 palette: Ghost Normal bg / border 都该是 CLR_INVALID。
+    DuiButton::ButtonPalette p = DuiButton::PaletteFor(V::Ghost, S::Normal);
+    EXPECT_INT((int)p.bg,     (int)CLR_INVALID, _T("Cb/Ghost/bg"));
+    EXPECT_INT((int)p.border, (int)CLR_INVALID, _T("Cb/Ghost/border"));
+
+    // 端到端: 实例化 Checkbox + Ghost, getter / setter 正常工作。
+    DuiButton b;
+    b.SetButtonType(DuiButton::StyleCheckbox);
+    b.SetVariant(V::Ghost);
+    EXPECT_INT((int)b.GetVariant(),    (int)V::Ghost,                    _T("Cb/Ghost/var"));
+    EXPECT_INT((int)b.GetButtonType(), (int)DuiButton::StyleCheckbox,    _T("Cb/Ghost/style"));
+    return OK(_T("CheckboxVariantGhost_Transparent"));
+}
+
+// Checkbox + Primary(实色) Variant: 外框应兜底回 kLight* 家族, 不接管 Variant
+// palette。Q4=A2 决定。这里通过 PaletteFor 间接校验路由不会走错:
+// Primary 的 palette.bg 是品牌蓝 RGB(45,108,223), 但 Checkbox 在 enabled
+// 状态下的实际外框颜色应是 kLightFillIdle RGB(245,245,245) —— 二者不应混。
+// (本测试不直绘, 仅校验"PaletteFor(Primary, Normal).bg 不是 kLightFillIdle")
+// 以确认两套色板物理上是独立的。
+static Result Test_CheckboxVariantPrimary_Independent()
+{
+    using V = DuiButton::Variant;
+    using S = DuiButton::ButtonState;
+
+    DuiButton::ButtonPalette pPri = DuiButton::PaletteFor(V::Primary, S::Normal);
+    // Primary palette bg 是品牌蓝, 不是 kLight* 家族中的任何浅色 ——
+    // 二者不会因为路由疏忽而被相互替代。
+    EXPECT_INT((int)pPri.bg, (int)RGB(45, 108, 223), _T("Pri/bg/brand"));
+
+    // 端到端: 切到 Primary 不应丢 Style / Check 状态。
+    DuiButton b;
+    b.SetButtonType(DuiButton::StyleCheckbox);
+    b.SetCheck(true, false);
+    b.SetVariant(V::Primary);   // 切 Variant 时既有状态保留
+    EXPECT_INT((int)b.GetVariant(),    (int)V::Primary,                 _T("Cb/Pri/var"));
+    EXPECT_INT((int)b.GetButtonType(), (int)DuiButton::StyleCheckbox,   _T("Cb/Pri/style"));
+    EXPECT_BOOL(b.IsChecked(), true, _T("Cb/Pri/check"));
+    return OK(_T("CheckboxVariantPrimary_Independent"));
+}
+
+// Radio + Outlined Variant: 外框 palette.bg = CLR_INVALID, border = 品牌色。
+// Outlined 是"透明底 + 边可见"的 Variant; Radio 在该 Variant 下外框应是
+// 透明 + 品牌色边。
+static Result Test_RadioVariantOutlined_BrandBorder()
+{
+    using V = DuiButton::Variant;
+    using S = DuiButton::ButtonState;
+
+    DuiButton::ButtonPalette p = DuiButton::PaletteFor(V::Outlined, S::Normal);
+    EXPECT_INT((int)p.bg,     (int)CLR_INVALID,        _T("Rd/Out/bg_invalid"));
+    EXPECT_INT((int)p.border, (int)RGB(45, 108, 223),  _T("Rd/Out/border_brand"));
+
+    // 端到端: 实例化 Radio + Outlined, mutual-exclusion 仍工作。
+    DuiControl parent;
+    DuiButton *r1, *r2;
+    parent.AddChild(std::unique_ptr<DuiControl>(r1 = new DuiButton()));
+    parent.AddChild(std::unique_ptr<DuiControl>(r2 = new DuiButton()));
+    r1->SetButtonType(DuiButton::StyleRadio);
+    r2->SetButtonType(DuiButton::StyleRadio);
+    r1->SetRadioGroup(11);
+    r2->SetRadioGroup(11);
+    r1->SetVariant(V::Outlined);
+    r2->SetVariant(V::Outlined);
+    r1->SetRect(RECT{ 0, 0, 100, 24 });
+    r2->SetRect(RECT{ 0, 0, 100, 24 });
+    r1->OnLButtonDown(POINT{ 50, 12 }, 0);
+    r1->OnLButtonUp  (POINT{ 50, 12 }, 0);
+    EXPECT_BOOL(r1->IsChecked(), true,  _T("Rd/Out/r1Checked"));
+    r2->OnLButtonDown(POINT{ 50, 12 }, 0);
+    r2->OnLButtonUp  (POINT{ 50, 12 }, 0);
+    // 互斥仍生效, Variant 不影响该行为。
+    EXPECT_BOOL(r1->IsChecked(), false, _T("Rd/Out/r1Excluded"));
+    EXPECT_BOOL(r2->IsChecked(), true,  _T("Rd/Out/r2Checked"));
+    return OK(_T("RadioVariantOutlined_BrandBorder"));
+}
+
+// ----- DuiButton: SetFont / SetTextPointSize / LeadingIcon ----------------
+
+// 默认 GetFont() == nullptr; SetFont(hf) 后 getter 一致; SetFont(nullptr)
+// 恢复默认; SetFont 不影响 Style / Variant。
+static Result Test_SetFontRoundTrip()
+{
+    DuiButton b;
+    EXPECT_BOOL(b.GetFont() == nullptr, true, _T("Font/def"));
+
+    HFONT fake = reinterpret_cast<HFONT>((LPARAM)0xDEAD);
+    b.SetFont(fake);
+    EXPECT_BOOL(b.GetFont() == fake, true, _T("Font/set"));
+
+    b.SetFont(nullptr);
+    EXPECT_BOOL(b.GetFont() == nullptr, true, _T("Font/clear"));
+
+    // 与 Variant / Style 正交。
+    b.SetFont(fake);
+    b.SetVariant(DuiButton::Variant::Danger);
+    EXPECT_INT((int)b.GetVariant(), (int)DuiButton::Variant::Danger, _T("Font/varKept"));
+    EXPECT_BOOL(b.GetFont() == fake, true, _T("Font/fontKept"));
+    return OK(_T("SetFontRoundTrip"));
+}
+
+// SetTextPointSize 走 DuiResMgr::GetFontByPointSize 拿真实 HFONT;
+// 缓存机制由 manager 保证 ——  此处只验"SetFont 被调用了"。
+// pt<=0 退化为 SetFont(nullptr)(等同默认字体)。
+static Result Test_SetTextPointSizeRoundTrip()
+{
+    DuiButton b;
+    // pt > 0:GetFont 应返回非空(manager 缓存的 HFONT)。
+    b.SetTextPointSize(11, /*bold=*/false);
+    EXPECT_BOOL(b.GetFont() != nullptr, true, _T("Pt/11"));
+    HFONT h11 = b.GetFont();
+
+    // 同 (pt, bold) 再调:走缓存, getter 返回相同句柄。
+    b.SetTextPointSize(11, /*bold=*/false);
+    EXPECT_BOOL(b.GetFont() == h11, true, _T("Pt/11_cache"));
+
+    // 不同 bold:应是不同 HFONT(缓存按 (pt,bold) 分键)。
+    b.SetTextPointSize(11, /*bold=*/true);
+    EXPECT_BOOL(b.GetFont() != nullptr && b.GetFont() != h11, true, _T("Pt/11_bold"));
+
+    // pt <= 0:退化为 SetFont(nullptr)。
+    b.SetTextPointSize(0);
+    EXPECT_BOOL(b.GetFont() == nullptr, true, _T("Pt/0_defaults"));
+    b.SetTextPointSize(-3);
+    EXPECT_BOOL(b.GetFont() == nullptr, true, _T("Pt/neg_defaults"));
+    return OK(_T("SetTextPointSizeRoundTrip"));
+}
+
+// SetLeadingIcon 默认 nullptr / size 16 / gap 6; setter 往返。
+static Result Test_SetLeadingIconRoundTrip()
+{
+    DuiButton b;
+    EXPECT_BOOL(b.GetLeadingIcon() == nullptr, true, _T("LI/defNull"));
+    EXPECT_INT(b.GetLeadingIconSize(), 16, _T("LI/defSize"));
+    EXPECT_INT(b.GetLeadingIconGap(),   6, _T("LI/defGap"));
+
+    HBITMAP fake = reinterpret_cast<HBITMAP>((LPARAM)0xBEEF);
+    b.SetLeadingIcon(fake);
+    EXPECT_BOOL(b.GetLeadingIcon() == fake, true, _T("LI/set"));
+
+    b.SetLeadingIconSize(24);
+    EXPECT_INT(b.GetLeadingIconSize(), 24, _T("LI/size24"));
+
+    b.SetLeadingIconGap(10);
+    EXPECT_INT(b.GetLeadingIconGap(), 10, _T("LI/gap10"));
+
+    b.SetLeadingIcon(nullptr);
+    EXPECT_BOOL(b.GetLeadingIcon() == nullptr, true, _T("LI/clear"));
+    return OK(_T("SetLeadingIconRoundTrip"));
+}
+
+// SetLeadingIconSize:<= 0 钳到 1; SetLeadingIconGap:< 0 钳到 0。
+static Result Test_SetLeadingIconSizeGapClamp()
+{
+    DuiButton b;
+
+    b.SetLeadingIconSize(0);
+    EXPECT_INT(b.GetLeadingIconSize(), 1, _T("LIClamp/size0"));
+    b.SetLeadingIconSize(-5);
+    EXPECT_INT(b.GetLeadingIconSize(), 1, _T("LIClamp/sizeNeg"));
+    b.SetLeadingIconSize(32);
+    EXPECT_INT(b.GetLeadingIconSize(), 32, _T("LIClamp/size32"));
+
+    b.SetLeadingIconGap(-1);
+    EXPECT_INT(b.GetLeadingIconGap(), 0, _T("LIClamp/gapNeg1"));
+    b.SetLeadingIconGap(-100);
+    EXPECT_INT(b.GetLeadingIconGap(), 0, _T("LIClamp/gapNegBig"));
+    b.SetLeadingIconGap(0);
+    EXPECT_INT(b.GetLeadingIconGap(), 0, _T("LIClamp/gap0"));
+    b.SetLeadingIconGap(20);
+    EXPECT_INT(b.GetLeadingIconGap(), 20, _T("LIClamp/gap20"));
+    return OK(_T("SetLeadingIconSizeGapClamp"));
+}
+
+// LeadingIcon 与 Variant 共存:setter 互不影响 getter。
+static Result Test_LeadingIconCoexistsWithVariant()
+{
+    DuiButton b;
+    HBITMAP fake = reinterpret_cast<HBITMAP>((LPARAM)0xABCD);
+
+    b.SetVariant(DuiButton::Variant::Danger);
+    b.SetLeadingIcon(fake);
+    b.SetLeadingIconSize(20);
+    b.SetLeadingIconGap(8);
+
+    EXPECT_INT((int)b.GetVariant(),       (int)DuiButton::Variant::Danger, _T("Coex/var"));
+    EXPECT_BOOL(b.GetLeadingIcon() == fake, true,                          _T("Coex/icon"));
+    EXPECT_INT(b.GetLeadingIconSize(),    20, _T("Coex/size"));
+    EXPECT_INT(b.GetLeadingIconGap(),      8, _T("Coex/gap"));
+
+    // 改 Variant 不影响 LeadingIcon 配置。
+    b.SetVariant(DuiButton::Variant::Outlined);
+    EXPECT_INT((int)b.GetVariant(),       (int)DuiButton::Variant::Outlined, _T("Coex/varOutl"));
+    EXPECT_BOOL(b.GetLeadingIcon() == fake, true,                            _T("Coex/iconKept"));
+    EXPECT_INT(b.GetLeadingIconSize(),    20, _T("Coex/sizeKept"));
+    return OK(_T("LeadingIconCoexistsWithVariant"));
+}
+
+// LeadingIcon caller-owned:Set 再 Set 再 Clear, 不应崩(控件不 DeleteObject)。
+// 假位图指针完全够测"控件没去碰底层 GDI 对象"这一点。
+static Result Test_LeadingIconCallerOwned()
+{
+    DuiButton b;
+    HBITMAP a = reinterpret_cast<HBITMAP>((LPARAM)0x1111);
+    HBITMAP c = reinterpret_cast<HBITMAP>((LPARAM)0x2222);
+
+    b.SetLeadingIcon(a);
+    EXPECT_BOOL(b.GetLeadingIcon() == a, true, _T("Own/a"));
+
+    // 替换:旧 a 不被 DeleteObject(它是假指针, 真 Delete 会崩)。
+    b.SetLeadingIcon(c);
+    EXPECT_BOOL(b.GetLeadingIcon() == c, true, _T("Own/c"));
+
+    // 清空:c 也不被 DeleteObject。
+    b.SetLeadingIcon(nullptr);
+    EXPECT_BOOL(b.GetLeadingIcon() == nullptr, true, _T("Own/clear"));
+
+    // 析构控件:m_leadingIcon 已 nullptr, 不会进 DeleteObject 分支
+    // (现在控件本身就不该 Delete, 不论 leaving icon 为何;此测就此结束。)
+    return OK(_T("LeadingIconCallerOwned"));
+}
+
+// LeadingIcon 在 Checkbox / Radio 上 setter 仍工作(getter 往返), 但 OnPaint
+// 应忽略 —— 我们这无渲染 verify, 只能验"setter 不报错 + getter 正常 + Style
+// 未被改变"。
+static Result Test_LeadingIconStateOnNonPushButton()
+{
+    DuiButton b;
+    b.SetButtonType(DuiButton::StyleCheckbox);
+    HBITMAP fake = reinterpret_cast<HBITMAP>((LPARAM)0xDEAD);
+    b.SetLeadingIcon(fake);
+    EXPECT_BOOL(b.GetLeadingIcon() == fake, true, _T("LiNP/cb_icon"));
+    EXPECT_INT((int)b.GetButtonType(), (int)DuiButton::StyleCheckbox, _T("LiNP/cb_style"));
+
+    b.SetButtonType(DuiButton::StyleRadio);
+    EXPECT_BOOL(b.GetLeadingIcon() == fake, true, _T("LiNP/rd_icon"));
+    EXPECT_INT((int)b.GetButtonType(), (int)DuiButton::StyleRadio, _T("LiNP/rd_style"));
+
+    // 回 PushButton:LeadingIcon 仍在(应在画时生效)。
+    b.SetButtonType(DuiButton::StylePushButton);
+    EXPECT_BOOL(b.GetLeadingIcon() == fake, true, _T("LiNP/push_icon"));
+    return OK(_T("LeadingIconStateOnNonPushButton"));
+}
+
+// Font 与 LeadingIcon 与 Variant 完整共存:5 项 setter / getter 全部往返。
+static Result Test_FontIconVariantTriple()
+{
+    DuiButton b;
+    HFONT   font = reinterpret_cast<HFONT>((LPARAM)0xF0F0);
+    HBITMAP icon = reinterpret_cast<HBITMAP>((LPARAM)0xBABA);
+
+    b.SetVariant(DuiButton::Variant::Primary);
+    b.SetFont(font);
+    b.SetLeadingIcon(icon);
+    b.SetLeadingIconSize(18);
+    b.SetLeadingIconGap(8);
+
+    EXPECT_INT((int)b.GetVariant(),       (int)DuiButton::Variant::Primary, _T("Trip/var"));
+    EXPECT_BOOL(b.GetFont() == font,         true, _T("Trip/font"));
+    EXPECT_BOOL(b.GetLeadingIcon() == icon,  true, _T("Trip/icon"));
+    EXPECT_INT(b.GetLeadingIconSize(),    18, _T("Trip/size"));
+    EXPECT_INT(b.GetLeadingIconGap(),      8, _T("Trip/gap"));
+
+    // 单改 font 不影响其它。
+    b.SetFont(nullptr);
+    EXPECT_BOOL(b.GetFont() == nullptr,      true, _T("Trip/fontClear"));
+    EXPECT_INT((int)b.GetVariant(),       (int)DuiButton::Variant::Primary, _T("Trip/varKept"));
+    EXPECT_BOOL(b.GetLeadingIcon() == icon,  true, _T("Trip/iconKept"));
+    return OK(_T("FontIconVariantTriple"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_BOOL
 
@@ -453,7 +901,27 @@ CString RunAll()
         { _T("StateChain_PressedFallback"), &Test_StateChain_PressedFallback },
         { _T("StateChain_Disabled"),        &Test_StateChain_Disabled        },
         { _T("StateChain_AllNull"),         &Test_StateChain_AllNull         },
-        { _T("SetBgInsets_ClampsNegatives"),&Test_SetBgInsets_ClampsNegatives}
+        { _T("SetBgInsets_ClampsNegatives"),&Test_SetBgInsets_ClampsNegatives},
+        // ---- Variant 视觉变体 ----
+        { _T("VariantSetterDefaults"),       &Test_VariantSetterDefaults       },
+        { _T("PaletteForPrimaryStates"),     &Test_PaletteForPrimaryStates     },
+        { _T("PaletteForOtherVariantsNormal"),&Test_PaletteForOtherVariantsNormal},
+        { _T("PaletteTransparentSemantics"), &Test_PaletteTransparentSemantics },
+        { _T("BitmapAndVariantCoexist"),     &Test_BitmapAndVariantCoexist     },
+        // ---- AA 开关 + Checkbox/Radio 透明 Variant 路由 ----
+        { _T("SetAntiAliasRoundTrip"),       &Test_SetAntiAliasRoundTrip       },
+        { _T("CheckboxVariantGhost_Transparent"),   &Test_CheckboxVariantGhost_Transparent   },
+        { _T("CheckboxVariantPrimary_Independent"), &Test_CheckboxVariantPrimary_Independent },
+        { _T("RadioVariantOutlined_BrandBorder"),   &Test_RadioVariantOutlined_BrandBorder   },
+        // ---- SetFont / SetTextPointSize / LeadingIcon ----
+        { _T("SetFontRoundTrip"),                &Test_SetFontRoundTrip                },
+        { _T("SetTextPointSizeRoundTrip"),       &Test_SetTextPointSizeRoundTrip       },
+        { _T("SetLeadingIconRoundTrip"),         &Test_SetLeadingIconRoundTrip         },
+        { _T("SetLeadingIconSizeGapClamp"),      &Test_SetLeadingIconSizeGapClamp      },
+        { _T("LeadingIconCoexistsWithVariant"),  &Test_LeadingIconCoexistsWithVariant  },
+        { _T("LeadingIconCallerOwned"),          &Test_LeadingIconCallerOwned          },
+        { _T("LeadingIconStateOnNonPushButton"), &Test_LeadingIconStateOnNonPushButton },
+        { _T("FontIconVariantTriple"),           &Test_FontIconVariantTriple           }
     };
 
     CString out;

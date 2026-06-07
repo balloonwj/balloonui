@@ -533,14 +533,13 @@ void DuiListBox::OnPaint(HDC hdc, const RECT& rcDirty)
     ::SelectObject(hdc, oldPen);
     ::DeleteObject(hpen);
 
-    // Clip rows to body.
+    // 把行裁到 body。用 SaveDC + IntersectClipRect + RestoreDC 而不是
+    // SelectClipRgn —— 后者是替换语义,嵌套在外层 ScrollView 里时会撤销外层
+    // 设的 clip,导致 ListBox 内容能画到外层 m_rcItem 之外(运行时已复现)。
     int bodyW = BodyWidth();
-    RECT rcClip = { m_rcItem.left + 1, m_rcItem.top + 1,
-                    m_rcItem.left + bodyW, m_rcItem.bottom - 1 };
-    HRGN rgn = ::CreateRectRgnIndirect(&rcClip);
-    HRGN rgnOld = ::CreateRectRgn(0, 0, 0, 0);
-    int hasOld = ::GetClipRgn(hdc, rgnOld);
-    ::SelectClipRgn(hdc, rgn);
+    int dcSaved = ::SaveDC(hdc);
+    ::IntersectClipRect(hdc, m_rcItem.left + 1, m_rcItem.top + 1,
+                        m_rcItem.left + bodyW, m_rcItem.bottom - 1);
 
     HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
     HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
@@ -631,9 +630,7 @@ void DuiListBox::OnPaint(HDC hdc, const RECT& rcDirty)
     {
         ::SelectObject(hdc, oldFont);
     }
-    ::SelectClipRgn(hdc, hasOld == 1 ? rgnOld : nullptr);
-    ::DeleteObject(rgn);
-    ::DeleteObject(rgnOld);
+    ::RestoreDC(hdc, dcSaved);
 
     if (m_sb && m_sb->IsVisible())
     {
@@ -1048,13 +1045,13 @@ void DuiVirtualList::OnPaint(HDC hdc, const RECT& rcDirty)
     ::SelectObject(hdc, oldPen);
     ::DeleteObject(hpen);
 
+    // 把行裁到 body。同 DuiListBox::OnPaint 的说明:必须用 SaveDC +
+    // IntersectClipRect + RestoreDC,不能用 SelectClipRgn(替换语义会撤
+    // 销外层 ScrollView 的 clip,运行时已复现 VL 行越界画到 tab 上)。
     int bodyW = BodyWidth();
-    RECT rcClip = { m_rcItem.left + 1, m_rcItem.top + 1,
-                    m_rcItem.left + bodyW, m_rcItem.bottom - 1 };
-    HRGN rgn = ::CreateRectRgnIndirect(&rcClip);
-    HRGN rgnOld = ::CreateRectRgn(0, 0, 0, 0);
-    int hasOld = ::GetClipRgn(hdc, rgnOld);
-    ::SelectClipRgn(hdc, rgn);
+    int dcSaved = ::SaveDC(hdc);
+    ::IntersectClipRect(hdc, m_rcItem.left + 1, m_rcItem.top + 1,
+                        m_rcItem.left + bodyW, m_rcItem.bottom - 1);
 
     HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
     HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
@@ -1087,9 +1084,7 @@ void DuiVirtualList::OnPaint(HDC hdc, const RECT& rcDirty)
     {
         ::SelectObject(hdc, oldFont);
     }
-    ::SelectClipRgn(hdc, hasOld == 1 ? rgnOld : nullptr);
-    ::DeleteObject(rgn);
-    ::DeleteObject(rgnOld);
+    ::RestoreDC(hdc, dcSaved);
 
     if (m_sb && m_sb->IsVisible())
     {

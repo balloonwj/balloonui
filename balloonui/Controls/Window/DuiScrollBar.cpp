@@ -499,6 +499,19 @@ void DuiScrollView::SetContent(std::unique_ptr<DuiControl> content)
         // last so it paints on top. Their rects don't overlap, so paint
         // order doesn't actually matter visually.
     }
+    // 若开启了 auto-height,这里必须按新 content 重算 m_contentH —— 否则
+    // 它会停留在上一个 content 算出来的值,导致新 content 比旧的高时
+    // ScrollView 滚不到底(SetAutoContentHeight 自身有 m_autoHeight==b 的
+    // short-circuit,二次调用不会触发 Layout,所以单靠 SetAutoContentHeight
+    // 不能补救)。
+    if (m_autoHeight && m_content)
+    {
+        SIZE want = m_content->GetDesiredSize();
+        if (want.cy > 0)
+        {
+            m_contentH = want.cy;
+        }
+    }
     DoLayout();
     UpdateRange();
 
@@ -654,12 +667,17 @@ void DuiScrollView::UpdateRange()
 // in (DuiTier3Tests::Test_HwndHostInSV_*):
 //   1. Empty intersection → fully out of viewport → empty region (HWND
 //      effectively invisible without a hide/show flicker).
-//   2. Intersection equals DUI rect → fully in viewport → clear region
-//      (NULL) so OS uses default whole-HWND clip; cheaper than a redundant
-//      explicit-rect region, and required so re-entering the viewport after
-//      a scroll-out doesn't leave a stale clipped region behind.
+//   2. Intersection equals the window rect → fully in viewport → clear
+//      region (NULL) so OS uses default whole-HWND clip; cheaper than a
+//      redundant explicit-rect region, and required so re-entering the
+//      viewport after a scroll-out doesn't leave a stale clipped region.
 //   3. Partial → window-region with the visible slice in HWND-local coords
-//      (origin at the HWND's top-left, so subtract dui.left/top).
+//      (origin at the HWND's top-left, so subtract the window's left/top).
+//
+// 用寄宿窗口的【真实】窗口矩形（映射到 host 客户区坐标），而非控件 DUI 矩形
+// h->GetRect()：两者通常近似（窗口仅在 DUI 矩形内内缩 1px 边框 + margin），
+// 但 DuiEditHost 开了垂直居中（单行默认）后窗口会收成一行高并在框内下移，
+// 此时只有按真实窗口矩形算 SetWindowRgn 才不会与下移后的窗口错位。
 //
 // SetWindowRgn takes ownership of the HRGN on success, hence we don't
 // DeleteObject in the partial / empty branches.
@@ -678,23 +696,31 @@ static void ClipHostedHwndsToView_(DuiControl* node, const RECT& viewRect)
         HWND hw = h->GetHostedHwnd();
         if (hw && ::IsWindow(hw))
         {
-            const RECT& dui = h->GetRect();
+            // 真实窗口矩形 → host 客户区坐标（与 viewRect 同一坐标系）。
+            RECT wrScreen;
+            ::GetWindowRect(hw, &wrScreen);
+            HWND parent = ::GetParent(hw);
+            POINT lt = { wrScreen.left,  wrScreen.top };
+            POINT rb = { wrScreen.right, wrScreen.bottom };
+            ::ScreenToClient(parent, &lt);
+            ::ScreenToClient(parent, &rb);
+            RECT win = { lt.x, lt.y, rb.x, rb.y };
             RECT inter;
-            if (!::IntersectRect(&inter, &dui, &viewRect))
+            if (!::IntersectRect(&inter, &win, &viewRect))
             {
                 HRGN empty = ::CreateRectRgn(0, 0, 0, 0);
                 ::SetWindowRgn(hw, empty, TRUE);
             }
-            else if (::EqualRect(&inter, &dui))
+            else if (::EqualRect(&inter, &win))
             {
                 ::SetWindowRgn(hw, NULL, TRUE);
             }
             else
             {
-                RECT local = { inter.left   - dui.left,
-                               inter.top    - dui.top,
-                               inter.right  - dui.left,
-                               inter.bottom - dui.top };
+                RECT local = { inter.left   - win.left,
+                               inter.top    - win.top,
+                               inter.right  - win.left,
+                               inter.bottom - win.top };
                 HRGN rgn = ::CreateRectRgnIndirect(&local);
                 ::SetWindowRgn(hw, rgn, TRUE);
             }
@@ -755,15 +781,19 @@ void DuiScrollView::OnPaint(HDC hdc, const RECT& rcDirty)
     ::FillRect(hdc, &m_rcItem, hbr);
     ::DeleteObject(hbr);
 
-    // Clip painting of content to the view rect (everything except scrollbar).
+    // 把 content 的绘制裁到 view rect(不含滚动条那一列)。这里必须用
+    // IntersectClipRect 而不是 SelectClipRgn —— SelectClipRgn 是「替换」
+    // 语义,嵌套 ScrollView 时内层一旦 SelectClipRgn 自己的 rect, 外层
+    // ScrollView 设的 clip 就被覆盖,内层内容能画到外层 m_rcItem 之外。
+    // SaveDC + IntersectClipRect + RestoreDC 才是相交语义且能完整还原
+    // dc 状态(clip、坐标变换、SelectObject 都一起存档)。
     int contentW = m_sb && m_sb->IsVisible() ? (m_rcItem.right - m_rcItem.left - m_sbWidth)
                                              : (m_rcItem.right - m_rcItem.left);
     RECT rcClip = { m_rcItem.left, m_rcItem.top,
                     m_rcItem.left + contentW, m_rcItem.bottom };
-    HRGN rgn = ::CreateRectRgnIndirect(&rcClip);
-    HRGN rgnOld = ::CreateRectRgn(0, 0, 0, 0);
-    int hasOld = ::GetClipRgn(hdc, rgnOld);
-    ::SelectClipRgn(hdc, rgn);
+
+    int dcSaved = ::SaveDC(hdc);
+    ::IntersectClipRect(hdc, rcClip.left, rcClip.top, rcClip.right, rcClip.bottom);
 
     if (m_content)
     {
@@ -774,11 +804,9 @@ void DuiScrollView::OnPaint(HDC hdc, const RECT& rcDirty)
         }
     }
 
-    ::SelectClipRgn(hdc, hasOld == 1 ? rgnOld : nullptr);
-    ::DeleteObject(rgn);
-    ::DeleteObject(rgnOld);
+    ::RestoreDC(hdc, dcSaved);
 
-    // Scrollbar paints unclipped.
+    // 滚动条本身不裁(它在 m_rcItem 内的右侧固定列,本来就在外层 clip 之内)。
     if (m_sb && m_sb->IsVisible())
     {
         RECT inter;

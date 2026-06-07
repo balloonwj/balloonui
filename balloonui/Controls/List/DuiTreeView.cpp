@@ -201,6 +201,12 @@ void DuiTreeView::RemoveSubtree(int idx)
         }
     }
 
+    // Drop custom-control entries for removed nodes (auto-destroys via unique_ptr)。
+    for (size_t k = idx; k < end; ++k)
+    {
+        m_customControls.erase(m_nodes[k].id);
+    }
+
     m_nodes.erase(m_nodes.begin() + idx, m_nodes.begin() + end);
 
     for (auto& n : m_nodes)
@@ -243,6 +249,7 @@ void DuiTreeView::Clear()
     m_nodes.clear();
     m_visible.clear();
     m_selCells.clear();
+    m_customControls.clear();   // 销毁所有节点自绘控件
     m_curSelId   = -1;
     m_hoverId    = -1;
     m_focusCell  = CellRef{ -1, -1 };
@@ -330,6 +337,118 @@ void DuiTreeView::CollapseAll()
     {
         n.expanded = false;
     }
+    RebuildVisible();
+    EnsureScrollRanges();
+    Invalidate();
+}
+
+// 收集当前所有处于展开态的节点 id。仅遍历 m_nodes（不看 m_visible），
+// 因为"折叠的祖先底下被折叠的子节点也算 expanded=true"（结构语义）。
+std::vector<int> DuiTreeView::GetExpandedSnapshot() const
+{
+    std::vector<int> ids;
+    ids.reserve(m_nodes.size());
+    for (const auto& n : m_nodes)
+    {
+        if (n.expanded)
+        {
+            ids.push_back(n.id);
+        }
+    }
+    return ids;
+}
+
+// 增量恢复：对 snapshot 中存在的节点调 Expand；不在 snapshot 里的节点
+// 保持当前展开状态不变。snapshot 里的过期 id 静默跳过。
+// 一次性 RebuildVisible，避免 N 次 SetExpanded 触发 N 次 Invalidate。
+void DuiTreeView::RestoreExpanded(const std::vector<int>& ids)
+{
+    if (ids.empty())
+    {
+        return;
+    }
+    bool anyChanged = false;
+    for (int id : ids)
+    {
+        int idx = IndexOf(id);
+        if (idx < 0)
+        {
+            continue;
+        }
+        if (!m_nodes[idx].expanded)
+        {
+            m_nodes[idx].expanded = true;
+            anyChanged = true;
+        }
+    }
+    if (anyChanged)
+    {
+        RebuildVisible();
+        EnsureScrollRanges();
+        Invalidate();
+    }
+}
+
+// 单节点可见性标志。隐藏 = 连同后代不出现在 m_visible 列表；数据保留。
+void DuiTreeView::SetItemVisible(int id, bool visible)
+{
+    int idx = IndexOf(id);
+    if (idx < 0)
+    {
+        return;
+    }
+    if (m_nodes[idx].visible == visible)
+    {
+        return;
+    }
+    m_nodes[idx].visible = visible;
+    RebuildVisible();
+    EnsureScrollRanges();
+    Invalidate();
+}
+
+void DuiTreeView::SetItemSelectable(int id, bool selectable)
+{
+    int idx = IndexOf(id);
+    if (idx < 0)
+    {
+        return;
+    }
+    if (m_nodes[idx].selectable == selectable)
+    {
+        return;
+    }
+    m_nodes[idx].selectable = selectable;
+    // 把变成不可选的节点从当前选中状态里摘掉,避免残留高亮。
+    if (!selectable && m_curSelId == id)
+    {
+        m_curSelId = -1;
+    }
+    Invalidate();
+}
+
+bool DuiTreeView::IsItemVisible(int id) const
+{
+    int idx = IndexOf(id);
+    return (idx >= 0) ? m_nodes[idx].visible : false;
+}
+
+// 设全局过滤器；nullptr / 空 lambda 等价于"无过滤器"。
+void DuiTreeView::SetFilter(std::function<bool(int)> filter)
+{
+    m_filter = std::move(filter);
+    RebuildVisible();
+    EnsureScrollRanges();
+    Invalidate();
+}
+
+void DuiTreeView::ClearFilter()
+{
+    if (!m_filter)
+    {
+        return;
+    }
+    m_filter = nullptr;
     RebuildVisible();
     EnsureScrollRanges();
     Invalidate();
@@ -460,6 +579,49 @@ CString DuiTreeView::GetItemLabel(int id) const
     return idx < 0 ? CString() : m_nodes[idx].label;
 }
 
+// 设置节点副标签（单列模式两行节点）。仅单列模式生效；多列模式调用本接口
+// 会更新 Node.subLabel 字段但不会被 PaintRow 读取（多列模式 PaintBody
+// 完全不看 subLabel）。
+void DuiTreeView::SetItemSubLabel(int id, LPCTSTR sub)
+{
+    int idx = IndexOf(id);
+    if (idx < 0)
+    {
+        return;
+    }
+    m_nodes[idx].subLabel = sub ? sub : _T("");
+    Invalidate();
+}
+
+CString DuiTreeView::GetItemSubLabel(int id) const
+{
+    int idx = IndexOf(id);
+    return idx < 0 ? CString() : m_nodes[idx].subLabel;
+}
+
+// 设置副标签字号；pt <= 0 取默认 8pt。
+void DuiTreeView::SetSubLabelPointSize(int pt)
+{
+    int v = (pt > 0) ? pt : 8;
+    if (m_subLabelPt == v)
+    {
+        return;
+    }
+    m_subLabelPt = v;
+    Invalidate();
+}
+
+// 设置副标签文字颜色。
+void DuiTreeView::SetSubLabelTextColor(COLORREF c)
+{
+    if (m_clrSubLabelText == c)
+    {
+        return;
+    }
+    m_clrSubLabelText = c;
+    Invalidate();
+}
+
 void DuiTreeView::SetItemIcon(int id, HBITMAP icon)
 {
     int idx = IndexOf(id);
@@ -475,6 +637,28 @@ HBITMAP DuiTreeView::GetItemIcon(int id) const
 {
     int idx = IndexOf(id);
     return idx < 0 ? nullptr : m_nodes[idx].icon;
+}
+
+// 设置节点 icon 灰显标志（仅单列模式生效；多列模式 PaintBody 不读本字段）。
+void DuiTreeView::SetItemIconGrayed(int id, bool grayed)
+{
+    int idx = IndexOf(id);
+    if (idx < 0)
+    {
+        return;
+    }
+    if (m_nodes[idx].iconGrayed == grayed)
+    {
+        return;
+    }
+    m_nodes[idx].iconGrayed = grayed;
+    Invalidate();
+}
+
+bool DuiTreeView::IsItemIconGrayed(int id) const
+{
+    int idx = IndexOf(id);
+    return idx >= 0 ? m_nodes[idx].iconGrayed : false;
 }
 
 void DuiTreeView::SetItemParam(int id, LPARAM param)
@@ -508,6 +692,160 @@ COLORREF DuiTreeView::GetItemStatusColor(int id) const
 {
     int idx = IndexOf(id);
     return idx < 0 ? (COLORREF)CLR_INVALID : m_nodes[idx].statusColor;
+}
+
+// 设置节点右侧辅助文字（仅单列模式生效）。空字符串 = 不绘。
+void DuiTreeView::SetItemRightText(int id, LPCTSTR rightText)
+{
+    int idx = IndexOf(id);
+    if (idx < 0)
+    {
+        return;
+    }
+    m_nodes[idx].rightText = rightText ? rightText : _T("");
+    Invalidate();
+}
+
+CString DuiTreeView::GetItemRightText(int id) const
+{
+    int idx = IndexOf(id);
+    return idx < 0 ? CString() : m_nodes[idx].rightText;
+}
+
+// 设置右侧文字字号；pt <= 0 表示用默认字体（与主 label 同字号 9pt）。
+void DuiTreeView::SetRightTextPointSize(int pt)
+{
+    int v = (pt > 0) ? pt : 0;
+    if (m_rightTextPt == v)
+    {
+        return;
+    }
+    m_rightTextPt = v;
+    Invalidate();
+}
+
+void DuiTreeView::SetRightTextColor(COLORREF c)
+{
+    if (m_clrRightText == c)
+    {
+        return;
+    }
+    m_clrRightText = c;
+    Invalidate();
+}
+
+// ================================================================
+// 节点自绘控件(custom-node mode)
+// ================================================================
+
+// 设置节点自绘控件,接管该节点的内容区绘制和事件。详细语义见 .h 文档。
+// 参数 ctrl 为 nullptr 时清除 custom 模式,节点回到 legacy(tree 内置画)。
+// 重复设置会自动替换,旧 ctrl 随 unique_ptr 析构。
+void DuiTreeView::SetItemCustomControl(int id, std::unique_ptr<DuiControl> ctrl)
+{
+    if (IndexOf(id) < 0)
+    {
+        return;
+    }
+    if (ctrl)
+    {
+        // 不把 ctrl 加进 m_children(那是 layout 子控件);它存在 m_customControls
+        // map 里,由本控件独立 layout / paint。ctrl 不被加进父链,因此 ctrl
+        // 内部如需向上 NotifyParent 需自行调用 host 接口;v1 IM 场景下 tree
+        // 在点击时已 fire 行级 DUIN_CLICK,ctrl 不需自己发通知。
+        m_customControls[id] = std::move(ctrl);
+    }
+    else
+    {
+        m_customControls.erase(id);
+    }
+    Invalidate();
+}
+
+DuiControl* DuiTreeView::GetItemCustomControl(int id) const
+{
+    auto it = m_customControls.find(id);
+    return (it != m_customControls.end()) ? it->second.get() : nullptr;
+}
+
+// 据 HitInfo 找到该可见行对应的 customControl,Layout 到当前内容矩形再返回。
+// 用于 OnLButtonDown / OnMouseMove 等事件 handler 在路由 mouse 事件给 ctrl
+// 前确保 ctrl 的 m_rcItem 是最新的。返回 nullptr 表示该行未挂 custom ctrl
+// 或行号越界,事件 handler 应回退到 tree 默认逻辑。
+DuiControl* DuiTreeView::LayoutCustomCtrlAtRow_(const HitInfo& h)
+{
+    if (h.visibleRow < 0 || h.visibleRow >= (int)m_visible.size())
+    {
+        return nullptr;
+    }
+    int idx = m_visible[h.visibleRow];
+    auto it = m_customControls.find(m_nodes[idx].id);
+    if (it == m_customControls.end() || !it->second)
+    {
+        return nullptr;
+    }
+
+    // 计算行内容区(与 PaintRow 中 custom-node 分支一致)。
+    RECT row;
+    row.left   = m_rcItem.left;
+    row.right  = m_rcItem.right;
+    row.top    = m_rcItem.top + h.visibleRow * m_rowH;
+    row.bottom = row.top + m_rowH;
+    int xCursor = row.left + m_nodes[idx].depth * m_indent + kGlyphStripPx;
+    RECT rcContent;
+    rcContent.left   = xCursor;
+    rcContent.right  = row.right - kRightPad;
+    rcContent.top    = row.top;
+    rcContent.bottom = row.bottom;
+    // 用 SetRect 而不是 Layout —— 见 PaintRow 中 custom-mode 分支同样的说明。
+    it->second->SetRect(rcContent);
+    return it->second.get();
+}
+
+// ================================================================
+// 节点 icon 全局视觉(尺寸 / 圆角)
+// ================================================================
+
+// 设置节点 icon 显示尺寸(逻辑像素,正方形)。clamp 到 [kIconSizePxMin,
+// kIconSizePxMax]。影响:单列模式 PaintRow 的 tree icon 绘制 + 多列
+// 模式 col 0 tree icon 绘制 + 单列模式 auto-fit 内容宽度计算。
+void DuiTreeView::SetIconSize(int px)
+{
+    if (px < kIconSizePxMin) { px = kIconSizePxMin; }
+    if (px > kIconSizePxMax) { px = kIconSizePxMax; }
+    if (m_iconSizePx == px)
+    {
+        return;
+    }
+    m_iconSizePx = px;
+    Invalidate();
+}
+
+// 设置节点 icon 圆角半径(逻辑像素)。0 = 直角(原行为);> 0 时绘 icon
+// 前用 CreateRoundRectRgn 设剪裁区,使输出位图呈圆角外观。原 HBITMAP
+// 不动。负值视作 0,过大值在 PaintRow 内被 clamp 到 icon 一半。
+void DuiTreeView::SetIconCornerRadius(int px)
+{
+    int v = (px < 0) ? 0 : px;
+    if (m_iconCornerRadiusPx == v)
+    {
+        return;
+    }
+    m_iconCornerRadiusPx = v;
+    Invalidate();
+}
+
+// 设置 icon 绘制路径。false=旧 StretchBlt+HRGN clip 路径(默认);
+// true=新 AlphaBlend 路径,要求 icon 位图为 32bpp premultiplied alpha,
+// 圆角由调用方在位图内自绘。详见 SetIconUsesAlpha 声明处注释。
+void DuiTreeView::SetIconUsesAlpha(bool useAlpha)
+{
+    if (m_iconUsesAlpha == useAlpha)
+    {
+        return;
+    }
+    m_iconUsesAlpha = useAlpha;
+    Invalidate();
 }
 
 // ================================================================
@@ -1113,15 +1451,31 @@ void DuiTreeView::PlaceEditor()
 void DuiTreeView::RebuildVisible()
 {
     m_visible.clear();
+    //hideUntilDepth 同时承担两种"跳过子树"语义：
+    //  1) 父节点折叠（节点本身仍可见，仅后代跳过）
+    //  2) 父节点被 SetItemVisible(false) 或 filter 拒绝（节点本身也跳过）
+    //语义合并到同一 depth 阈值：本节点 push 前先判隐藏；push 后再判折叠。
     int hideUntilDepth = -1;
     for (size_t i = 0; i < m_nodes.size(); ++i)
     {
         const Node& n = m_nodes[i];
+        //—— 当前在被折叠/被隐藏的子树范围内：本节点直接跳过
         if (hideUntilDepth >= 0 && n.depth > hideUntilDepth)
         {
             continue;
         }
         hideUntilDepth = -1;
+
+        //—— 节点本身被隐藏（visible flag 或 filter 拒绝）：连同其后代跳过
+        bool hiddenByFlag   = !n.visible;
+        bool hiddenByFilter = m_filter && !m_filter(n.id);
+        if (hiddenByFlag || hiddenByFilter)
+        {
+            hideUntilDepth = n.depth;
+            continue;
+        }
+
+        //—— 节点可见：进 m_visible；若处于折叠态，后续后代跳过
         m_visible.push_back((int)i);
         if (!n.expanded)
         {
@@ -1698,8 +2052,10 @@ void DuiTreeView::OnPaint(HDC hdc, const RECT& rcDirty)
             row.top    = m_rcItem.top + r * m_rowH;
             row.bottom = row.top + m_rowH;
 
-            bool selected = (n.id == m_curSelId);
-            bool hovered  = (n.id == m_hoverId) && !selected;
+            // selectable=false 的节点不显示选中底色(即便 m_curSelId
+            // 残留指向它);hover 行为也一并跳过,grouping header 不需要 hover 高亮。
+            bool selected = (n.id == m_curSelId) && n.selectable;
+            bool hovered  = (n.id == m_hoverId) && !selected && n.selectable;
             COLORREF bg = m_clrRowBg;
             if (m_zebra && (r & 1) == 1 && !selected) { bg = m_clrZebra; }
             if (selected) { bg = m_clrRowSel; }
@@ -1719,23 +2075,217 @@ void DuiTreeView::OnPaint(HDC hdc, const RECT& rcDirty)
             }
             xCursor += kGlyphStripPx;
 
+            //—— Custom-node mode:节点设了 customControl 时 tree 不再画
+            //   icon / label / sub-label / right-text / status dot,把内容区
+            //   (glyph + indent 右侧)交给 ctrl 自画。tree 已画 row bg + glyph
+            //   + indent,因此 ctrl 看到的就是它要负责的内容矩形。
+            //   ctrl->Layout(rcContent) 让控件按矩形排自身子树;OnPaint 直接
+            //   叠加到 hdc。Mouse 事件路由由 OnXxx 处理器另行 forward。
+            {
+                std::map<int, std::unique_ptr<DuiControl> >::const_iterator
+                    customIt = m_customControls.find(n.id);
+                if (customIt != m_customControls.end() &&
+                    customIt->second != nullptr)
+                {
+                    DuiControl* ctrl = customIt->second.get();
+                    RECT rcContent;
+                    rcContent.left   = xCursor;
+                    rcContent.right  = row.right - kRightPad;
+                    rcContent.top    = row.top;
+                    rcContent.bottom = row.bottom;
+                    // 必须用 SetRect 而不是 Layout —— DuiControl::Layout 基类
+                    // 默认只把 rcAvail 转给 children, 不会把 m_rcItem 自身
+                    // 更新; 用 SetRect 才会写 m_rcItem 并顺便调用 Layout。
+                    // 否则 ctrl->OnPaint 时 m_rcItem 是初始 0 矩形, 画不出东西。
+                    ctrl->SetRect(rcContent);
+                    ctrl->OnPaint(hdc, rcDirty);
+                    continue;   // 跳过本行内置绘制
+                }
+            }
+
             if (n.icon)
             {
-                int iconY = (row.top + row.bottom - kIconSizePx) / 2;
-                HDC memDC = ::CreateCompatibleDC(hdc);
-                HGDIOBJ old = ::SelectObject(memDC, n.icon);
+                int iconY = (row.top + row.bottom - m_iconSizePx) / 2;
                 BITMAP bm = {};
                 ::GetObject(n.icon, sizeof(bm), &bm);
                 if (bm.bmWidth > 0 && bm.bmHeight > 0)
                 {
-                    ::SetStretchBltMode(hdc, HALFTONE);
-                    ::SetBrushOrgEx(hdc, 0, 0, nullptr);
-                    ::StretchBlt(hdc, xCursor, iconY, kIconSizePx, kIconSizePx,
-                                 memDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+                    if (!m_iconUsesAlpha)
+                    {
+                        //==== 旧路径(向后兼容,m_iconUsesAlpha=false 默认走这里)====
+                        //—— 圆角剪裁:m_iconCornerRadiusPx > 0 时,绘 icon 前把
+                        //   剪裁区设为 icon 矩形的圆角区域;绘完恢复原剪裁。
+                        //   纯 GDI 实现,与下方两条 StretchBlt 路径(灰显 / 原色)
+                        //   共用同一剪裁,逻辑一次写完。clipR 被 clamp 到 icon
+                        //   的一半,避免半径超出 icon 自身导致圆角不可见。
+                        //   用 SaveDC + ExtSelectClipRgn(RGN_AND) + RestoreDC ——
+                        //   RGN_AND 是相交语义(SelectClipRgn 是替换语义,会撤销
+                        //   外层 ScrollView 等设的 clip);圆角是 round rect,所以
+                        //   用 ExtSelectClipRgn 而不是矩形版 IntersectClipRect。
+                        int iconClipSaved = -1;
+                        if (m_iconCornerRadiusPx > 0)
+                        {
+                            int clipR = m_iconCornerRadiusPx;
+                            if (clipR > m_iconSizePx / 2)
+                            {
+                                clipR = m_iconSizePx / 2;
+                            }
+                            iconClipSaved = ::SaveDC(hdc);
+                            HRGN clipRgn = ::CreateRoundRectRgn(
+                                xCursor, iconY,
+                                xCursor + m_iconSizePx + 1,    // CreateRoundRectRgn 右下排他
+                                iconY   + m_iconSizePx + 1,
+                                clipR * 2, clipR * 2);
+                            ::ExtSelectClipRgn(hdc, clipRgn, RGN_AND);
+                            ::DeleteObject(clipRgn);
+                        }
+
+                        if (n.iconGrayed)
+                        {
+                            //—— 灰显路径：先把原 icon copy 到临时 32-bit
+                            //   DIB，按 NTSC luma 系数 (R*299+G*587+B*114)/1000
+                            //   逐像素转灰度（保留 alpha），再 StretchBlt 到目标。
+                            //   原 HBITMAP 不动。纯 GDI 实现，不引入 GDI+ 依赖。
+                            HDC memDC = ::CreateCompatibleDC(hdc);
+                            BITMAPINFO bi = {};
+                            bi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+                            bi.bmiHeader.biWidth       = bm.bmWidth;
+                            bi.bmiHeader.biHeight      = -bm.bmHeight;   // top-down
+                            bi.bmiHeader.biPlanes      = 1;
+                            bi.bmiHeader.biBitCount    = 32;
+                            bi.bmiHeader.biCompression = BI_RGB;
+                            void* bits = nullptr;
+                            HBITMAP dib = ::CreateDIBSection(hdc, &bi,
+                                                            DIB_RGB_COLORS,
+                                                            &bits, nullptr, 0);
+                            if (dib != nullptr && bits != nullptr)
+                            {
+                                HGDIOBJ oldDib = ::SelectObject(memDC, dib);
+                                //—— 把原 icon copy 到 DIB
+                                HDC srcDC = ::CreateCompatibleDC(hdc);
+                                HGDIOBJ oldSrc = ::SelectObject(srcDC, n.icon);
+                                ::BitBlt(memDC, 0, 0, bm.bmWidth, bm.bmHeight,
+                                         srcDC, 0, 0, SRCCOPY);
+                                ::SelectObject(srcDC, oldSrc);
+                                ::DeleteDC(srcDC);
+                                //—— 逐像素 NTSC luma 灰度变换；保留 alpha 字节
+                                DWORD* pixels = static_cast<DWORD*>(bits);
+                                int total = bm.bmWidth * bm.bmHeight;
+                                for (int i = 0; i < total; ++i)
+                                {
+                                    DWORD p = pixels[i];
+                                    int b = static_cast<int>(p & 0xFF);
+                                    int g = static_cast<int>((p >> 8) & 0xFF);
+                                    int r = static_cast<int>((p >> 16) & 0xFF);
+                                    int gray = (r * 299 + g * 587 + b * 114) / 1000;
+                                    pixels[i] = (p & 0xFF000000)
+                                              | (gray << 16) | (gray << 8) | gray;
+                                }
+                                ::SetStretchBltMode(hdc, HALFTONE);
+                                ::SetBrushOrgEx(hdc, 0, 0, nullptr);
+                                ::StretchBlt(hdc, xCursor, iconY,
+                                             m_iconSizePx, m_iconSizePx,
+                                             memDC, 0, 0, bm.bmWidth, bm.bmHeight,
+                                             SRCCOPY);
+                                ::SelectObject(memDC, oldDib);
+                                ::DeleteObject(dib);
+                            }
+                            ::DeleteDC(memDC);
+                        }
+                        else
+                        {
+                            //—— 原路径：直接 StretchBlt，与改造前完全一致。
+                            HDC memDC = ::CreateCompatibleDC(hdc);
+                            HGDIOBJ old = ::SelectObject(memDC, n.icon);
+                            ::SetStretchBltMode(hdc, HALFTONE);
+                            ::SetBrushOrgEx(hdc, 0, 0, nullptr);
+                            ::StretchBlt(hdc, xCursor, iconY,
+                                         m_iconSizePx, m_iconSizePx,
+                                         memDC, 0, 0, bm.bmWidth, bm.bmHeight,
+                                         SRCCOPY);
+                            ::SelectObject(memDC, old);
+                            ::DeleteDC(memDC);
+                        }
+
+                        //—— 恢复剪裁
+                        if (iconClipSaved >= 0)
+                        {
+                            ::RestoreDC(hdc, iconClipSaved);
+                        }
+                    }
+                    else
+                    {
+                        //==== 新 alpha 路径(m_iconUsesAlpha=true)====
+                        // 要求 n.icon 是 32bpp premultiplied alpha 位图;圆角已
+                        // 由调用方在位图内自绘(GDI+ AA),DuiTreeView 不再做
+                        // HRGN clip——避免硬边锯齿。SetIconCornerRadius 在本
+                        // 路径下被忽略。
+                        BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+                        HDC memDC = ::CreateCompatibleDC(hdc);
+
+                        if (n.iconGrayed)
+                        {
+                            //—— 灰显 + alpha 路径:同样的 32bpp DIB 灰度变换
+                            //   (保留 alpha 字节),输出用 AlphaBlend 而非
+                            //   StretchBlt,让边缘 alpha 渐变正确合成。
+                            BITMAPINFO bi = {};
+                            bi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+                            bi.bmiHeader.biWidth       = bm.bmWidth;
+                            bi.bmiHeader.biHeight      = -bm.bmHeight;
+                            bi.bmiHeader.biPlanes      = 1;
+                            bi.bmiHeader.biBitCount    = 32;
+                            bi.bmiHeader.biCompression = BI_RGB;
+                            void* bits = nullptr;
+                            HBITMAP dib = ::CreateDIBSection(hdc, &bi,
+                                                            DIB_RGB_COLORS,
+                                                            &bits, nullptr, 0);
+                            if (dib != nullptr && bits != nullptr)
+                            {
+                                HGDIOBJ oldDib = ::SelectObject(memDC, dib);
+                                HDC srcDC = ::CreateCompatibleDC(hdc);
+                                HGDIOBJ oldSrc = ::SelectObject(srcDC, n.icon);
+                                ::BitBlt(memDC, 0, 0, bm.bmWidth, bm.bmHeight,
+                                         srcDC, 0, 0, SRCCOPY);
+                                ::SelectObject(srcDC, oldSrc);
+                                ::DeleteDC(srcDC);
+                                DWORD* pixels = static_cast<DWORD*>(bits);
+                                int total = bm.bmWidth * bm.bmHeight;
+                                for (int i = 0; i < total; ++i)
+                                {
+                                    DWORD p = pixels[i];
+                                    int a = static_cast<int>((p >> 24) & 0xFF);
+                                    int b = static_cast<int>(p & 0xFF);
+                                    int g = static_cast<int>((p >> 8) & 0xFF);
+                                    int r = static_cast<int>((p >> 16) & 0xFF);
+                                    int gray = (r * 299 + g * 587 + b * 114) / 1000;
+                                    // premultiplied alpha:gray 通道也要乘以 alpha/255。
+                                    int grayP = (gray * a) / 255;
+                                    pixels[i] = (static_cast<DWORD>(a) << 24)
+                                              | (static_cast<DWORD>(grayP) << 16)
+                                              | (static_cast<DWORD>(grayP) << 8)
+                                              | static_cast<DWORD>(grayP);
+                                }
+                                ::AlphaBlend(hdc, xCursor, iconY,
+                                             m_iconSizePx, m_iconSizePx,
+                                             memDC, 0, 0, bm.bmWidth, bm.bmHeight,
+                                             bf);
+                                ::SelectObject(memDC, oldDib);
+                                ::DeleteObject(dib);
+                            }
+                        }
+                        else
+                        {
+                            HGDIOBJ old = ::SelectObject(memDC, n.icon);
+                            ::AlphaBlend(hdc, xCursor, iconY,
+                                         m_iconSizePx, m_iconSizePx,
+                                         memDC, 0, 0, bm.bmWidth, bm.bmHeight,
+                                         bf);
+                            ::SelectObject(memDC, old);
+                        }
+                        ::DeleteDC(memDC);
+                    }
                 }
-                ::SelectObject(memDC, old);
-                ::DeleteDC(memDC);
-                xCursor += kIconSizePx + kCellPad;
+                xCursor += m_iconSizePx + kCellPad;
             }
 
             int textRight = row.right - kRightPad;
@@ -1749,6 +2299,34 @@ void DuiTreeView::OnPaint(HDC hdc, const RECT& rcDirty)
                 textRight = dot.left - kCellPad;
             }
 
+            //—— 右侧辅助文字：放在 status dot 内侧（或贴右边距），按
+            //   实际宽度收缩 textRight，让主 label 自动 ellipsis。
+            if (!n.rightText.IsEmpty())
+            {
+                HFONT useFont = (m_rightTextPt > 0)
+                                ? DuiResMgr::Inst().GetFontByPointSize(
+                                      m_rightTextPt, false)
+                                : DuiResMgr::Inst().GetDefaultFont();
+                HFONT oldFont = useFont
+                                ? (HFONT)::SelectObject(hdc, useFont)
+                                : nullptr;
+                int oldBk = ::SetBkMode(hdc, TRANSPARENT);
+                COLORREF rtClr = selected ? m_clrTextSel : m_clrRightText;
+                COLORREF oldClr = ::SetTextColor(hdc, rtClr);
+                //—— 量字符串实际宽度，避免画太宽的辅助文字
+                SIZE sz = {};
+                ::GetTextExtentPoint32(hdc, n.rightText,
+                                       n.rightText.GetLength(), &sz);
+                RECT rcRt = { textRight - sz.cx, row.top,
+                              textRight, row.bottom };
+                ::DrawText(hdc, n.rightText, -1, &rcRt,
+                           DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                ::SetTextColor(hdc, oldClr);
+                ::SetBkMode(hdc, oldBk);
+                if (oldFont) { ::SelectObject(hdc, oldFont); }
+                textRight = rcRt.left - kCellPad;
+            }
+
             if (!n.label.IsEmpty())
             {
                 HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
@@ -1759,8 +2337,48 @@ void DuiTreeView::OnPaint(HDC hdc, const RECT& rcDirty)
                 RECT rt = row;
                 rt.left  = xCursor;
                 rt.right = textRight;
-                ::DrawText(hdc, n.label, -1, &rt,
-                           DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+                if (n.subLabel.IsEmpty())
+                {
+                    // 单行：主标签垂直居中（保持向后兼容）。
+                    ::DrawText(hdc, n.label, -1, &rt,
+                               DT_LEFT | DT_VCENTER | DT_SINGLELINE
+                               | DT_END_ELLIPSIS | DT_NOPREFIX);
+                }
+                else
+                {
+                    // 两行：主标签上半（贴 mid 线）+ 副标签下半（贴 mid 线）。
+                    // 上下两半各自单行省略，共享 textRight 右边距。
+                    int mid = (rt.top + rt.bottom) / 2;
+                    RECT rtMain = { rt.left, rt.top, rt.right, mid };
+                    RECT rtSub  = { rt.left, mid,   rt.right, rt.bottom };
+
+                    //—— 主标签：贴下沿（DT_BOTTOM）让它靠近 mid 线
+                    ::DrawText(hdc, n.label, -1, &rtMain,
+                               DT_LEFT | DT_BOTTOM | DT_SINGLELINE
+                               | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+                    //—— 副标签：换字体、换颜色（选中态用 m_clrTextSel
+                    //   保持白色统一，否则用 m_clrSubLabelText 浅灰拉层级），
+                    //   贴上沿（DT_TOP）紧挨主标签。
+                    HFONT subFont = DuiResMgr::Inst()
+                                        .GetFontByPointSize(m_subLabelPt, false);
+                    HFONT oldSubFont = subFont
+                                       ? (HFONT)::SelectObject(hdc, subFont)
+                                       : nullptr;
+                    COLORREF subClr = selected ? m_clrTextSel
+                                               : m_clrSubLabelText;
+                    COLORREF oldSubClr = ::SetTextColor(hdc, subClr);
+                    ::DrawText(hdc, n.subLabel, -1, &rtSub,
+                               DT_LEFT | DT_TOP | DT_SINGLELINE
+                               | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    ::SetTextColor(hdc, oldSubClr);
+                    if (oldSubFont)
+                    {
+                        ::SelectObject(hdc, oldSubFont);
+                    }
+                }
+
                 ::SetTextColor(hdc, oldClr);
                 ::SetBkMode(hdc, oldBk);
                 if (oldFont) { ::SelectObject(hdc, oldFont); }
@@ -1836,30 +2454,32 @@ void DuiTreeView::PaintHeader(HDC hdc, const RECT& /*rcDirty*/) const
     };
 
     // Frozen header area: left-aligned, no scroll.
+    // 用 SaveDC + IntersectClipRect + RestoreDC 而不是 SelectClipRgn ——
+    // 后者是替换语义,把外层(如 ScrollView)设的 clip 一起撤销;尤其原本
+    // 还原成 SelectClipRgn(hdc, nullptr) 会完全清空 clip,外层任何 clip
+    // 都被丢掉,内容能画到 m_rcItem 之外。
     {
-        HRGN clip = ::CreateRectRgn(rcHeader.left, rcHeader.top, frozenSplit, rcHeader.bottom);
-        ::SelectClipRgn(hdc, clip);
+        int dcSaved = ::SaveDC(hdc);
+        ::IntersectClipRect(hdc, rcHeader.left, rcHeader.top, frozenSplit, rcHeader.bottom);
         int x = rcHeader.left;
         for (int i = 0; i < m_frozenCols && i < (int)m_columns.size(); ++i)
         {
             paintColHeader(i, x);
             x += m_columns[i].width;
         }
-        ::SelectClipRgn(hdc, nullptr);
-        ::DeleteObject(clip);
+        ::RestoreDC(hdc, dcSaved);
     }
-    // Non-frozen header area: scrolls horizontally.
+    // Non-frozen header area: scrolls horizontally. 同上理由。
     {
-        HRGN clip = ::CreateRectRgn(frozenSplit, rcHeader.top, rcHeader.right, rcHeader.bottom);
-        ::SelectClipRgn(hdc, clip);
+        int dcSaved = ::SaveDC(hdc);
+        ::IntersectClipRect(hdc, frozenSplit, rcHeader.top, rcHeader.right, rcHeader.bottom);
         int x = frozenSplit - m_scrollX;
         for (int i = m_frozenCols; i < (int)m_columns.size(); ++i)
         {
             paintColHeader(i, x);
             x += m_columns[i].width;
         }
-        ::SelectClipRgn(hdc, nullptr);
-        ::DeleteObject(clip);
+        ::RestoreDC(hdc, dcSaved);
     }
 
     // Bottom border under header.
@@ -1939,8 +2559,10 @@ void DuiTreeView::PaintBody(HDC hdc, const RECT& rcDirty) const
             return;
         }
 
-        HRGN clip = ::CreateRectRgn(rcQuad.left, rcQuad.top, rcQuad.right, rcQuad.bottom);
-        ::SelectClipRgn(hdc, clip);
+        // 同 Header 的说明:SaveDC + IntersectClipRect + RestoreDC,避免
+        // 替换语义撤销外层(ScrollView)的 clip。
+        int quadSaved = ::SaveDC(hdc);
+        ::IntersectClipRect(hdc, rcQuad.left, rcQuad.top, rcQuad.right, rcQuad.bottom);
 
         for (int r = rowFrom; r < rowTo && r < (int)m_visible.size(); ++r)
         {
@@ -1952,8 +2574,10 @@ void DuiTreeView::PaintBody(HDC hdc, const RECT& rcDirty) const
             row.top    = yOriginAbs + r * m_rowH;
             row.bottom = row.top + m_rowH;
 
-            bool selected = (n.id == m_curSelId);
-            bool hovered  = (n.id == m_hoverId) && !selected;
+            // selectable=false 的节点不显示选中底色(即便 m_curSelId
+            // 残留指向它);hover 行为也一并跳过,grouping header 不需要 hover 高亮。
+            bool selected = (n.id == m_curSelId) && n.selectable;
+            bool hovered  = (n.id == m_hoverId) && !selected && n.selectable;
             COLORREF bg = m_clrRowBg;
             if (m_zebra && (r & 1) == 1 && !selected) { bg = m_clrZebra; }
             if (selected) { bg = m_clrRowSel; }
@@ -2006,8 +2630,7 @@ void DuiTreeView::PaintBody(HDC hdc, const RECT& rcDirty) const
             FillSolidRect_(hdc, gh, m_clrGrid);
         }
 
-        ::SelectClipRgn(hdc, nullptr);
-        ::DeleteObject(clip);
+        ::RestoreDC(hdc, quadSaved);
     };
 
     int frozenRows = m_frozenRows;
@@ -2094,21 +2717,73 @@ void DuiTreeView::PaintCell(HDC hdc, const RECT& rcCell, const Node& n,
         xCursor += kGlyphStripPx;
         if (n.icon)
         {
-            int iconY = (rcCell.top + rcCell.bottom - kIconSizePx) / 2;
-            HDC memDC = ::CreateCompatibleDC(hdc);
-            HGDIOBJ old = ::SelectObject(memDC, n.icon);
+            // 多列模式 col 0 的 tree icon —— 同样响应 SetIconSize / SetIconCornerRadius
+            // /SetIconUsesAlpha 全局视觉(与单列模式一致)。
+            int iconY = (rcCell.top + rcCell.bottom - m_iconSizePx) / 2;
+
             BITMAP bm = {};
             ::GetObject(n.icon, sizeof(bm), &bm);
-            if (bm.bmWidth > 0 && bm.bmHeight > 0)
+
+            if (!m_iconUsesAlpha)
             {
-                ::SetStretchBltMode(hdc, HALFTONE);
-                ::SetBrushOrgEx(hdc, 0, 0, nullptr);
-                ::StretchBlt(hdc, xCursor, iconY, kIconSizePx, kIconSizePx,
-                             memDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+                //==== 旧路径(向后兼容,m_iconUsesAlpha=false 默认走这里)====
+                // 同单列模式的说明:SaveDC + ExtSelectClipRgn(RGN_AND) + RestoreDC,
+                // 圆角 round rect 相交语义,不撤销外层 clip。
+                int iconClipSaved = -1;
+                if (m_iconCornerRadiusPx > 0)
+                {
+                    int clipR = m_iconCornerRadiusPx;
+                    if (clipR > m_iconSizePx / 2)
+                    {
+                        clipR = m_iconSizePx / 2;
+                    }
+                    iconClipSaved = ::SaveDC(hdc);
+                    HRGN clipRgn = ::CreateRoundRectRgn(
+                        xCursor, iconY,
+                        xCursor + m_iconSizePx + 1,
+                        iconY   + m_iconSizePx + 1,
+                        clipR * 2, clipR * 2);
+                    ::ExtSelectClipRgn(hdc, clipRgn, RGN_AND);
+                    ::DeleteObject(clipRgn);
+                }
+
+                HDC memDC = ::CreateCompatibleDC(hdc);
+                HGDIOBJ old = ::SelectObject(memDC, n.icon);
+                if (bm.bmWidth > 0 && bm.bmHeight > 0)
+                {
+                    ::SetStretchBltMode(hdc, HALFTONE);
+                    ::SetBrushOrgEx(hdc, 0, 0, nullptr);
+                    ::StretchBlt(hdc, xCursor, iconY, m_iconSizePx, m_iconSizePx,
+                                 memDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+                }
+                ::SelectObject(memDC, old);
+                ::DeleteDC(memDC);
+
+                if (iconClipSaved >= 0)
+                {
+                    ::RestoreDC(hdc, iconClipSaved);
+                }
             }
-            ::SelectObject(memDC, old);
-            ::DeleteDC(memDC);
-            xCursor += kIconSizePx + kCellPad;
+            else
+            {
+                //==== 新 alpha 路径(m_iconUsesAlpha=true)====
+                // n.icon 应为 32bpp premultiplied alpha;圆角在位图里已自绘,
+                // DuiTreeView 不做 HRGN clip。SetIconCornerRadius 在本路径
+                // 下被忽略。多列分支无灰显概念,直接 AlphaBlend。
+                if (bm.bmWidth > 0 && bm.bmHeight > 0)
+                {
+                    BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+                    HDC memDC = ::CreateCompatibleDC(hdc);
+                    HGDIOBJ old = ::SelectObject(memDC, n.icon);
+                    ::AlphaBlend(hdc, xCursor, iconY,
+                                 m_iconSizePx, m_iconSizePx,
+                                 memDC, 0, 0, bm.bmWidth, bm.bmHeight, bf);
+                    ::SelectObject(memDC, old);
+                    ::DeleteDC(memDC);
+                }
+            }
+
+            xCursor += m_iconSizePx + kCellPad;
         }
         else
         {
@@ -2361,6 +3036,17 @@ bool DuiTreeView::OnLButtonDown(POINT pt, UINT mkFlags)
         CommitEdit();
     }
 
+    // Custom-node mode: 落在 custom ctrl 内容区,先把事件转给 ctrl;
+    // ctrl 消耗(返 true)则不再走 tree 默认逻辑(包括选中行)。
+    if (h.zone == HZ_BODY_CELL)
+    {
+        DuiControl* customCtrl = LayoutCustomCtrlAtRow_(h);
+        if (customCtrl && customCtrl->OnLButtonDown(pt, mkFlags))
+        {
+            return true;
+        }
+    }
+
     if (h.zone == HZ_HEADER_SEP)
     {
         // Begin column resize drag.
@@ -2507,7 +3193,21 @@ bool DuiTreeView::OnLButtonDown(POINT pt, UINT mkFlags)
         }
         else
         {
-            SetCurSel(h.itemId, /*notify=*/true);
+            // selectable=false 的节点(grouping header):点击只 toggle 展开,
+            // 不变选中态。这样 "我的好友" / "服务号" 这类分组标题点击不会
+            // 出现选中底色,与 design 一致。
+            int nodeIdx = IndexOf(h.itemId);
+            if (nodeIdx >= 0 && !m_nodes[nodeIdx].selectable)
+            {
+                if (HasChildrenIdx(nodeIdx))
+                {
+                    SetExpanded(h.itemId, !m_nodes[nodeIdx].expanded);
+                }
+            }
+            else
+            {
+                SetCurSel(h.itemId, /*notify=*/true);
+            }
         }
         return true;
     }
@@ -2526,7 +3226,7 @@ bool DuiTreeView::OnLButtonDown(POINT pt, UINT mkFlags)
     return false;
 }
 
-bool DuiTreeView::OnLButtonUp(POINT pt, UINT /*mkFlags*/)
+bool DuiTreeView::OnLButtonUp(POINT pt, UINT mkFlags)
 {
     if (m_resizing)
     {
@@ -2535,6 +3235,17 @@ bool DuiTreeView::OnLButtonUp(POINT pt, UINT /*mkFlags*/)
         return true;
     }
     HitInfo h = HitTest_(pt);
+
+    // Custom-node mode: 转发给 ctrl;ctrl 消耗则跳过 DUIN_CLICK fire。
+    if (h.zone == HZ_BODY_CELL)
+    {
+        DuiControl* customCtrl = LayoutCustomCtrlAtRow_(h);
+        if (customCtrl && customCtrl->OnLButtonUp(pt, mkFlags))
+        {
+            return true;
+        }
+    }
+
     if (h.zone == HZ_BODY_CELL && !m_editor)
     {
         NotifyParent(DUIN_CLICK, (LPARAM)h.itemId);
@@ -2542,9 +3253,20 @@ bool DuiTreeView::OnLButtonUp(POINT pt, UINT /*mkFlags*/)
     return true;
 }
 
-bool DuiTreeView::OnLButtonDblClk(POINT pt, UINT /*mkFlags*/)
+bool DuiTreeView::OnLButtonDblClk(POINT pt, UINT mkFlags)
 {
     HitInfo h = HitTest_(pt);
+
+    // Custom-node mode: 转发给 ctrl;ctrl 消耗则跳过 DUIN_DBLCLK fire / 编辑触发。
+    if (h.zone == HZ_BODY_CELL)
+    {
+        DuiControl* customCtrl = LayoutCustomCtrlAtRow_(h);
+        if (customCtrl && customCtrl->OnLButtonDblClk(pt, mkFlags))
+        {
+            return true;
+        }
+    }
+
     if (h.zone == HZ_HEADER_SEP)
     {
         // Auto-fit: scan visible rows and take widest text in this column.
@@ -2586,7 +3308,7 @@ bool DuiTreeView::OnLButtonDblClk(POINT pt, UINT /*mkFlags*/)
             {
                 if (n.depth > maxDepth) { maxDepth = n.depth; }
             }
-            extra += maxDepth * m_indent + kGlyphStripPx + kIconSizePx + kCellPad;
+            extra += maxDepth * m_indent + kGlyphStripPx + m_iconSizePx + kCellPad;
         }
         int newW = maxW + extra;
         if (newW < m_columns[h.col].minWidth) { newW = m_columns[h.col].minWidth; }
@@ -2612,9 +3334,20 @@ bool DuiTreeView::OnLButtonDblClk(POINT pt, UINT /*mkFlags*/)
     return false;
 }
 
-bool DuiTreeView::OnRButtonDown(POINT pt, UINT /*mkFlags*/)
+bool DuiTreeView::OnRButtonDown(POINT pt, UINT mkFlags)
 {
     HitInfo h = HitTest_(pt);
+
+    // Custom-node mode: 转发给 ctrl;ctrl 消耗则跳过 DUITVN_RCLICK fire。
+    if (h.zone == HZ_BODY_CELL)
+    {
+        DuiControl* customCtrl = LayoutCustomCtrlAtRow_(h);
+        if (customCtrl && customCtrl->OnRButtonDown(pt, mkFlags))
+        {
+            return true;
+        }
+    }
+
     if (h.zone == HZ_HEADER_TEXT || h.zone == HZ_HEADER_SEP)
     {
         DuiTreeCellNotify n{};
@@ -2640,7 +3373,7 @@ bool DuiTreeView::OnRButtonDown(POINT pt, UINT /*mkFlags*/)
     return false;
 }
 
-bool DuiTreeView::OnMouseMove(POINT pt, UINT /*mkFlags*/)
+bool DuiTreeView::OnMouseMove(POINT pt, UINT mkFlags)
 {
     if (m_resizing && m_resizeCol >= 0 && m_resizeCol < (int)m_columns.size())
     {
@@ -2656,11 +3389,36 @@ bool DuiTreeView::OnMouseMove(POINT pt, UINT /*mkFlags*/)
         return true;
     }
     HitInfo h = HitTest_(pt);
+
+    // Custom-node mode: 转发 mouse move 给 ctrl(让 ctrl 维护自己的 hover 态)。
+    // 不论 ctrl 是否消耗,tree 都继续更新行级 m_hoverId 让行高亮正常工作。
+    if (h.zone == HZ_BODY_CELL)
+    {
+        DuiControl* customCtrl = LayoutCustomCtrlAtRow_(h);
+        if (customCtrl)
+        {
+            customCtrl->OnMouseMove(pt, mkFlags);
+        }
+    }
+
     int newHover = (h.zone == HZ_BODY_CELL || h.zone == HZ_BODY_GLYPH) ? h.itemId : -1;
     if (newHover != m_hoverId)
     {
+        //—— 先记下旧值再更新 m_hoverId，避免 NotifyParent 期间业务 handler
+        //   读 GetHoverId（如果将来加 API）拿到错位值。
+        int oldHover = m_hoverId;
         m_hoverId = newHover;
         Invalidate();
+        //—— 同步 fire hover notify：离开旧节点 + 进入新节点。无延时，
+        //   业务侧若要悬停弹卡片自己用 SetTimer 加延时。
+        if (oldHover != -1)
+        {
+            NotifyParent((UINT)DUITVN_HOVER_LEAVE, (LPARAM)oldHover);
+        }
+        if (newHover != -1)
+        {
+            NotifyParent((UINT)DUITVN_HOVER_ENTER, (LPARAM)newHover);
+        }
     }
     return false;
 }
@@ -2669,8 +3427,11 @@ bool DuiTreeView::OnMouseLeave()
 {
     if (m_hoverId != -1)
     {
+        int oldHover = m_hoverId;
         m_hoverId = -1;
         Invalidate();
+        //—— 鼠标离开控件：fire LEAVE，让业务侧关掉悬浮卡片
+        NotifyParent((UINT)DUITVN_HOVER_LEAVE, (LPARAM)oldHover);
     }
     return false;
 }
@@ -2702,6 +3463,19 @@ bool DuiTreeView::OnSetCursor(POINT pt)
         ::SetCursor(::LoadCursor(nullptr, IDC_SIZEWE));
         return true;
     }
+
+    // Custom-node mode: 转发 cursor 设置给 ctrl(让 ctrl 控制自己的鼠标光标,
+    // 如内含按钮 / 链接区时显示手型)。ctrl 返 true 表示已设置,tree 不再
+    // 尝试默认光标。
+    if (h.zone == HZ_BODY_CELL)
+    {
+        DuiControl* customCtrl = LayoutCustomCtrlAtRow_(h);
+        if (customCtrl && customCtrl->OnSetCursor(pt))
+        {
+            return true;
+        }
+    }
+
     if (h.zone == HZ_BODY_CELL)
     {
         const Cell* c = TryGetCell(IndexOf(h.itemId), h.col);
