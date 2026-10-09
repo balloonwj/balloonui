@@ -17,7 +17,7 @@ namespace balloonwjui {
 namespace {
 
 // ---- Push-button brand palette (StylePushButton) ----------------------------
-// Colors match the project-wide brand blue specified in CLAUDE.md.
+// Normal fill is the brand blue #2D6CDF used for primary buttons across the UI.
 // Hover is a deliberate "one step darker" of normal (#2D6CDF -> #2559B8) and
 // pressed steps darker still (#1E4A99) so the user feels positive feedback
 // on hold without the button blending into the dialog chrome.
@@ -80,7 +80,7 @@ const COLORREF kIconDiamondStroke  = RGB( 40,  80, 160);
 
 // ---- Layout constants -------------------------------------------------------
 // Corner radius (px) for the rounded-rect background of buttons without a
-// 9-grid bitmap. 8px matches the project-wide button radius from CLAUDE.md.
+// 9-grid bitmap. 8px is the button corner radius used across the UI.
 const int kCornerRadiusPx = 8;
 // Inner glyph square edge (px) for radio / checkbox / icon - 16x16 reads
 // well at the default 9pt font without dwarfing the label.
