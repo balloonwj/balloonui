@@ -775,6 +775,15 @@ static bool IsDarkNeutral(COLORREF c)
     return r < kDark && g < kDark && b < kDark && abs(r - g) <= kNeutral && abs(g - b) <= kNeutral;
 }
 
+// 像素是否明显偏蓝（纯蓝主文字的笔画）。白底上的纯蓝文字，不论是否经 ClearType 按子像素混合，
+// 蓝通道在底色与文字里都是 255、混合后仍是 255，只有红、绿通道随笔画覆盖程度变小
+static bool IsBluish(COLORREF c)
+{
+    const int kStrong = 150;   // 蓝色分量至少这么大
+    const int kWeak = 100;     // 红、绿分量至多这么大
+    return GetBValue(c) > kStrong && GetRValue(c) < kWeak && GetGValue(c) < kWeak;
+}
+
 // 图标与副文字跟着条目走：插入、删除、移动、改主文字都不会错位，越界读写安全
 static Result Test_LB_IconSubTextFollowItems()
 {
@@ -901,6 +910,11 @@ static Result Test_LB_IconPainted()
 }
 
 // 副文字画在主文字右侧、用副文字颜色
+//
+// 主文字用纯蓝、副文字用纯红、底色固定为白色（2026-10-09 起）。原先主文字是黑色：系统开着
+// ClearType 时，黑字笔画边缘的彩色镶边里有满足「偏红」条件的像素，被当成了副文字，用例结果
+// 随系统的字体平滑设置变化（实测最左的「红色」像素落在主文字中间）。白底上的纯蓝文字蓝通道
+// 恒为 255，不可能被判成偏红；纯红副文字红通道恒为 255，也不可能被判成偏蓝。
 static Result Test_LB_SubTextPainted()
 {
     const int kW = 300;       // 列表宽，单位：像素
@@ -908,7 +922,8 @@ static Result Test_LB_SubTextPainted()
     const int kBorder = 2;    // 上下边框共占的像素
     DuiListBox lb;
     lb.SetItemHeight(kRowH);
-    lb.SetTextColor(RGB(0, 0, 0));
+    lb.SetBgColor(RGB(255, 255, 255));
+    lb.SetTextColor(RGB(0, 0, 255));
     lb.SetSubTextColor(RGB(255, 0, 0));
     lb.AddItem(_T("MMMM"));
     lb.SetItemSubText(0, _T("NNNN"));
@@ -922,7 +937,7 @@ static Result Test_LB_SubTextPainted()
     }
     lb.OnPaint(dib.m_dc, rc);
     int minRedX = kW;
-    int maxDarkX = -1;
+    int maxBlueX = -1;
     for (int y = 1; y < 1 + kRowH; ++y)
     {
         for (int x = 2; x < kW - 2; ++x)
@@ -932,16 +947,16 @@ static Result Test_LB_SubTextPainted()
             {
                 minRedX = x;
             }
-            else if (IsDarkNeutral(c) && x > maxDarkX)
+            else if (IsBluish(c) && x > maxBlueX)
             {
-                maxDarkX = x;
+                maxBlueX = x;
             }
         }
     }
     DestroyTestDib(dib);
-    EXPECT_INT((int)(maxDarkX >= 0), 1, _T("LBSub/mainPainted"));
+    EXPECT_INT((int)(maxBlueX >= 0), 1, _T("LBSub/mainPainted"));
     EXPECT_INT((int)(minRedX < kW), 1, _T("LBSub/subPainted"));
-    EXPECT_INT((int)(minRedX > maxDarkX), 1, _T("LBSub/subRightOfMain"));
+    EXPECT_INT((int)(minRedX > maxBlueX), 1, _T("LBSub/subRightOfMain"));
     return OK(_T("LB_SubTextPainted"));
 }
 
