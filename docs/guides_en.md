@@ -1446,7 +1446,7 @@ host.SetRoot(std::move(dock));    // Dock as the top-level; when nesting, use ou
 Static text + hyperlinks. Two modes (orthogonal to the **selectable** capability):
 
 - `ModeText` (default): plain text.
-- `ModeLink`: underline + hover highlight + IDC_HAND cursor + clicking fires `DUIN_CLICK`, then, with `SetAutoNavigate`, opens the URL via `ShellExecute`.
+- `ModeLink`: underline + hover highlight + IDC_HAND cursor + clicking fires `DUIN_CLICK`, then, with `SetAutoNavigate`, opens the URL via `ShellExecute`; it repaints itself when the hover color changes.
 
 Supports **multi-line wrap** (`SetWordWrap(true)`) + **measure-height** (`MeasureHeight(width)`) — both are necessary for chat bubbles / streaming lists.
 
@@ -1628,7 +1628,7 @@ host.SetRoot(std::move(root));
 | `SetAntiAlias(bool) / IsAntiAlias()` | Whether the outer frame and the Checkbox box glyph render anti-aliased (default `true`). When off, falls back to GDI `::RoundRect` (8px corners show stair-stepping); when on, uses `DuiAA::FillRoundRect`. The Radio circle glyph is always AA, independent of this toggle. |
 | `SetFont(HFONT) / GetFont()` | Custom text font created by the caller. HFONT is caller-owned; the control never deletes it, it **does not follow DPI changes**, and setting it cancels `SetTextPointSize`. `nullptr` (default) falls back to the default font for the control's DPI (YaHei 9pt). `GetFont()` returns the explicitly set font (for a point size, the instance for the current DPI), or `nullptr` when neither is set. |
 | `SetTextPointSize(int pt, bool bold = false)` | Set the size by (pt, bold) and cancel any `SetFont`. The control only records the point size and fetches a cached font from `DuiResMgr` for its window's DPI when painting, so the size follows DPI changes. `pt <= 0` restores the default font; read back with `GetTextPointSize()` / `IsTextBold()`. |
-| `SetLeadingIcon(HBITMAP) / GetLeadingIcon()` | Bitmap drawn to the left of the text. **Effective only on `StylePushButton`**; other styles ignore it. HBITMAP is caller-owned. Drawn via `::AlphaBlend`, supporting 32bpp premultiplied alpha. The icon + gap + text group is aligned by `m_dtFlags` (default horizontally centered). |
+| `SetLeadingIcon(HBITMAP) / GetLeadingIcon()` | Bitmap drawn to the left of the text. **Effective only on `StylePushButton`**; other styles ignore it. HBITMAP is caller-owned. Drawn via `::AlphaBlend`, supporting 32bpp premultiplied alpha. The icon + gap + text group is aligned by `m_dtFlags` (default horizontally centered). With an icon and no text the icon is centered in the button (no left padding is kept), so a narrow icon-only button does not look shifted to the right. |
 | `SetLeadingIconSize(int px)` / `SetLeadingIconGap(int px)` | Icon edge length (default `16`; `<= 0` clamped to 1) / gap between icon and text (default `6`; `< 0` clamped to 0). |
 
 #### Events
@@ -1636,7 +1636,10 @@ host.SetRoot(std::move(root));
 | code | When it fires | extra (LPARAM) |
 | --- | --- | --- |
 | `DUIN_CLICK` | All Styles — mouse pressed inside the button AND released inside (moving out then releasing does <u>not</u> fire). | 0 |
+| `DUIN_DBLCLK` | Two presses within the system double-click time. Like a standard Windows button, the second press counts as another press, so you get `DUIN_CLICK`, `DUIN_DBLCLK`, `DUIN_CLICK` in that order: two quick clicks are two clicks; subclasses that need "double-click to open" handle `DUIN_DBLCLK` as well. | 0 |
 | `DUIN_VALUECHANGED` | Checkbox / Radio state changes. `SetCheck(_, true)` also fires it; `SetCheck(_, false)` does not. | new checked state: `1`=checked / `0`=unchecked |
+
+**Hover**: the button repaints itself when the mouse enters or leaves, so the hover colors appear and disappear immediately. `DuiButton` subclasses that paint hover effects from `IsHover()` need nothing more. Owner-drawn controls deriving straight from `DuiControl` must override `OnMouseEnter` / `OnMouseLeave` themselves (call the base, then `Invalidate()`) — the `DuiControl` versions only update the hover flag and do not repaint.
 
 ```
 // In the parent dialog:
@@ -2027,6 +2030,7 @@ Plain-text single-/multi-line text box with **no window of its own**. It is a su
 | Password / multi-line / read-only / word-wrap can be toggled at any time at run time | In a windowless design these are just property bits that take effect immediately; in the old design they were window style bits fixed at creation time, so changing one meant destroying and rebuilding the whole child window |
 | Many instances can live in one window | It consumes no window handles |
 | No `EnsureCreated` needed | The text engine does not depend on any window; it is set up in the constructor, so the control can take text and be measured immediately |
+| The selection never goes past the end of the text | The constructor switches to plain-text mode (`SetPlainTextMode(true)`): the whole text has one format, the invisible end-of-paragraph mark cannot be selected, and no extra highlight appears after the text |
 
 **Typical parent:** any layout container (VBox / HBox / Grid / GroupBox content area / Splitter pane / Dock child area). Attach it and it works — there is no extra creation step.
 
@@ -2258,6 +2262,15 @@ rt->SetAutoGrowLines(1, 5);          // one line minimum, five maximum, then scr
 inputRow->AddChild(std::move(rt), balloonwjui::DuiLayout::Hint().Auto());
 ```
 
+#### Plain-text mode and the caret
+
+| Method | Description |
+| --- | --- |
+| `SetPlainTextMode(bool)` / `IsPlainTextMode()` | Switches between plain-text and rich-text mode. This class is rich text by default; `DuiEdit` switches to plain text in its constructor. In plain-text mode the whole text has one format and the selection cannot go past the end of the text; in rich-text mode the invisible end-of-paragraph mark can be selected, which shows as a small extra highlight after the text. **The mode can only change while the document is empty** (an engine restriction), so call it after construction and before writing any text; false means the engine refused. |
+| `SetShowCaret(bool)` / `IsShowCaret()` | Whether the insertion caret is drawn (on by default). When off, the caret still tracks the insertion point and is merely not drawn, so the IME candidate window stays in place. |
+
+**The caret is drawn by the control**: the visible bar is painted into the back buffer (inverting the pixels in the caret rectangle, readable on any background) and its blinking is driven by the control. A system caret is still created and follows the insertion point for the IME candidate window and accessibility tools such as screen readers and magnifiers, but it is created from an all-zero monochrome bitmap and leaves no pixels on screen. Showing the system caret directly conflicts with painting into a back buffer and copying it to the screen in one go: the caret would light only its upper or lower half from time to time. When the window DPI changes, a control using the library's default font resets its default character format for the new DPI; a font set through `SetDefaultFontFromHFONT` is the caller's responsibility.
+
 #### Context menu
 
 A full menu comes for free: in read-write mode undo / redo / (separator) / cut / copy / paste / paste as plain text / delete / (separator) / select all; in read-only mode just copy and select all, each item greyed out according to the current state. Both the right mouse button and the keyboard Menu key (`Shift+F10`) open it. Customisation comes in three layers — pick the cheapest one that covers your need:
@@ -2278,6 +2291,16 @@ void MyEdit::OnBuildContextMenu(std::vector<balloonwjui::DuiRichEditMenuItem>& i
 
 // Layer 3 — take over completely: same virtual, do not call the base, fill from empty.
 // Or rt->SetContextMenuEnabled(false) and pop whatever you like from OnRButtonDown.
+```
+
+**Translating the menu**: the texts of the built-in commands (Undo, Cut, Copy, ... — the `DuiEdit` context menu too) go through `ResolveText` in `DuiTextResolver.h`. Register a translation callback at startup, before creating any window, to show them in the current UI language; without one they are shown in Chinese as written. The pointer the callback returns must stay valid for the life of the process (or module); `NULL` keeps the original text. The callback lives in a function-local static in the header, so the exe and every DLL that links balloonui statically each have their own copy and must register separately.
+
+```
+static LPCTSTR ResolveBalloonUiText(LPCTSTR text)
+{
+    return MyTranslate(text);   // the host's own translation function
+}
+balloonwjui::SetTextResolver(&ResolveBalloonUiText);
 ```
 
 #### Creating from XML
@@ -3237,7 +3260,7 @@ These APIs apply in single-column mode. Typical scenarios: grouped buddy lists, 
 
 **Greyed icon**
 
-`SetItemIconGrayed(id, true)` paints the icon through an NTSC luma conversion, leaving the original HBITMAP untouched. Pure GDI implementation (no GDI+ dependency); per-pixel walk with alpha preserved.
+`SetItemIconGrayed(id, true)` paints the icon through an NTSC luma conversion, leaving the original HBITMAP untouched. Pure GDI implementation (no GDI+ dependency); per-pixel walk with alpha preserved. Each node is converted only once, the first time it is painted, and the gray bitmap is cached for later paints; it is released when the icon changes, graying is turned off, the node is removed, on `Clear` and on destruction. In alpha mode the icon holds premultiplied values and the gray level is computed from them directly, without multiplying by alpha again (before 2026-10-04 alpha was applied twice and semi-transparent edges came out too dark). `GetGrayIconCacheCount()` / `GetGrayIconConversionCount()` let unit tests check "converted once" and "no leak".
 
 **Expanded-state snapshot (life-saver API)**
 
@@ -3631,8 +3654,13 @@ RECT anchorScreen = m_emojiBtn->GetRect();   // host client coordinates, convert
 ::ClientToScreen(m_hWnd, ((LPPOINT)&anchorScreen) + 1);
 
 m_pop.SetContent(BuildEmojiPanel());
+m_pop.SetSize(320, 240);                                   // outer popup size, 200×200 by default
+m_pop.SetEdge(balloonwjui::DuiPopupHost::EdgeBelow);       // prefer below the anchor, flips above when there is no room
+m_pop.SetDismissCallback(&MyDlg::OnPopupDismiss, this);  // called on every close, with the reason
 m_pop.Show(anchorScreen, m_hWnd);     // owner = m_hWnd; events bubble to the dialog
 ```
+
+**Auto-close and shadow**: Esc, or the popup losing activation (e.g. a click outside it), closes it automatically and calls the dismiss callback with `ReasonEscape` / `ReasonLostFocus`; `Hide()` from code reports `ReasonProgrammatic`. Closing only hides the window: the window and its content stay alive and the next `Show` reuses them. The popup registers its own window class `__DuiPopupHost__` (with `CS_DROPSHADOW` and `CS_SAVEBITS`), so it has a system drop shadow, and the pixels it covered are restored by the system when it closes, so windows below need no repaint.
 
 **No XML path**: the popup itself (border / shadow / anchor) goes through C++; its internal content subtree <u>can</u> be parsed by `builder.FromString(...)` and handed to `SetContent`.
 
@@ -3658,6 +3686,14 @@ balloonwjui::DuiToolTipMgr::Inst().Register(buttonRaw, _T("Save the file"));
 // When no longer needed:
 balloonwjui::DuiToolTipMgr::Inst().Unregister(buttonRaw);
 ```
+
+**Multi-line tips**: put `\n` in the text to break lines; lines are left-aligned, the popup is as wide as the longest line and as tall as the line count × line height. Text without a line break is laid out on a single line as before.
+
+```
+balloonwjui::DuiToolTipMgr::Inst().Register(buttonRaw, _T("Save the file\nShortcut: Ctrl+S"));
+```
+
+**Delay and font**: the tip appears after the mouse rests for 500 ms by default; change it with `DuiToolTipMgr::Inst().SetDelay(ms)`. The popup takes its font and measures its size with the DPI of the monitor it pops up on, so the text size is right on monitors with different scaling.
 
 **No XML path**: tooltips are registered via an imperative API; there's no "attach to control tree" step, so they don't participate in the XML builder.
 
@@ -3892,6 +3928,14 @@ Different inputs take different routes based on "who should feel the feedback":
 
 **Legacy bug fix**: an earlier `OnMouseWheel` used the `m_pFocus ? m_pFocus : HitTopMost(pt)` fallback, which caused the classic bug "after a list got focus from a click, moving the mouse elsewhere still scrolls the original list." The current implementation drops the focus-first path; callers don't need to do anything extra. If you really do want "the focus container takes over all wheel events" (e.g. a keyboard-driven content editor), override `OnMouseWheel` in your host subclass and force it through the `m_pFocus` branch.
 
+#### Double clicks
+
+Both window classes, `__DuiHost__` and `__DuiFrameWindow__`, carry `CS_DBLCLKS`: within the system double-click time the second press arrives as `WM_LBUTTONDBLCLK`, the host passes it to the hit control's `OnLButtonDblClk`, and controls fire `DUIN_DBLCLK` from there by default — nothing to set up. `EnableDoubleClick(true)` turns on the host's own double-click synthesis, which only matters for a host whose window class lacks `CS_DBLCLKS` (e.g. one attached to another class through `SubclassWindow`); it has no effect on the two classes above.
+
+#### DPI changes
+
+When the window is created the host takes the DPI of its monitor (`GetDpi()`; `HasWindowDpi()` is true from then on). When the window is dragged to a monitor with a different scale and `WM_DPICHANGED` arrives, the host records the new DPI; calls `OnDpiChanged(dpi)` on the whole control tree, parents before children, so controls that cached fonts or sizes per DPI can refresh them; moves the window to the rectangle the system suggests; and re-lays out and repaints the whole tree level by level. Controls that fetch fonts through `DuiControl::GetDefaultFont()` and friends (which use the window's DPI) follow automatically and need not handle the message themselves.
+
 <a id="DuiFrameWindow"></a>
 
 ### DuiFrameWindow
@@ -3933,7 +3977,9 @@ frame.ShowWindow(nCmdShow);
 
 |   |   |
 | --- | --- |
-| `SetTitle / SetIcon` | Title text / left-side icon. |
+| `Create(parent, rect, name, style, exStyle)` | Creates the window. Same parameters as ATL's `CWindowImpl::Create`, but it registers this class's own window class `__DuiFrameWindow__` (`CS_HREDRAW \| CS_VREDRAW \| CS_DBLCLKS`). A window class a subclass declares with `DECLARE_WND_CLASS` does not take effect. |
+| `SetTitle / SetIcon` | Title text / left-side icon. Call `SetTitle` after `Create`; otherwise the system title shown in the taskbar and Alt+Tab is not updated. |
+| `ResizeClient(w, h)` | Sets the **whole-window** size in pixels, title bar included — this class removes the system non-client area, so the client area is the whole window; `-1` keeps that dimension. Do <u>not</u> call it through a `CWindow*` / `CWindow&`: ATL's function of the same name is not virtual, so you would get the ATL version, which adds a system title bar and border for the window style and makes the window larger than requested. `SetMinSize` is a whole-window size too. |
 | `SetButtons(min, max, close)` | Which caption buttons are visible. |
 | `SetTitleBarHeight(int)` | **Title-bar height, default 36 px**, minimum 18. Typical values: 32 (tighter, the old default), 36 (balanced, current default), 40 (pairs well with a 9-grid gradient title bar). |
 | `SetBorderPx(int)` | **Resize-grip width, default 8 px** (96-dpi logical pixels; scaled at runtime by monitor DPI: 125% → 10 physical px, 150% → 12 physical px). Set to 0 = no edge-resize allowed. |
@@ -3953,7 +3999,9 @@ frame.ShowWindow(nCmdShow);
 
 The `DUIN_CLICK` events from the three caption buttons (min / max / close) are **automatically translated** by `DuiFrameWindow` internally into `WM_SYSCOMMAND` (`SC_MINIMIZE / SC_MAXIMIZE / SC_RESTORE / SC_CLOSE`); the app <u>does not</u> need to listen for them. To block closing, handle `WM_CLOSE` as usual.
 
-Client-area child-control events are routed via `WM_DUI_NOTIFY` to the frame window itself (i.e. `m_hWnd`) as usual.
+Client-area child-control events are routed via `WM_DUI_NOTIFY` to the frame window itself (i.e. `m_hWnd`) as usual. A subclass handler must set `bHandled` to `FALSE` for notifications it does not handle, so the base class can handle the title bar buttons.
+
+**Do not use control ids 1 – 3**: the title bar's minimize / maximize / close buttons have `ctrlId` 1 / 2 / 3, and the base class recognizes them by `ctrlId`. A click from a client-area control with id 1 – 3 that the subclass does not intercept is taken for a title bar button, and the window minimizes, maximizes or closes.
 
 | code | Fires when | extra |
 | --- | --- | --- |
@@ -4210,6 +4258,34 @@ GDI+ is initialized lazily on the first call (the token lives for the process li
 *Left → right: brand / deep / online / away / busy / off. Default control colors read directly from these constants.*
 
 A singleton class (`DuiTheme::Inst()`) holding one palette by slot: brand colors (`BrandPrimary` / `BrandHover` / `BrandPressed` ...), text colors, surface colors, border colors, row hover / selection colors, status colors (`StatusOnline` / `StatusAway` / `StatusBusy` / `StatusOffline`) and so on. `Get(slot)` reads a color, `Set(slot, c)` changes one, `ApplyPreset(Light / Dark / HighContrast)` switches the whole palette; `SubscribeChange` registers a callback fired after the palette changes. It also keeps the default font face (`SetDefaultFontFace` / `GetDefaultFontFace`, Microsoft YaHei by default), which `DuiResMgr` reads when it creates fonts.
+
+<a id="DuiDropTarget"></a>
+
+### DuiDropTargetHelper — OLE drop target
+
+Registers a window as an OLE drop target that accepts files dragged from Explorer / the desktop (`CF_HDROP`) or bitmaps dragged from other applications (`CF_BITMAP`). The caller owns a `DuiDropTargetHelper` (usually a window member), calls `Register(hwnd)` once the window exists and `Unregister()` before the window goes away. `::OleInitialize` must have been called in the process.
+
+```
+m_drop.SetCallbacks(
+    [this](const std::vector<CString>& paths) { SendFiles(paths); },
+    [this](HBITMAP hbm)
+    {
+        // hbm is valid only during this callback: copy it to keep it (LR_CREATEDIBSECTION forces a real copy)
+        HBITMAP copy = (HBITMAP)::CopyImage(hbm, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+        PasteImage(copy);   // the copy belongs to the caller, who DeleteObject()s it
+    });
+m_drop.Register(m_hWnd);
+// Before the window is destroyed: m_drop.Unregister();
+```
+
+#### Key API
+
+| Method | Description |
+| --- | --- |
+| `Register(hwnd)` / `Unregister()` | Registers / revokes the drop target. `Unregister` discards the installed callbacks together with the internal object; install them again before registering again. |
+| `SetCallbacks(onFiles, onBitmap)` | Drop callbacks, called on the UI thread. The `HBITMAP` the bitmap callback receives is valid <u>only during the callback</u>: it is the drag source's own bitmap and is released as soon as the callback returns. To use it afterwards, copy it inside the callback with `CopyImage` and `LR_CREATEDIBSECTION`; the copy belongs to the caller. Do <u>not</u> `DeleteObject` the parameter itself. |
+| `SetDragCallbacks(onEnter, onOver, onLeave)` | Callbacks during the drag, with coordinates already converted to this window's client area. `onEnter` / `onOver` return false to refuse the drop / mark the current position as not droppable (the cursor shows the no-drop sign); `onLeave` is also called once after a drop, so hiding a hover hint needs only one place. |
+| `SetFilesAtPointCallback(onFilesAtPoint)` | A file callback that also gets the drop point. Once installed, a drop calls only this one and not the file callback from `SetCallbacks`; the bitmap callback is unaffected. |
 
 <a id="DuiNotify"></a>
 

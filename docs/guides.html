@@ -403,6 +403,7 @@
         <li><a href="#DuiDpi">DuiDpi</a></li>
         <li><a href="#DuiPaintAA">DuiPaintAA</a></li>
         <li><a href="#DuiTheme">DuiTheme</a></li>
+        <li><a href="#DuiDropTarget">拖放接收</a></li>
         <li><a href="#DuiNotify">通知机制</a></li>
       </ul>
     </li>
@@ -1800,7 +1801,7 @@ host.SetRoot(std::move(dock));    // dock 当顶层；嵌套时改 outer-&gt;Add
   <p>静态文本 + 超链接。两种模式（与<b>可选中</b>能力正交）：</p>
   <ul>
     <li><code>ModeText</code>（默认）：纯文本</li>
-    <li><code>ModeLink</code>：下划线 + hover 高亮 + IDC_HAND 光标 + 点击发 <code>DUIN_CLICK</code>，开了 <code>SetAutoNavigate</code> 时随后再用 ShellExecute 打开网址</li>
+    <li><code>ModeLink</code>：下划线 + hover 高亮 + IDC_HAND 光标 + 点击发 <code>DUIN_CLICK</code>，开了 <code>SetAutoNavigate</code> 时随后再用 ShellExecute 打开网址；悬停变色时自行重画</li>
   </ul>
   <p>支持 <b>多行 wrap</b>（<code>SetWordWrap(true)</code>）+ <b>测高</b>（<code>MeasureHeight(width)</code>）— 这是聊天气泡 / 流式列表所必需。</p>
   <p>支持 <b>可选中</b>（<code>SetSelectable(true)</code>）：鼠标拖选高亮 + <code>Ctrl+C</code> 复制 + <code>Ctrl+A</code> 全选；空选区下 <code>Ctrl+C</code> 复制整段。<b>仅单行模式有效</b>（与 <code>SetWordWrap(true)</code> 共存时本能力自动失效）。典型用途：详情页 / 个人资料的只读值字段，让用户能直接复制不必"先编辑再粘贴"。</p>
@@ -1955,15 +1956,17 @@ host.SetRoot(std::move(root));
     <tr><td><code>SetAntiAlias(bool) / IsAntiAlias()</code></td><td>外框 / Checkbox 方框 glyph 是否走抗锯齿绘制（默认 <code>true</code>）。关时退回 GDI <code>::RoundRect</code> 兜底（8px 圆角可见锯齿）；开时走 <code>DuiAA::FillRoundRect</code>。Radio 圆形 glyph 始终 AA，与该开关无关</td></tr>
     <tr><td><code>SetFont(HFONT) / GetFont()</code></td><td>设置调用方自己创建的字体。HFONT caller-owned，控件不释放，<b>不随 DPI 变化</b>，并撤销 <code>SetTextPointSize</code> 设的字号。<code>nullptr</code>（默认）走按控件 DPI 取的默认字体（YaHei 9pt）。<code>GetFont()</code> 返回显式设定的字体（按磅值设的返回当前 DPI 下取到的那一份），都没设时返回 <code>nullptr</code></td></tr>
     <tr><td><code>SetTextPointSize(int pt, bool bold = false)</code></td><td>按磅值 + 粗细设字号，并撤销 <code>SetFont</code> 设的字体。控件只记磅值，绘制时按所在窗口的 DPI 向 <code>DuiResMgr</code> 现取缓存字体，字号随 DPI 变化。<code>pt &lt;= 0</code> 恢复默认字体；<code>GetTextPointSize()</code> / <code>IsTextBold()</code> 读回</td></tr>
-    <tr><td><code>SetLeadingIcon(HBITMAP) / GetLeadingIcon()</code></td><td>设置文字左侧图标位图。<b>仅 <code>StylePushButton</code> 生效</b>；其它 Style 忽略。HBITMAP caller-owned。图标走 <code>::AlphaBlend</code>，支持 32bpp 预乘 alpha。整组（图标 + gap + 文字）按 <code>m_dtFlags</code> 对齐（默认水平居中）</td></tr>
+    <tr><td><code>SetLeadingIcon(HBITMAP) / GetLeadingIcon()</code></td><td>设置文字左侧图标位图。<b>仅 <code>StylePushButton</code> 生效</b>；其它 Style 忽略。HBITMAP caller-owned。图标走 <code>::AlphaBlend</code>，支持 32bpp 预乘 alpha。整组（图标 + gap + 文字）按 <code>m_dtFlags</code> 对齐（默认水平居中）。只有图标、没有文字时，图标直接在按钮内居中（不保留左边距），窄的纯图标按钮也不会偏右</td></tr>
     <tr><td><code>SetLeadingIconSize(int px)</code> / <code>SetLeadingIconGap(int px)</code></td><td>图标绘制边长（默认 <code>16</code>，<code>&lt;= 0</code> 钳到 1）/ 图标与文字间距（默认 <code>6</code>，<code>&lt; 0</code> 钳到 0）</td></tr>
   </table>
   <h4>事件</h4>
   <table class="ev-table">
     <tr><th>code</th><th>触发</th><th>extra (LPARAM)</th></tr>
     <tr><td><code>DUIN_CLICK</code></td><td>任何 Style 在按钮内按下并在按钮内释放（鼠标移出再释放<u>不</u>触发）</td><td>0</td></tr>
+    <tr><td><code>DUIN_DBLCLK</code></td><td>在系统双击时限内连点两下。第二下按 Windows 标准按钮的方式当作又一次按下，所以依次收到 <code>DUIN_CLICK</code>、<code>DUIN_DBLCLK</code>、<code>DUIN_CLICK</code>：快速点两下就是两次点击，需要「双击打开」的子类另外处理 <code>DUIN_DBLCLK</code></td><td>0</td></tr>
     <tr><td><code>DUIN_VALUECHANGED</code></td><td>Checkbox / Radio 状态翻转。<code>SetCheck(_, true)</code> 也会触发；<code>SetCheck(_, false)</code> 不触发</td><td>新选中状态：<code>1</code>=checked / <code>0</code>=unchecked</td></tr>
   </table>
+  <p class="note"><b>悬停效果</b>：鼠标移入 / 移出时按钮自己重画，悬停配色立即出现、立即消失。按 <code>IsHover()</code> 画悬停效果的 <code>DuiButton</code> 子类不必再处理。直接继承 <code>DuiControl</code> 的自绘控件则要自己覆写 <code>OnMouseEnter</code> / <code>OnMouseLeave</code>（先调基类，再 <code>Invalidate()</code>）—— <code>DuiControl</code> 的这两个函数只改悬停标志、不重画。</p>
 <pre><code>// 父对话框：
 LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lp, BOOL&amp;) {
     auto* n = (balloonwjui::DuiNotify*)lp;
@@ -2295,6 +2298,7 @@ host.SetRoot(std::move(root));
     <tr><td>密码 / 多行 / 只读 / 自动换行等属性可以在运行期随时切换</td><td>这些在无窗口方案里只是属性位，改完立即生效；旧实现里它们是创建期固化的窗口风格位，改一次就得销毁重建整个子窗口</td></tr>
     <tr><td>同一个窗口里可以放很多个实例</td><td>不消耗窗口句柄</td></tr>
     <tr><td>不需要 <code>EnsureCreated</code></td><td>排版引擎不依赖任何窗口，构造函数里就建好了，构造完就能设文本、量尺寸</td></tr>
+    <tr><td>选区不会越过文字末尾</td><td>构造时切成纯文本模式（<code>SetPlainTextMode(true)</code>），全文一套格式，末尾看不见的段落结束符选不中，文字后面不会多出一块高亮</td></tr>
   </table>
 
   <p><b>典型父：</b>任意 layout 容器（VBox / HBox / Grid / GroupBox 内容区 / Splitter pane / Dock 子区）。挂进去就能用，没有额外的创建步骤。</p>
@@ -2510,6 +2514,14 @@ rt-&gt;SetAutoGrowLines(1, 5);          // 最少一行、最多五行，超出�
 inputRow-&gt;AddChild(std::move(rt), balloonwjui::DuiLayout::Hint().Auto());
 </code></pre>
 
+  <h4>纯文本模式与光标</h4>
+  <table>
+    <tr><th>方法</th><th>说明</th></tr>
+    <tr><td><code>SetPlainTextMode(bool)</code> / <code>IsPlainTextMode()</code></td><td>切换纯文本 / 富文本模式。本类默认富文本，<code>DuiEdit</code> 构造时就切成纯文本。纯文本模式下全文只有一套格式，选区也不能越过文本末尾；富文本模式下文档末尾那个看不见的段落结束符可以被选中，文字后面会多出一小块高亮。<b>只能在文档为空时切换</b>（排版引擎的限制），所以要在构造之后、写入任何文字之前调用；返回 false 表示引擎拒绝了切换</td></tr>
+    <tr><td><code>SetShowCaret(bool)</code> / <code>IsShowCaret()</code></td><td>是否画插入光标（默认画）。关掉后光标仍然跟踪插入点，只是不画，输入法候选窗不会错位</td></tr>
+  </table>
+  <p class="note"><b>光标是自己画的</b>：看得见的那根竖线由控件画进后台缓冲（把光标矩形内的像素反色，任何背景色上都看得清），闪烁也由控件控制；系统光标仍然创建并跟随插入点，供输入法候选窗、读屏与放大镜一类辅助工具定位，但它用一张全零的单色位图创建，在屏幕上不留像素。直接显示系统光标会与「先画进后台缓冲、再整块拷上屏」的绘制方式冲突，表现为光标一会儿只亮上半段、一会儿只亮下半段。窗口 DPI 变化时，用库内默认字体的控件会按新 DPI 重设默认字符格式；经 <code>SetDefaultFontFromHFONT</code> 设的字体由调用方负责。</p>
+
   <h4>右键菜单</h4>
   <p>默认就有一整套：读写模式下是撤销 / 重做 /（分隔条）/ 剪切 / 复制 / 粘贴 / 粘贴为纯文本 / 删除 /（分隔条）/ 全选，只读模式下只剩复制与全选，各项按当前状态自动灰显。鼠标右键和键盘的菜单键（<code>Shift+F10</code>）都能唤出。定制分三层，按需要的深度选最省事的那层：</p>
 <pre><code>// 第一层 —— 只想在默认菜单后面加几项。不必写任何类。
@@ -2526,6 +2538,13 @@ void MyEdit::OnBuildContextMenu(std::vector&lt;balloonwjui::DuiRichEditMenuItem&
 
 // 第三层 —— 完全接管：同一个虚函数，不调基类实现，自己从空数组填起。
 // 或者 rt-&gt;SetContextMenuEnabled(false) 彻底关掉，自己在 OnRButtonDown 里弹别的。
+</code></pre>
+  <p><b>菜单文字的多语言</b>：内置命令的文字（撤销、剪切、复制……，<code>DuiEdit</code> 的右键菜单也一样）取用时都经过 <code>DuiTextResolver.h</code> 的 <code>ResolveText</code>。宿主在启动时、创建任何窗口之前登记一个转换回调，就能把它们换成当前界面语言；不登记时原样显示中文。回调返回的指针须在进程（或模块）生命周期内有效，返回 <code>NULL</code> 表示沿用原文。回调存放在头文件里函数内的静态变量中，exe 与各个静态链接了 balloonui 的 DLL 各有一份，需要各自登记。</p>
+<pre><code>static LPCTSTR ResolveBalloonUiText(LPCTSTR text)
+{
+    return MyTranslate(text);   // 宿主自己的翻译函数
+}
+balloonwjui::SetTextResolver(&amp;ResolveBalloonUiText);
 </code></pre>
 
   <h4>XML 创建</h4>
@@ -3370,7 +3389,7 @@ case TV::DUITVN_CELLEDITED: {
   <p><code>SetItemRightText(id, text)</code> 在行右端 status dot 内侧右对齐绘一小段辅助文字 —— 典型用例：分组节点的"在线数 / 总数"、单元格的尺寸 / 时间。绘制时按文字实际宽度收缩 textRight，主 label 自动 ellipsis。字号 / 颜色用 <code>SetRightTextPointSize(pt)</code>（0 = 与主 label 同字号 9pt）/ <code>SetRightTextColor(c)</code>（默认浅灰）调整。</p>
 
   <p><b>Icon 灰显</b></p>
-  <p><code>SetItemIconGrayed(id, true)</code> 把节点 icon 按 NTSC luma 系数转灰度后绘出，原 HBITMAP 不动。纯 GDI 实现（无 GDI+ 依赖），逐像素遍历 + 保留 alpha 通道。</p>
+  <p><code>SetItemIconGrayed(id, true)</code> 把节点 icon 按 NTSC luma 系数转灰度后绘出，原 HBITMAP 不动。纯 GDI 实现（无 GDI+ 依赖），逐像素遍历 + 保留 alpha 通道。每个节点只在第一次绘制时转换一次，灰度图缓存起来，之后的绘制直接取用；换图标、取消灰显、删除节点、<code>Clear</code> 与析构时释放。透明通道模式下图标是预乘值，灰度按预乘值直接计算，不会再乘一次 alpha（2026-10-04 之前多乘了一次，半透明的边缘偏暗）。<code>GetGrayIconCacheCount()</code> / <code>GetGrayIconConversionCount()</code> 给单元测试核对「只转换一次」与「不泄漏」。</p>
 
   <p><b>展开状态快照（救命 API）</b></p>
 <pre><code>// "存 → 改数据 → 还" 模式：刷新前后保留用户的展开 / 折叠选择
@@ -3714,9 +3733,13 @@ RECT anchorScreen = m_emojiBtn-&gt;GetRect();   // 宿主客户区坐标，下�
 ::ClientToScreen(m_hWnd, ((LPPOINT)&amp;anchorScreen) + 1);
 
 m_pop.SetContent(BuildEmojiPanel());
+m_pop.SetSize(320, 240);                                   // 浮层外部尺寸，默认 200×200
+m_pop.SetEdge(balloonwjui::DuiPopupHost::EdgeBelow);       // 优先弹在锚点下方，放不下自动翻到上方
+m_pop.SetDismissCallback(&amp;MyDlg::OnPopupDismiss, this);  // 每次关闭都回调，参数里带关闭原因
 m_pop.Show(anchorScreen, m_hWnd);     // owner = m_hWnd，事件冒到对话框
 </code></pre>
 
+  <p><b>自动关闭与阴影</b>：按 Esc、或浮层失去激活（如点到浮层外面）时自动关闭，并以 <code>ReasonEscape</code> / <code>ReasonLostFocus</code> 调用关闭回调；程序调 <code>Hide()</code> 时原因为 <code>ReasonProgrammatic</code>。关闭只是隐藏，窗口与内容保留，下次 <code>Show</code> 直接复用。浮层注册自己的窗口类 <code>__DuiPopupHost__</code>（带 <code>CS_DROPSHADOW</code> 与 <code>CS_SAVEBITS</code>），四周有系统阴影；关闭后被盖住的像素由系统恢复，底下的窗口不必重画。</p>
   <p class="note"><b>无 XML 路径</b>：popup 自身（边缘 / 阴影 / anchor）走 C++；其内部 content 子树<u>可以</u>用 <code>builder.FromString(...)</code> 解析后传给 <code>SetContent</code>。</p>
   <h4>事件</h4>
   <p>本身不发事件 — 它只是个浮层壳。<u>其内部 <code>Content</code> 子控件</u>的事件按常规通过 <code>WM_DUI_NOTIFY</code> 冒到 popup 的 owner HWND（即 <code>Show(anchor, owner)</code> 传入的那个窗口）。所以业务收到的还是 <code>DUIN_CLICK</code> / <code>DUIN_VALUECHANGED</code> 等 — 路由透明。</p>
@@ -3736,6 +3759,11 @@ balloonwjui::DuiToolTipMgr::Inst().Register(buttonRaw, _T("Save the file"));
 // 不需要时：
 balloonwjui::DuiToolTipMgr::Inst().Unregister(buttonRaw);
 </code></pre>
+
+  <p><b>多行提示</b>：文字里用 <code>\n</code> 分行，各行左对齐，浮窗宽度取最长的一行、高度为行数 × 行高；不含换行符时按单行排版。</p>
+<pre><code>balloonwjui::DuiToolTipMgr::Inst().Register(buttonRaw, _T("保存文件\n快捷键 Ctrl+S"));
+</code></pre>
+  <p><b>延时与字体</b>：鼠标停留默认 500 ms 后弹出，<code>DuiToolTipMgr::Inst().SetDelay(ms)</code> 可调。浮窗按弹出位置所在显示器的 DPI 取字体并测量尺寸，在缩放比例不同的显示器上字号各自正确。</p>
 
   <p class="note"><b>无 XML 路径</b>：tooltip 通过命令式 API 注册，没有"挂入控件树"这一步，因此不参与 XML builder。</p>
   <h4>事件</h4>
@@ -3932,6 +3960,12 @@ richEdit-&gt;InsertImage(hBmp);     // 内联插入到当前光标位置
     <tr><td>鼠标滚轮（<code>WM_MOUSEWHEEL</code>）</td><td><b>HitTest(鼠标位置)</b></td><td>跟点击同路径。<u>不</u>走 focus —— 鼠标在哪个滚动容器，滚轮就滚那个。这是 Web / macOS / Win Explorer / 某信 PC 都一致的标准行为。</td></tr>
   </table>
   <p class="note"><b>历史遗留 bug 修复</b>：早期 <code>OnMouseWheel</code> 用 <code>m_pFocus ? m_pFocus : HitTopMost(pt)</code> 的回退路径，导致"某个 list 被点过获得 focus 后，鼠标移到别处滚轮仍滚原 list"的典型 bug。当前实现去掉了 focus 优先；caller 不需要为此额外处理什么。如果你确实想"焦点容器接管所有滚轮"（例如某 keyboard-driven 内容编辑器），自己在 host 子类 override <code>OnMouseWheel</code> 可以强制走 <code>m_pFocus</code> 分支。</p>
+
+  <h4>双击</h4>
+  <p><code>__DuiHost__</code> 与 <code>__DuiFrameWindow__</code> 两个窗口类都带 <code>CS_DBLCLKS</code>，系统在双击时限内的第二次按下直接投递 <code>WM_LBUTTONDBLCLK</code>，宿主转给命中控件的 <code>OnLButtonDblClk</code>，控件默认据此发 <code>DUIN_DBLCLK</code>，不需要任何设置。<code>EnableDoubleClick(true)</code> 打开的是宿主自己的「双击合成」，只对窗口类不带 <code>CS_DBLCLKS</code> 的宿主有意义（例如经 <code>SubclassWindow</code> 挂到别的窗口类上的情形）；对上面两个窗口类开启它不起作用。</p>
+
+  <h4>DPI 变化</h4>
+  <p>建窗时宿主按窗口所在显示器取 DPI（<code>GetDpi()</code>，此后 <code>HasWindowDpi()</code> 为 true）。窗口被拖到缩放比例不同的显示器、收到 <code>WM_DPICHANGED</code> 时，宿主依次：记下新 DPI；按先父后子的顺序对整棵控件树调用 <code>OnDpiChanged(dpi)</code>，让按 DPI 缓存了字体或尺寸的控件刷新缓存；按系统建议的矩形移动窗口；把整棵树逐层重新布局并重画。控件取字体时用 <code>DuiControl::GetDefaultFont()</code> 等按本窗口 DPI 取，就能自动跟上，不必自己处理这条消息。</p>
 </div>
 
 <div class="control" id="DuiFrameWindow">
@@ -3968,7 +4002,9 @@ frame.ShowWindow(nCmdShow);
   <p><b>事件路由</b>：caption 按钮通过 <code>OnDuiChildNotify</code> 自动转 <code>SC_MINIMIZE/SC_MAXIMIZE/SC_RESTORE/SC_CLOSE</code> 给 OS — 业务一行不写。</p>
   <h4>关键 API</h4>
   <table>
-    <tr><td><code>SetTitle / SetIcon</code></td><td>标题文本 / 左侧图标</td></tr>
+    <tr><td><code>Create(parent, rect, name, style, exStyle)</code></td><td>建窗。参数与 ATL 的 <code>CWindowImpl::Create</code> 相同，但注册的是本类自己的窗口类 <code>__DuiFrameWindow__</code>（<code>CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS</code>）。子类自己用 <code>DECLARE_WND_CLASS</code> 声明的窗口类不会生效</td></tr>
+    <tr><td><code>SetTitle / SetIcon</code></td><td>标题文本 / 左侧图标。<code>SetTitle</code> 须在 <code>Create</code> 之后调用，否则任务栏与 Alt+Tab 里显示的系统标题不会更新</td></tr>
+    <tr><td><code>ResizeClient(w, h)</code></td><td>设置<b>整窗</b>尺寸（像素），标题栏也在其内 —— 本类去掉了系统非客户区，客户区就是整个窗口；<code>-1</code> 表示该方向保持当前尺寸。<u>不要</u>经 <code>CWindow*</code> / <code>CWindow&amp;</code> 调用：ATL 的同名函数不是虚函数，调到的是 ATL 版本，它会按窗口样式再叠加一圈系统标题栏与边框，窗口因此比要求的大。<code>SetMinSize</code> 设的同样是整窗尺寸</td></tr>
     <tr><td><code>SetButtons(min, max, close)</code></td><td>哪几个 caption 按钮可见</td></tr>
     <tr><td><code>SetTitleBarHeight(int)</code></td><td><b>标题栏高，默认 36 px</b>，最小 18。<br>典型值：32 偏紧凑（旧默认）、36 平衡（当前默认）、40 配 9-grid 渐变标题栏。</td></tr>
     <tr><td><code>SetBorderPx(int)</code></td><td><b>resize 抓握区宽度，默认 8 px</b>（96-dpi 逻辑像素，运行时按 monitor DPI 缩放：125% → 10 物理 px、150% → 12 物理 px）。设 0 = 不允许拖边 resize。</td></tr>
@@ -3986,7 +4022,8 @@ frame.ShowWindow(nCmdShow);
   </table>
   <h4>事件</h4>
   <p>caption 三按钮（min / max / close）发的 <code>DUIN_CLICK</code> 由 <code>DuiFrameWindow</code> 内部 <b>自动转</b> 成 <code>WM_SYSCOMMAND</code>（<code>SC_MINIMIZE / SC_MAXIMIZE / SC_RESTORE / SC_CLOSE</code>），业务<u>不需要</u>手动监听。如果想阻止关闭，按常规处理 <code>WM_CLOSE</code> 即可。</p>
-  <p>客户区子控件的事件按常规通过 <code>WM_DUI_NOTIFY</code> 路由到 frame 窗自身（即 <code>m_hWnd</code>）。</p>
+  <p>客户区子控件的事件按常规通过 <code>WM_DUI_NOTIFY</code> 路由到 frame 窗自身（即 <code>m_hWnd</code>）。子类的处理函数遇到自己不处理的通知时要把 <code>bHandled</code> 置为 <code>FALSE</code>，交回基类处理标题栏按钮。</p>
+  <p class="note"><b>控件 id 不要用 1 ~ 3</b>：标题栏的最小化 / 最大化 / 关闭按钮的 <code>ctrlId</code> 分别是 1 / 2 / 3，基类按 <code>ctrlId</code> 识别它们。客户区里 id 为 1 ~ 3 的控件发出的点击，只要子类没有拦下，就会被当成标题栏按钮，窗口随之最小化、最大化或关闭。</p>
 
   <table class="prop-table">
     <tr><th>code</th><th>触发</th><th>extra</th></tr>
@@ -4209,6 +4246,30 @@ balloonwjui::DuiAA::DrawLine     (hdc, 0, 0, 100, 50, RGB(0,0,0), 1.5f);
     <figcaption>左→右：brand / deep / online / away / busy / off。控件默认配色直接读这些常量。</figcaption>
   </figure>
   <p>单例类（<code>DuiTheme::Inst()</code>），按槽位保存一套颜色：品牌色（<code>BrandPrimary</code> / <code>BrandHover</code> / <code>BrandPressed</code> …）、文字色、表面色、边框色、行悬停 / 选中色、状态色（<code>StatusOnline</code> / <code>StatusAway</code> / <code>StatusBusy</code> / <code>StatusOffline</code>）等。<code>Get(slot)</code> 取色，<code>Set(slot, c)</code> 改单个颜色，<code>ApplyPreset(Light / Dark / HighContrast)</code> 整套切换；<code>SubscribeChange</code> 登记回调，颜色变化后通知。它还保存默认字体名（<code>SetDefaultFontFace</code> / <code>GetDefaultFontFace</code>，默认 Microsoft YaHei），<code>DuiResMgr</code> 建字体时读取。</p>
+</div>
+
+<div class="control" id="DuiDropTarget">
+  <h3>DuiDropTargetHelper — OLE 拖放接收</h3>
+  <p>把一个窗口注册成 OLE 拖放目标，接收从资源管理器 / 桌面拖来的文件（<code>CF_HDROP</code>），或从其它程序拖来的位图（<code>CF_BITMAP</code>）。调用方持有一个 <code>DuiDropTargetHelper</code> 实例（一般是窗口的成员变量），窗口建好后 <code>Register(hwnd)</code>，析构或窗口销毁前 <code>Unregister()</code>。进程里需要先调过 <code>::OleInitialize</code>。</p>
+<pre><code>m_drop.SetCallbacks(
+    [this](const std::vector&lt;CString&gt;&amp; paths) { SendFiles(paths); },
+    [this](HBITMAP hbm)
+    {
+        // hbm 只在本回调执行期间有效：要留就当场复制一份（LR_CREATEDIBSECTION 保证真的复制）
+        HBITMAP copy = (HBITMAP)::CopyImage(hbm, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+        PasteImage(copy);   // copy 归调用方，用完自己 DeleteObject
+    });
+m_drop.Register(m_hWnd);
+// 窗口销毁前：m_drop.Unregister();
+</code></pre>
+  <h4>关键 API</h4>
+  <table>
+    <tr><th>方法</th><th>说明</th></tr>
+    <tr><td><code>Register(hwnd)</code> / <code>Unregister()</code></td><td>注册 / 注销拖放目标。<code>Unregister</code> 会连同内部对象一起丢弃已装的回调，重新 <code>Register</code> 之前要重新装</td></tr>
+    <tr><td><code>SetCallbacks(onFiles, onBitmap)</code></td><td>落下时的回调，在界面线程上调用。位图回调拿到的 <code>HBITMAP</code> <u>只在回调执行期间有效</u>：它就是拖放源交来的那张位图，回调一返回就被释放。要在回调之后继续用，必须在回调里用 <code>CopyImage</code> 加 <code>LR_CREATEDIBSECTION</code> 复制一份，副本归调用方释放；<u>不要</u>对回调参数本身 <code>DeleteObject</code></td></tr>
+    <tr><td><code>SetDragCallbacks(onEnter, onOver, onLeave)</code></td><td>拖动过程回调，坐标已换算成本窗口客户区坐标。<code>onEnter</code> / <code>onOver</code> 返回 false 表示拒收 / 当前位置不能放（光标显示禁止符）；一次落下完成之后 <code>onLeave</code> 也会回调一次，收起悬停提示只需写在一个地方</td></tr>
+    <tr><td><code>SetFilesAtPointCallback(onFilesAtPoint)</code></td><td>带落点坐标的文件回调。装了它之后落下时只回调它、不再回调 <code>SetCallbacks</code> 的文件回调；位图回调不受影响</td></tr>
+  </table>
 </div>
 
 <div class="control" id="DuiNotify">
