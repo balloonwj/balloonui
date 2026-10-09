@@ -1,15 +1,21 @@
 // DuiGallery.exe entry point. Pure DUI demo - no chat / network / login
 // code. Runs entirely on the kernel + controls under flamingoclient/balloonui/.
 //
-// CLI:
+// CLI (parsed by GalleryCmdLine.h; options in any order, values case-insensitive):
 //   DuiGallery.exe                       - normal interactive mode
+//   DuiGallery.exe --lang en|zh          - UI language (default zh); applies to
+//                                          both modes
 //   DuiGallery.exe --capture-all <dir>   - headless: write one PNG per
 //                                          AddVariantRowCapture mark to
 //                                          <dir>\ctl-<name>.png and exit.
+//                                          Quote <dir> if it contains spaces.
+//   The documentation screenshots are English:
+//     DuiGallery.exe --lang en --capture-all docs\images
 
 #include "stdafx.h"
 #include "GalleryFrame.h"
 #include "CaptureMode.h"
+#include "GalleryCmdLine.h"
 #include "../balloonui/DuiDpi.h"
 
 using namespace balloonwjui;
@@ -28,31 +34,32 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE, LPTSTR lpCmdLine, int nCmdS
     AtlInitCommonControls(ICC_BAR_CLASSES);
     _Module.Init(NULL, hInstance);
 
-    // CLI parse: look for "--capture-all <dir>". The flag must appear
-    // first; we don't parse a full grammar here.
-    CString cmd = lpCmdLine ? lpCmdLine : _T("");
-    cmd.Trim();
-    if (cmd.Find(_T("--capture-all")) == 0)
+    // 命令行：[--lang en|zh] [--capture-all <目录>]，语法见 GalleryCmdLine.h。
+    // 无效时：截图模式直接退出（返回 2）；正常启动忽略无效的部分照常启动。
+    Gallery::GalleryCmdLine cmdLine = Gallery::ParseGalleryCmdLine(lpCmdLine);
+    if (!cmdLine.m_valid)
     {
-        CString tail = cmd.Mid(static_cast<int>(_tcslen(_T("--capture-all"))));
-        tail.Trim();
-        // Strip optional surrounding quotes around the path.
-        if (tail.GetLength() >= 2 && tail[0] == _T('"')
-            && tail[tail.GetLength() - 1] == _T('"'))
+        CString err;
+        err.Format(_T("DuiGallery: %s\n"), (LPCTSTR)cmdLine.m_error);
+        ::OutputDebugString(err);
+    }
+    // 界面语言要在建任何页面之前设好：页面里的文字在构建时按当前语言取
+    if (cmdLine.m_langGiven)
+    {
+        Gallery::SetCurrentLanguage(cmdLine.m_lang);
+    }
+    if (cmdLine.m_captureAll)
+    {
+        if (!cmdLine.m_valid)
         {
-            tail = tail.Mid(1, tail.GetLength() - 2);
-        }
-        if (tail.IsEmpty())
-        {
-            ::OutputDebugString(_T("DuiGallery: --capture-all needs an output directory\n"));
             _Module.Term();
             ::OleUninitialize();
             return 2;
         }
-        int saved = CaptureMode::RunCaptureAll(tail);
+        int saved = CaptureMode::RunCaptureAll(cmdLine.m_captureDir);
         CString msg;
         msg.Format(_T("DuiGallery: --capture-all wrote %d PNG(s) to %s\n"),
-                   saved, (LPCTSTR)tail);
+                   saved, (LPCTSTR)cmdLine.m_captureDir);
         ::OutputDebugString(msg);
         _Module.Term();
         ::OleUninitialize();

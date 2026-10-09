@@ -9,6 +9,7 @@
 #include "PageRegistry.h"
 #include "GalleryText.h"
 #include "GalleryNav.h"
+#include "GalleryCmdLine.h"
 
 #include <set>
 #include <vector>
@@ -590,6 +591,84 @@ Result Test_PlainPageHasNoCards()
     return OK(_T("PlainPageHasNoCards"));
 }
 
+// ---- 命令行解析（2026-10-09）：DuiGallery.exe [--lang en|zh] [--capture-all <目录>] ----
+
+// C1：没有参数时正常启动、界面为中文。
+Result Test_CmdLineEmpty()
+{
+    GalleryCmdLine cmd = ParseGalleryCmdLine(_T(""));
+    EXPECT_TRUE(cmd.m_valid, _T("C1/valid"));
+    EXPECT_TRUE(!cmd.m_captureAll, _T("C1/noCapture"));
+    EXPECT_TRUE(!cmd.m_langGiven, _T("C1/noLang"));
+    EXPECT_INT(cmd.m_lang, LangChinese, _T("C1/chinese"));
+    GalleryCmdLine nullCmd = ParseGalleryCmdLine(NULL);
+    EXPECT_TRUE(nullCmd.m_valid && !nullCmd.m_captureAll, _T("C1/null"));
+    return OK(_T("CmdLineEmpty"));
+}
+
+// C2：只给 --capture-all 时进入截图模式，界面仍为中文。
+Result Test_CmdLineCaptureOnly()
+{
+    GalleryCmdLine cmd = ParseGalleryCmdLine(_T("--capture-all docs\\images"));
+    EXPECT_TRUE(cmd.m_valid, _T("C2/valid"));
+    EXPECT_TRUE(cmd.m_captureAll, _T("C2/capture"));
+    EXPECT_TRUE(cmd.m_captureDir == _T("docs\\images"), _T("C2/dir"));
+    EXPECT_INT(cmd.m_lang, LangChinese, _T("C2/chinese"));
+    return OK(_T("CmdLineCaptureOnly"));
+}
+
+// C3：--lang en 在前、--capture-all 在后。
+Result Test_CmdLineLangThenCapture()
+{
+    GalleryCmdLine cmd = ParseGalleryCmdLine(_T("--lang en --capture-all docs\\images"));
+    EXPECT_TRUE(cmd.m_valid, _T("C3/valid"));
+    EXPECT_TRUE(cmd.m_langGiven, _T("C3/langGiven"));
+    EXPECT_INT(cmd.m_lang, LangEnglish, _T("C3/english"));
+    EXPECT_TRUE(cmd.m_captureAll && cmd.m_captureDir == _T("docs\\images"), _T("C3/capture"));
+    return OK(_T("CmdLineLangThenCapture"));
+}
+
+// C4：带空格的目录要加引号；参数顺序颠倒、取值大写也能识别。
+Result Test_CmdLineQuotedDirAnyOrder()
+{
+    GalleryCmdLine cmd = ParseGalleryCmdLine(_T("--capture-all \"C:\\a b\\img\" --lang EN"));
+    EXPECT_TRUE(cmd.m_valid, _T("C4/valid"));
+    EXPECT_TRUE(cmd.m_captureDir == _T("C:\\a b\\img"), _T("C4/dir"));
+    EXPECT_INT(cmd.m_lang, LangEnglish, _T("C4/english"));
+    return OK(_T("CmdLineQuotedDirAnyOrder"));
+}
+
+// C5：--lang 缺值时无效。
+Result Test_CmdLineLangMissingValue()
+{
+    GalleryCmdLine cmd = ParseGalleryCmdLine(_T("--lang"));
+    EXPECT_TRUE(!cmd.m_valid, _T("C5/invalid"));
+    EXPECT_TRUE(!cmd.m_error.IsEmpty(), _T("C5/error"));
+    EXPECT_TRUE(!cmd.m_langGiven, _T("C5/noLang"));
+    return OK(_T("CmdLineLangMissingValue"));
+}
+
+// C6：--lang 取值不是 en / zh 时无效，语言保持中文。
+Result Test_CmdLineLangUnknownValue()
+{
+    GalleryCmdLine cmd = ParseGalleryCmdLine(_T("--lang fr --capture-all x"));
+    EXPECT_TRUE(!cmd.m_valid, _T("C6/invalid"));
+    EXPECT_TRUE(!cmd.m_langGiven, _T("C6/noLang"));
+    EXPECT_INT(cmd.m_lang, LangChinese, _T("C6/chinese"));
+    EXPECT_TRUE(cmd.m_captureAll, _T("C6/captureSeen"));
+    return OK(_T("CmdLineLangUnknownValue"));
+}
+
+// C7：--capture-all 缺目录时无效。
+Result Test_CmdLineCaptureMissingDir()
+{
+    GalleryCmdLine cmd = ParseGalleryCmdLine(_T("--capture-all"));
+    EXPECT_TRUE(!cmd.m_valid, _T("C7/invalid"));
+    EXPECT_TRUE(cmd.m_captureAll, _T("C7/captureSeen"));
+    EXPECT_TRUE(cmd.m_captureDir.IsEmpty(), _T("C7/noDir"));
+    return OK(_T("CmdLineCaptureMissingDir"));
+}
+
 } // 匿名命名空间
 
 CString RunAll()
@@ -626,6 +705,13 @@ CString RunAll()
         { _T("DescriptionHeightGrowsWhenNarrow"),&Test_DescriptionHeightGrowsWhenNarrow},
         { _T("SectionsBecomeCards"),             &Test_SectionsBecomeCards             },
         { _T("PlainPageHasNoCards"),             &Test_PlainPageHasNoCards             },
+        { _T("CmdLineEmpty"),                    &Test_CmdLineEmpty                    },
+        { _T("CmdLineCaptureOnly"),              &Test_CmdLineCaptureOnly              },
+        { _T("CmdLineLangThenCapture"),          &Test_CmdLineLangThenCapture          },
+        { _T("CmdLineQuotedDirAnyOrder"),        &Test_CmdLineQuotedDirAnyOrder        },
+        { _T("CmdLineLangMissingValue"),         &Test_CmdLineLangMissingValue         },
+        { _T("CmdLineLangUnknownValue"),         &Test_CmdLineLangUnknownValue         },
+        { _T("CmdLineCaptureMissingDir"),        &Test_CmdLineCaptureMissingDir        },
     };
 
     CString out;

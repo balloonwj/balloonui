@@ -190,6 +190,7 @@
     <ClCompile Include="PageRegistry.cpp" />
     <ClCompile Include="GalleryTests.cpp" />
     <ClCompile Include="CaptureMode.cpp" />
+    <ClCompile Include="GalleryCmdLine.cpp" />
     <!-- 演示页面按分组分文件，与 PageRegistry.h 里声明的取列表函数一一对应 -->
     <ClCompile Include="Pages_Overview.cpp" />
     <ClCompile Include="Pages_Layout.cpp" />
@@ -320,6 +321,7 @@
     <ClInclude Include="PageKit.h" />
     <ClInclude Include="PageRegistry.h" />
     <ClInclude Include="CaptureMode.h" />
+    <ClInclude Include="GalleryCmdLine.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="app.rc" />
