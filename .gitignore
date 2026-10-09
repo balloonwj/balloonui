@@ -62,6 +62,12 @@ Bin/*.idb
 Bin/*.map
 Bin/*.log
 Bin/*.tlog
+# DuiGallery 构建完成后，CopyGalleryAssets 目标会把 DuiGallery/assets/ 下的
+# 演示素材（Image / Face / Skins）用 xcopy 拷进运行目录。素材的原件在 assets
+# 下随仓库管理，Bin/ 里的这三份只是副本，属于构建产物。
+Bin/Image/
+Bin/Face/
+Bin/Skins/
 
 
 # ---------------------------------------------------------------------
