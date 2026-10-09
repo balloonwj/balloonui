@@ -15,8 +15,8 @@ namespace balloonwjui {
 // 用途：DUI 控件需要的两样东西的统一入口：
 //   1) 皮肤图（CImageEx*）：包装老 CSkinManager，避免控件代码直接接老
 //      单例，方便测试时 mock，也让迁移期"refcount 在 DUI 这一侧管控"。
-//   2) 默认 UI 字体：进程级共享的 HFONT —— Microsoft YaHei 9pt
-//      (GB2312)，按当前 DPI 懒构造。
+//   2) 默认 UI 字体：进程级共享的 HFONT。字体名与字号取自 DuiTheme（缺省为
+//      Microsoft YaHei 9pt，GB2312），按当前 DPI 懒构造。
 //   3) 按 (pt, bold) 缓存的 UI 字体：GetFontByPointSize 给控件
 //      （DuiButton::SetTextPointSize 等）提供"指定字号"字体，避免每次
 //      ::CreateFont 句柄泄漏。
@@ -24,13 +24,16 @@ namespace balloonwjui {
 // 工作机制：
 //   · 单例，Inst() 拿。
 //   · LoadImage / GetImage / ReleaseImage 三件套透传到 CSkinManager。
-//   · 字体按 (DPI, 磅值, 是否加粗) 分别缓存、懒构造，返回的 HFONT<u>不要</u>
-//     DeleteObject。Per-monitor DPI 切换时 host 调 SetDpi(newDpi)，之后取到的
-//     是按新 DPI 缩放的字体。
+//   · 字体按 (字体名, DPI, 磅值, 是否加粗) 分别缓存、懒构造，返回的 HFONT<u>不要</u>
+//     DeleteObject。字体名比较不区分大小写。Per-monitor DPI 切换时 host 调
+//     SetDpi(newDpi)，之后取到的是按新 DPI 缩放的字体；DuiTheme 改了默认字体名或
+//     默认字号之后，再取到的字体同样按新值建（2026-10-09 起，此前字体名不在缓存
+//     键里，晚设置的字体名对已缓存的规格不生效，默认字号也不读 DuiTheme）。
 //   · SetDpi <u>不销毁</u>任何已创建的字体：控件会把取到的句柄长期保存
 //    （DuiButton::SetTextPointSize、DuiLabel::SetFont 等），销毁后它们会用已失效的
-//     句柄绘制。切回用过的 DPI 时直接复用当时的字体，所以字体总数只取决于出现过的
-//     DPI 档数与用到的字号种类数，不随切换次数增长。全部字体在进程退出时统一释放。
+//     句柄绘制。改字体名、字号时同理不销毁。切回用过的 DPI / 字体名时直接复用当时的
+//     字体，所以字体总数只取决于出现过的字体名、DPI 档数与用到的字号种类数，不随
+//     切换次数增长。全部字体在进程退出时统一释放。
 //
 // 代码用法：
 //
@@ -61,12 +64,13 @@ public:
     // LoadImage。
     CImageEx*   AcquireImage(LPCTSTR lpszFileName);
 
-    // 取共享默认字体（Microsoft YaHei 9pt GB2312）。懒构造在首次调用，
-    // 进程退出时统一释放。<u>不要</u> DeleteObject。
+    // 取共享默认字体：字体名与字号取自 DuiTheme 的 GetDefaultFontFace / GetDefaultFontPt
+    // （缺省 Microsoft YaHei 9pt GB2312）。懒构造在首次调用，进程退出时统一释放。
+    // <u>不要</u> DeleteObject。
     HFONT       GetDefaultFont();
 
-    // 取按 (pt, bold) 缓存的字体（Microsoft YaHei，DPI-aware）。
-    //   pt：磅值（点字号），如 9 / 11 / 14。pt <= 0 → 返回默认字体。
+    // 取按 (pt, bold) 缓存的字体（字体名取自 DuiTheme，DPI-aware）。
+    //   pt：磅值（点字号），如 9 / 11 / 14。pt <= 0 → 返回默认字体（字号取自 DuiTheme）。
     //   bold：true 用 FW_BOLD；false（默认）用 FW_NORMAL。
     // 同一 DPI 下同一 (pt, bold) 多次调用返回同一 HFONT；DPI 变化后返回按新 DPI
     // 缩放的另一份，旧句柄仍然有效。<u>不要</u> DeleteObject —— 所有权在 manager。
@@ -103,8 +107,25 @@ private:
     DuiResMgr(const DuiResMgr&) = delete;
     DuiResMgr& operator=(const DuiResMgr&) = delete;
 
-    // 字体缓存表。键由 DuiResMgr.cpp 的 MakeFontKey(dpi, pt, bold) 生成。
-    typedef std::map<unsigned long long, HFONT> FontCache;
+    // 字体缓存表的键：字体名 + 尺寸键。字体名统一转成小写后比较（Windows 的字体名
+    // 不区分大小写）；尺寸键由 DuiResMgr.cpp 的 MakeFontKey(dpi, pt, bold) 生成。
+    struct FontKey
+    {
+        CString            m_face;      // 小写的字体名
+        unsigned long long m_sizeKey;   // MakeFontKey(dpi, pt, bold) 的结果
+
+        // 先比字体名、再比尺寸键，供 std::map 排序。
+        bool operator<(const FontKey& other) const
+        {
+            const int c = m_face.Compare(other.m_face);
+            if (c != 0)
+            {
+                return c < 0;
+            }
+            return m_sizeKey < other.m_sizeKey;
+        }
+    };
+    typedef std::map<FontKey, HFONT> FontCache;
 
     // 返回当前 DPI；尚未设置过时取系统 DPI 并记下。
     int         EnsureDpi();
@@ -112,8 +133,8 @@ private:
     // 把调用方给的 DPI 规整为可用值：> 0 原样返回，否则返回当前全局 DPI。
     int         ResolveDpi(int dpi);
 
-    // 三个取字体接口的共用实现：在 cache 里按 (dpi, pt, bold) 查找，命中直接返回，
-    // 未命中按参数新建并存入。
+    // 三个取字体接口的共用实现：在 cache 里按 (DuiTheme 当前的默认字体名, dpi, pt, bold)
+    // 查找，命中直接返回，未命中按参数新建并存入。
     //   cache：要查找 / 写入的缓存表。
     //   dpi：  字体对应的 DPI，决定字高 lfHeight = -MulDiv(pt, dpi, 72)。
     //   pt：   磅值，须 > 0。
@@ -128,8 +149,9 @@ private:
 private:
     int         m_dpi = 0;      // 当前 DPI；0 = 尚未设置，首次取字体时取系统 DPI
 
-    // 以下三张表都按 (DPI, 磅值, 是否加粗) 分别缓存，SetDpi 不清空，析构时统一释放。
-    FontCache   m_defaultFontCache;  // 默认字体（9 磅），ClearType
+    // 以下三张表都按 (字体名, DPI, 磅值, 是否加粗) 分别缓存，SetDpi 与改字体名 / 字号
+    // 都不清空，析构时统一释放。
+    FontCache   m_defaultFontCache;  // 默认字体（字号取自 DuiTheme，缺省 9 磅），ClearType
     FontCache   m_fontCache;         // GetFontByPointSize 的字体，ClearType
     FontCache   m_aaFontCache;       // 同 m_fontCache 但走 ANTIALIASED_QUALITY，服务 PARGB 合成场景
 };

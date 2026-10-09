@@ -60,8 +60,9 @@ CImageEx* DuiResMgr::AcquireImage(LPCTSTR lpszFileName)
 
 namespace {
 
-// 默认字体的磅值：标准 Windows 界面正文字号。
-const int kDefaultFontPt = 9;
+// 默认字号的兜底值（磅）：标准 Windows 界面正文字号。默认字号正常取自
+// DuiTheme::GetDefaultFontPt（其设置函数已把取值限制在 6 ~ 96），只有读到非正数时才用它。
+const int kFallbackFontPt = 9;
 // 1 英寸 = 72 磅。字高按 lfHeight = -MulDiv(pt, dpi, 72) 由磅值换算为设备像素。
 const int kPointsPerInch = 72;
 // 缓存键中 DPI 所占的起始位：低 32 位放 (磅值 << 1) | 是否加粗，高 32 位放 DPI。
@@ -73,6 +74,13 @@ unsigned long long MakeFontKey(int dpi, int pt, bool bold)
     const unsigned long long low = ((unsigned long long)(unsigned int)pt << 1)
                                  | (bold ? 1ULL : 0ULL);
     return ((unsigned long long)(unsigned int)dpi << kDpiKeyShift) | low;
+}
+
+// 当前默认字号（磅）：取 DuiTheme 的设置，非正数时退回 kFallbackFontPt。
+int CurrentDefaultFontPt()
+{
+    const int pt = DuiTheme::Inst().GetDefaultFontPt();
+    return (pt > 0) ? pt : kFallbackFontPt;
 }
 
 } // namespace
@@ -88,7 +96,13 @@ int DuiResMgr::EnsureDpi()
 
 HFONT DuiResMgr::GetCachedFont(FontCache& cache, int dpi, int pt, bool bold, BYTE quality)
 {
-    const unsigned long long key = MakeFontKey(dpi, pt, bold);
+    // 字体名取 DuiTheme 的默认字体（缺省为微软雅黑，宿主可按界面语言改换）。字体名也是缓存键的
+    // 一部分（转成小写比较），改了字体名之后再取到的就是按新字体名建的字体，旧句柄保留。
+    const CString face = DuiTheme::Inst().GetDefaultFontFace();
+    FontKey key;
+    key.m_face = face;
+    key.m_face.MakeLower();
+    key.m_sizeKey = MakeFontKey(dpi, pt, bold);
     FontCache::const_iterator it = cache.find(key);
     if (it != cache.end())
     {
@@ -99,9 +113,8 @@ HFONT DuiResMgr::GetCachedFont(FontCache& cache, int dpi, int pt, bool bold, BYT
     // pt -> 设备单位的负 height:-MulDiv(pt, dpi, 72)。
     lf.lfHeight = -::MulDiv(pt, dpi, kPointsPerInch);
     lf.lfWeight = bold ? FW_BOLD : FW_NORMAL;
-    // 字体名取 DuiTheme 的默认字体（缺省为微软雅黑，宿主可按界面语言改换）。字符集：微软雅黑沿用 GB2312，
-    // 与改动之前一致；其它字体（如 Segoe UI、Yu Gothic UI）不支持 GB2312，指定它会让系统换用别的字体，改用 DEFAULT
-    const CString face = DuiTheme::Inst().GetDefaultFontFace();
+    // 字符集：微软雅黑沿用 GB2312，与改动之前一致；其它字体（如 Segoe UI、Yu Gothic UI）不支持 GB2312，
+    // 指定它会让系统换用别的字体，改用 DEFAULT
     lf.lfCharSet = (face.CompareNoCase(_T("Microsoft YaHei")) == 0) ? GB2312_CHARSET : DEFAULT_CHARSET;
     lf.lfQuality = quality;
     lf.lfPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
@@ -154,9 +167,9 @@ HFONT DuiResMgr::GetAntiAliasedFontByPointSize(int pt, bool bold)
 
 HFONT DuiResMgr::GetDefaultFontForDpi(int dpi)
 {
-    // 9pt 正文字号，与标准 Windows 界面一致；所有 DUI 控件、菜单、提示条
-    // 未单独指定字体时都用它。
-    return GetCachedFont(m_defaultFontCache, ResolveDpi(dpi), kDefaultFontPt, false,
+    // 默认正文字号取自 DuiTheme（缺省 9pt，与标准 Windows 界面一致）；所有 DUI 控件、
+    // 菜单、提示条未单独指定字体时都用它。
+    return GetCachedFont(m_defaultFontCache, ResolveDpi(dpi), CurrentDefaultFontPt(), false,
                          CLEARTYPE_QUALITY);
 }
 

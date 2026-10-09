@@ -156,7 +156,7 @@ public:
     // ---- 字体(toast 走灰度 AA 避免 ClearType+AlphaBlend 子像素错位重影)----
 
     // 设置自定义字体。HFONT caller-owned, 控件不 copy 不释放;nullptr(默认)
-    // 走 toast 内部默认字体(YaHei 9pt + ANTIALIASED_QUALITY)。
+    // 走 toast 内部默认字体(DuiTheme 的默认字体名与字号, 缺省 YaHei 9pt, ANTIALIASED_QUALITY)。
     // 注意:由于 toast 走 PARGB + AlphaBlend 合成, ClearType 字体会出现
     // 子像素错位"重影", 推荐 caller 传 lfQuality=ANTIALIASED_QUALITY 的字体;
     // 或直接走 SetTextPointSize wrapper, 内部自动用 AA 字体。
@@ -209,6 +209,11 @@ public:
     // 主要给 SetMaxWidth 路径用:caller 算出文字宽超限时, 调本 helper 截到适合长度。
     static CString ApplyEllipsis(LPCTSTR text, int maxChars);
 
+    // 测试用：返回量算与绘制文字实际使用的字体（即 ResolveFont 的结果）。没有设过字体时，
+    // 它是按本控件 DPI、按 DuiTheme 默认字号取的抗锯齿字体，GetFont() 在这种情况下返回
+    // nullptr，读不到这个字体，所以单测经由本函数核对。所有权同 ResolveFont，不要 DeleteObject。
+    HFONT Test_ResolveFont() const { return ResolveFont(); }
+
 private:
     // 动画链路启动器, 每个对应一段(渐入 / 显示等待 / 渐出 / 收尾)。
     // 用代际号 m_animGen 让旧 callback 自动失效, 避免 cancel 不掉的 lambda。
@@ -218,7 +223,7 @@ private:
     void FinishHide();
 
     // 量算与绘制文字实际使用的字体:GetFont() 非空时用它, 否则用本控件 DPI 下的
-    // 默认 9pt AA 字体。所有权在 caller(SetFont)或 DuiResMgr, 本控件不释放。
+    // 默认字号(取自 DuiTheme, 缺省 9pt)的 AA 字体。所有权在 caller(SetFont)或 DuiResMgr, 本控件不释放。
     HFONT ResolveFont() const;
 
 private:

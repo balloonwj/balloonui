@@ -101,8 +101,12 @@ public:
     int      SubscribeChange(ChangeCallback cb, void* userdata = nullptr);
     void     Unsubscribe(int token);
 
-    // Default font face / point size hooks. The actual HFONT comes from
-    // DuiResMgr; setting these here rebuilds it.
+    // 默认字体名 / 默认字号（缺省 Microsoft YaHei、9 磅；字号限制在 6 ~ 96）。实际的 HFONT 由
+    // DuiResMgr 建，建字体时读这两个值。DuiResMgr 按 (字体名, DPI, 磅值, 是否加粗) 缓存字体，
+    // 所以改了之后，再取到的默认字体（以及按磅值取的字体的字体名）就按新值建；已经交出去的
+    // 旧字体句柄不销毁、仍然有效。注意它们不会让已显示的界面自动重画：控件下次绘制时才取到
+    // 新字体；DuiRichEdit / DuiEdit 在构造时就把默认字体交给了排版引擎，之后只在改文字颜色或
+    // DPI 变化时才重新取。因此应在创建任何控件之前设置。
     void     SetDefaultFontFace(LPCTSTR face);
     CString  GetDefaultFontFace() const { return m_fontFace; }
     void     SetDefaultFontPt(int pt);

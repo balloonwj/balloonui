@@ -14,6 +14,7 @@
 
 #include "../../DuiPaintAA.h"
 #include "../../DuiResMgr.h"
+#include "../../DuiTheme.h"   // GetDefaultFontPt：未设字号时的默认字号
 #include "../../DuiAnimation.h"
 #include "../../DuiDpi.h"
 #include <gdiplus.h>
@@ -36,8 +37,9 @@ const int kVPaddingPx = 8;
 const double kAlphaEpsilon = 0.001;
 // 文本截断"..."字符串:用于 ApplyEllipsis。
 LPCTSTR const kEllipsis = _T("...");
-// 未设字体时的默认字号(磅):与库内其它控件的默认正文字号一致。
-const int kDefaultTextPt = 9;
+// 未设字体时默认字号的兜底值(磅)。默认字号正常取自 DuiTheme::GetDefaultFontPt(与库内其它控件的
+// 默认正文字号一致), 只有读到非正数时才用它。
+const int kFallbackTextPt = 9;
 
 // 在 path 上构造一个圆角矩形(浮点坐标), 供 OnPaint 的背景与阴影复用,
 // 避免两处各写一份四段 AddArc。
@@ -271,7 +273,13 @@ HFONT DuiToast::GetFont() const
 HFONT DuiToast::ResolveFont() const
 {
     HFONT hf = GetFont();
-    return hf ? hf : GetAntiAliasedFontByPointSize(kDefaultTextPt, false);
+    if (hf)
+    {
+        return hf;
+    }
+    // 没有设过字体:按 DuiTheme 的默认字号取抗锯齿字体
+    const int themePt = DuiTheme::Inst().GetDefaultFontPt();
+    return GetAntiAliasedFontByPointSize((themePt > 0) ? themePt : kFallbackTextPt, false);
 }
 
 void DuiToast::SetTextPointSize(int pt, bool bold)
@@ -708,8 +716,8 @@ void DuiToast::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
         if (!m_text.IsEmpty())
         {
             // Gdiplus::Font 从 HFONT 转需要 hdc;借 host hdc 即可(只用于字体度量)。
-            // 字体按本控件所在窗口的 DPI 取:显式设定的字体, 或默认 9pt YaHei
-            // ANTIALIASED_QUALITY(与 Layout 量算一致, 见 ResolveFont)。
+            // 字体按本控件所在窗口的 DPI 取:显式设定的字体, 或 DuiTheme 默认字体名与字号的
+            // ANTIALIASED_QUALITY 字体(与 Layout 量算一致, 见 ResolveFont)。
             Gdiplus::Font* font = new Gdiplus::Font(hdc, ResolveFont());
 
             if (font && font->GetLastStatus() == Gdiplus::Ok)
