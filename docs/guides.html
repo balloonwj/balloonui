@@ -2901,6 +2901,10 @@ vbox-&gt;AddChild(std::move(lb), balloonwjui::DuiLayout::Hint().Weight(1));
     <tr><td><code>SetShowItemDelete(bool)</code></td><td>每行右端画删除叉（默认关）；点叉发 <code>DUITN_ITEMDELETE</code>，<u>不改变</u>选中行，也不删该行，由宿主决定是否删除。滚动条出现时删除叉左移，让开滚动条</td></tr>
     <tr><td><code>SetItemHeight(px)</code> / <code>SetDragReorderEnabled(bool)</code> / <code>MoveItem(from, to)</code></td><td>行高；拖动重排</td></tr>
   </table>
+  <figure class="ctl-fig">
+    <img src="images/ctl-listbox-icons.png" alt="DuiListBox 每行图标、副文字与删除叉">
+    <figcaption>每行左侧图标 + 主文字 + 弱色副文字，右端是删除叉（<code>SetShowItemDelete(true)</code>），第二行选中。下拉框（<code>DuiComboBox</code>）的下拉列表画法相同。</figcaption>
+  </figure>
   <h4>事件</h4>
   <table class="ev-table">
     <tr><th>code</th><th>触发</th><th>extra (LPARAM)</th></tr>
@@ -3614,6 +3618,10 @@ if (n-&gt;ctrlId == IDC_TABPAGE &amp;&amp; n-&gt;code == DUIN_VALUECHANGED) {
 
 <div class="control" id="DuiMenu">
   <h3>DuiMenu <span class="tag popup">popup</span></h3>
+  <figure class="ctl-fig">
+    <img src="images/ctl-menu-header-shortcut.png" alt="DuiMenu 分组标题与快捷键列">
+    <figcaption>两个分组标题（Edit / Format）、靠右的灰色快捷键列、勾选项（Word wrap）与禁用项（Clear formatting）。</figcaption>
+  </figure>
   <p>右键 / 命令菜单。支持图标、勾选项、禁用项、子菜单（悬停自动展开）、分隔线、分组标题行，以及靠右对齐的快捷键文字列。</p>
 
   <p><b>典型父：</b><u>不挂</u>父 DuiControl —— 在栈上建一个 <code>DuiMenu</code>，调 <code>TrackPopup(x, y, ownerHwnd)</code> 在屏幕坐标弹出。<code>TrackPopup</code> 是<u>同步</u>的（与 Win32 的 <code>TrackPopupMenu</code> 一样）：用户点了某项、点到菜单外或按 Esc 之后才返回，返回值就是被点项的 id，0 表示没有选择。落点会自动限制在锚点所在显示器的工作区内（右边放不下翻向左、下边放不下翻向上），贴着屏幕边缘弹出也不会跑到桌面外，调用方不必自己处理。</p>
@@ -3763,6 +3771,10 @@ balloonwjui::DuiToolTipMgr::Inst().Unregister(buttonRaw);
   <p><b>多行提示</b>：文字里用 <code>\n</code> 分行，各行左对齐，浮窗宽度取最长的一行、高度为行数 × 行高；不含换行符时按单行排版。</p>
 <pre><code>balloonwjui::DuiToolTipMgr::Inst().Register(buttonRaw, _T("保存文件\n快捷键 Ctrl+S"));
 </code></pre>
+  <figure class="ctl-fig">
+    <img src="images/ctl-tooltip-multiline.png" alt="DuiToolTip 多行提示">
+    <figcaption>两行的提示框：宽度取最长的一行。</figcaption>
+  </figure>
   <p><b>延时与字体</b>：鼠标停留默认 500 ms 后弹出，<code>DuiToolTipMgr::Inst().SetDelay(ms)</code> 可调。浮窗按弹出位置所在显示器的 DPI 取字体并测量尺寸，在缩放比例不同的显示器上字号各自正确。</p>
 
   <p class="note"><b>无 XML 路径</b>：tooltip 通过命令式 API 注册，没有"挂入控件树"这一步，因此不参与 XML builder。</p>
@@ -4101,7 +4113,7 @@ int idBell     = frame.AddCaptionIcon(hBell,     _T("Notifications"));
   <h3>DuiScrollBar / DuiScrollView</h3>
   <figure class="ctl-fig">
     <img src="images/ctl-scrollbar-states.png" alt="DuiScrollBar 垂直 + 水平">
-    <figcaption>左侧：垂直滚动条；右侧：水平滚动条。thumb 位置随 SetPos 改变。（截图为 2026-10-04 改为悬浮式细滑块之前的样式。）</figcaption>
+    <figcaption>左侧：垂直滚动条；右侧：水平滚动条。悬浮式细滑块，不画轨道，thumb 位置随 SetPos 改变。截图时关闭了自动隐藏（<code>SetAutoHide(false)</code>），默认情况下停止操作约 800 ms 后会淡出。</figcaption>
   </figure>
   <p>独立滚动条 + 内置滚动容器。<code>DuiScrollView::SetContent(child)</code> 装内容，<code>SetContentHeight(h)</code>（或 <code>SetAutoContentHeight(true)</code> 自动量高）告知滚动范围。</p>
   <p><b>外观（悬浮式细滑块）：</b>只画一根 5 像素宽、两端为半圆的半透明灰色滑块（灰 <code>0x5A</code>、不透明度 120/255，再乘以淡入淡出的 alpha），贴在控件矩形右缘往里 2 像素处（水平滚动条为下缘），不画轨道；滑块沿主轴最短 36 像素。控件矩形本身是比滑块宽的「命中带」，<code>DuiScrollView</code> / <code>DuiListBox</code> / <code>DuiTreeView</code> 把它浮在内容之上、贴右缘放置，默认宽 <code>DuiScrollBar::kOverlayBandPx</code>（11 像素），<u>内容按全宽排版</u>；滚动条出现时命中带内的鼠标事件归滚动条，即使它当前处于隐藏态。按下滑块拖动；按在轨道空白处时滑块中心先跳到点击处，接着可以继续拖。</p>

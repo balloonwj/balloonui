@@ -2733,6 +2733,10 @@ vbox->AddChild(std::move(lb), balloonwjui::DuiLayout::Hint().Weight(1));
 | `SetShowItemDelete(bool)` | 每行右端画删除叉（默认关）；点叉发 `DUITN_ITEMDELETE`，<u>不改变</u>选中行，也不删该行，由宿主决定是否删除。滚动条出现时删除叉左移，让开滚动条 |
 | `SetItemHeight(px)` / `SetDragReorderEnabled(bool)` / `MoveItem(from, to)` | 行高；拖动重排 |
 
+![DuiListBox 每行图标、副文字与删除叉](images/ctl-listbox-icons.png)
+
+*每行左侧图标 + 主文字 + 弱色副文字，右端是删除叉（`SetShowItemDelete(true)`），第二行选中。下拉框（`DuiComboBox`）的下拉列表画法相同。*
+
 #### 事件
 
 | code | 触发 | extra (LPARAM) |
@@ -3516,6 +3520,10 @@ if (n->ctrlId == IDC_TABPAGE && n->code == DUIN_VALUECHANGED) {
 
 ### DuiMenu  `[popup]`
 
+![DuiMenu 分组标题与快捷键列](images/ctl-menu-header-shortcut.png)
+
+*两个分组标题（Edit / Format）、靠右的灰色快捷键列、勾选项（Word wrap）与禁用项（Clear formatting）。*
+
 右键 / 命令菜单。支持图标、勾选项、禁用项、子菜单（悬停自动展开）、分隔线、分组标题行，以及靠右对齐的快捷键文字列。
 
 **典型父：**<u>不挂</u>父 DuiControl —— 在栈上建一个 `DuiMenu`，调 `TrackPopup(x, y, ownerHwnd)` 在屏幕坐标弹出。`TrackPopup` 是<u>同步</u>的（与 Win32 的 `TrackPopupMenu` 一样）：用户点了某项、点到菜单外或按 Esc 之后才返回，返回值就是被点项的 id，0 表示没有选择。落点会自动限制在锚点所在显示器的工作区内（右边放不下翻向左、下边放不下翻向上），贴着屏幕边缘弹出也不会跑到桌面外，调用方不必自己处理。
@@ -3684,6 +3692,10 @@ balloonwjui::DuiToolTipMgr::Inst().Unregister(buttonRaw);
 ```
 balloonwjui::DuiToolTipMgr::Inst().Register(buttonRaw, _T("保存文件\n快捷键 Ctrl+S"));
 ```
+
+![DuiToolTip 多行提示](images/ctl-tooltip-multiline.png)
+
+*两行的提示框：宽度取最长的一行。*
 
 **延时与字体**：鼠标停留默认 500 ms 后弹出，`DuiToolTipMgr::Inst().SetDelay(ms)` 可调。浮窗按弹出位置所在显示器的 DPI 取字体并测量尺寸，在缩放比例不同的显示器上字号各自正确。
 
@@ -4079,7 +4091,7 @@ DuiGallery 演示：FrameWindow tab → "Min / Max drag size limits" section 三
 
 ![DuiScrollBar 垂直 + 水平](images/ctl-scrollbar-states.png)
 
-*左侧：垂直滚动条；右侧：水平滚动条。thumb 位置随 SetPos 改变。（截图为 2026-10-04 改为悬浮式细滑块之前的样式。）*
+*左侧：垂直滚动条；右侧：水平滚动条。悬浮式细滑块，不画轨道，thumb 位置随 SetPos 改变。截图时关闭了自动隐藏（`SetAutoHide(false)`），默认情况下停止操作约 800 ms 后会淡出。*
 
 独立滚动条 + 内置滚动容器。`DuiScrollView::SetContent(child)` 装内容，`SetContentHeight(h)`（或 `SetAutoContentHeight(true)` 自动量高）告知滚动范围。
 

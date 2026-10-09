@@ -2736,6 +2736,10 @@ vbox->AddChild(std::move(lb), balloonwjui::DuiLayout::Hint().Weight(1));
 | `SetShowItemDelete(bool)` | Draws a delete cross at the right end of each row (off by default); clicking it fires `DUITN_ITEMDELETE` and changes <u>neither</u> the selection nor the rows — the host decides whether to delete. The cross moves left to clear the scroll bar while the bar is shown. |
 | `SetItemHeight(px)` / `SetDragReorderEnabled(bool)` / `MoveItem(from, to)` | Row height; drag reordering. |
 
+![DuiListBox row icons, secondary text and delete crosses](images/ctl-listbox-icons.png)
+
+*A left icon, the main text and a dimmed secondary text per row, with a delete cross at the right end (`SetShowItemDelete(true)`); the second row is selected. The dropdown of `DuiComboBox` draws its rows the same way.*
+
 #### Events
 
 | code | When it fires | extra (LPARAM) |
@@ -3524,6 +3528,10 @@ if (n->ctrlId == IDC_TABPAGE && n->code == DUIN_VALUECHANGED) {
 
 ### DuiMenu  `[popup]`
 
+![DuiMenu group headers and shortcut column](images/ctl-menu-header-shortcut.png)
+
+*Two group headers (Edit / Format), the grey right-aligned shortcut column, a checked item (Word wrap) and a disabled item (Clear formatting).*
+
 Right-click / command menu. Supports icons, checkable items, disabled items, submenus (auto-expand on hover), separators, group header rows, and a right-aligned shortcut-text column.
 
 **Typical parent:** <u>not attached</u> to a parent DuiControl — create a `DuiMenu` on the stack and call `TrackPopup(x, y, ownerHwnd)` to pop it up at screen coordinates. `TrackPopup` is <u>synchronous</u> (like Win32 `TrackPopupMenu`): it returns after the user picks an item, clicks outside, or presses Esc, and its return value is the chosen item id, or 0 if nothing was chosen. The position is clamped to the work area of the anchor's monitor automatically (it flips left when there is no room on the right and up when there is no room below), so a menu opened at the screen edge never ends up off the desktop; callers need not handle this.
@@ -3692,6 +3700,10 @@ balloonwjui::DuiToolTipMgr::Inst().Unregister(buttonRaw);
 ```
 balloonwjui::DuiToolTipMgr::Inst().Register(buttonRaw, _T("Save the file\nShortcut: Ctrl+S"));
 ```
+
+![DuiToolTip multi-line tip](images/ctl-tooltip-multiline.png)
+
+*A two-line tip: the popup is as wide as the longest line.*
 
 **Delay and font**: the tip appears after the mouse rests for 500 ms by default; change it with `DuiToolTipMgr::Inst().SetDelay(ms)`. The popup takes its font and measures its size with the DPI of the monitor it pops up on, so the text size is right on monitors with different scaling.
 
@@ -4087,7 +4099,7 @@ The same client-area content (one `BuildBuddyInfoContent`) shown in four configu
 
 ![DuiScrollBar vertical + horizontal](images/ctl-scrollbar-states.png)
 
-*Left: vertical scrollbar. Right: horizontal scrollbar. The thumb position follows SetPos. (The screenshot shows the style used before the switch to the thin overlay thumb on 2026-10-04.)*
+*Left: vertical scrollbar. Right: horizontal scrollbar. Thin overlay thumbs with no track; the thumb position follows SetPos. Auto-hide was turned off for the screenshot (`SetAutoHide(false)`); by default the bars fade out about 800 ms after the last interaction.*
 
 Standalone scrollbar + built-in scroll container. `DuiScrollView::SetContent(child)` installs the content; `SetContentHeight(h)` (or `SetAutoContentHeight(true)` to auto-measure) declares the scroll range.
 

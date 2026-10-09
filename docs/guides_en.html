@@ -2906,6 +2906,10 @@ vbox-&gt;AddChild(std::move(lb), balloonwjui::DuiLayout::Hint().Weight(1));
     <tr><td><code>SetShowItemDelete(bool)</code></td><td>Draws a delete cross at the right end of each row (off by default); clicking it fires <code>DUITN_ITEMDELETE</code> and changes <u>neither</u> the selection nor the rows — the host decides whether to delete. The cross moves left to clear the scroll bar while the bar is shown.</td></tr>
     <tr><td><code>SetItemHeight(px)</code> / <code>SetDragReorderEnabled(bool)</code> / <code>MoveItem(from, to)</code></td><td>Row height; drag reordering.</td></tr>
   </table>
+  <figure class="ctl-fig">
+    <img src="images/ctl-listbox-icons.png" alt="DuiListBox row icons, secondary text and delete crosses">
+    <figcaption>A left icon, the main text and a dimmed secondary text per row, with a delete cross at the right end (<code>SetShowItemDelete(true)</code>); the second row is selected. The dropdown of <code>DuiComboBox</code> draws its rows the same way.</figcaption>
+  </figure>
   <h4>Events</h4>
   <table class="ev-table">
     <tr><th>code</th><th>When it fires</th><th>extra (LPARAM)</th></tr>
@@ -3624,6 +3628,10 @@ if (n-&gt;ctrlId == IDC_TABPAGE &amp;&amp; n-&gt;code == DUIN_VALUECHANGED) {
 
 <div class="control" id="DuiMenu">
   <h3>DuiMenu <span class="tag popup">popup</span></h3>
+  <figure class="ctl-fig">
+    <img src="images/ctl-menu-header-shortcut.png" alt="DuiMenu group headers and shortcut column">
+    <figcaption>Two group headers (Edit / Format), the grey right-aligned shortcut column, a checked item (Word wrap) and a disabled item (Clear formatting).</figcaption>
+  </figure>
   <p>Right-click / command menu. Supports icons, checkable items, disabled items, submenus (auto-expand on hover), separators, group header rows, and a right-aligned shortcut-text column.</p>
 
   <p><b>Typical parent:</b> <u>not attached</u> to a parent DuiControl — create a <code>DuiMenu</code> on the stack and call <code>TrackPopup(x, y, ownerHwnd)</code> to pop it up at screen coordinates. <code>TrackPopup</code> is <u>synchronous</u> (like Win32 <code>TrackPopupMenu</code>): it returns after the user picks an item, clicks outside, or presses Esc, and its return value is the chosen item id, or 0 if nothing was chosen. The position is clamped to the work area of the anchor's monitor automatically (it flips left when there is no room on the right and up when there is no room below), so a menu opened at the screen edge never ends up off the desktop; callers need not handle this.</p>
@@ -3773,6 +3781,10 @@ balloonwjui::DuiToolTipMgr::Inst().Unregister(buttonRaw);
   <p><b>Multi-line tips</b>: put <code>\n</code> in the text to break lines; lines are left-aligned, the popup is as wide as the longest line and as tall as the line count × line height. Text without a line break is laid out on a single line as before.</p>
 <pre><code>balloonwjui::DuiToolTipMgr::Inst().Register(buttonRaw, _T("Save the file\nShortcut: Ctrl+S"));
 </code></pre>
+  <figure class="ctl-fig">
+    <img src="images/ctl-tooltip-multiline.png" alt="DuiToolTip multi-line tip">
+    <figcaption>A two-line tip: the popup is as wide as the longest line.</figcaption>
+  </figure>
   <p><b>Delay and font</b>: the tip appears after the mouse rests for 500 ms by default; change it with <code>DuiToolTipMgr::Inst().SetDelay(ms)</code>. The popup takes its font and measures its size with the DPI of the monitor it pops up on, so the text size is right on monitors with different scaling.</p>
 
   <p class="note"><b>No XML path</b>: tooltips are registered via an imperative API; there's no "attach to control tree" step, so they don't participate in the XML builder.</p>
@@ -4111,7 +4123,7 @@ int idBell     = frame.AddCaptionIcon(hBell,     _T("Notifications"));
   <h3>DuiScrollBar / DuiScrollView</h3>
   <figure class="ctl-fig">
     <img src="images/ctl-scrollbar-states.png" alt="DuiScrollBar vertical + horizontal">
-    <figcaption>Left: vertical scrollbar. Right: horizontal scrollbar. The thumb position follows SetPos. (The screenshot shows the style used before the switch to the thin overlay thumb on 2026-10-04.)</figcaption>
+    <figcaption>Left: vertical scrollbar. Right: horizontal scrollbar. Thin overlay thumbs with no track; the thumb position follows SetPos. Auto-hide was turned off for the screenshot (<code>SetAutoHide(false)</code>); by default the bars fade out about 800 ms after the last interaction.</figcaption>
   </figure>
   <p>Standalone scrollbar + built-in scroll container. <code>DuiScrollView::SetContent(child)</code> installs the content; <code>SetContentHeight(h)</code> (or <code>SetAutoContentHeight(true)</code> to auto-measure) declares the scroll range.</p>
   <p><b>Appearance (thin overlay thumb):</b> only a 5 px wide, semi-transparent gray thumb with semicircular ends is painted (gray <code>0x5A</code>, opacity 120/255, multiplied by the fade alpha), 2 px in from the right edge of the control rectangle (the bottom edge for a horizontal scrollbar); no track is painted, and the thumb is at least 36 px long along the main axis. The control rectangle itself is a wider "hit band": <code>DuiScrollView</code> / <code>DuiListBox</code> / <code>DuiTreeView</code> float it over the content along the right edge, <code>DuiScrollBar::kOverlayBandPx</code> (11 px) wide by default, and <u>lay the content out at full width</u>; while the scrollbar is shown, mouse events inside the hit band go to the scrollbar even if it is currently faded out. Press the thumb to drag it; pressing on an empty part of the track first moves the thumb's center to the click point, after which you can keep dragging.</p>
