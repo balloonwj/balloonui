@@ -174,7 +174,7 @@ static Result Test_SetContentBeforeShow()
     return OK(_T("SetContentBeforeShow"));
 }
 
-// 浮层窗口用的是本类声明的窗口类（bugs.md BUG-101，2026-10-05）：类名为 __DuiPopupHost__，
+// 浮层窗口用的是本类声明的窗口类（2026-10-05）：类名为 __DuiPopupHost__，
 // 带阴影（CS_DROPSHADOW）与 CS_SAVEBITS，同时保留原先从 __DuiHost__ 继承来的双击与重绘样式。
 // 修复之前浮层实际注册的是基类的 __DuiHost__，声明的阴影样式从未生效。
 static Result Test_WindowClassHasDropShadow()

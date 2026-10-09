@@ -69,7 +69,7 @@ void DuiPopupHost::EnsureCreated(HWND hOwner)
         return;
     }
     // 不能直接调继承来的 Create：基类是 CWindowImpl<DuiHost>，它按模板参数 DuiHost 取窗口类信息，注册的是
-    // __DuiHost__，本类 DECLARE_WND_CLASS_EX 声明的 __DuiPopupHost__（带阴影）永远用不上（bugs.md BUG-101）。
+    // __DuiHost__，本类 DECLARE_WND_CLASS_EX 声明的 __DuiPopupHost__（带阴影）永远用不上（2026-10-05 修复）。
     // 这里按 ATL CWindowImpl::Create 的同样步骤，只把窗口类信息换成本类的：先注册本类的窗口类，再按窗口类
     // 编号创建窗口。窗口过程仍是 ATL 的 StartWindowProc，消息照常经 thunk 派发给本对象的消息映射。
     ATL::CWndClassInfo& info = DuiPopupHost::GetWndClassInfo();

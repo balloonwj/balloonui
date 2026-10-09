@@ -188,7 +188,7 @@ public:
     bool    OnSetCursor (POINT pt) override;
 
     // 鼠标移入 / 移出：链接模式下悬停时换颜色（EffectiveColor），要重画一次；普通文字模式没有悬停效果，
-    // 不重画（BUG-105，2026-10-06）。写成内联，理由同 DuiButton::OnMouseEnter。
+    // 不重画（2026-10-06）。写成内联，理由同 DuiButton::OnMouseEnter。
     bool    OnMouseEnter() override
     {
         const bool handled = DuiControl::OnMouseEnter();

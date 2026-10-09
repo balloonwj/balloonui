@@ -871,7 +871,7 @@ static Result Test_FontIconVariantTriple()
     return OK(_T("FontIconVariantTriple"));
 }
 
-// 快速双击算两次点击（BUG-103，2026-10-06）：窗口类带 CS_DBLCLKS 时第二次按下以 WM_LBUTTONDBLCLK 送达，
+// 快速双击算两次点击（2026-10-06）：窗口类带 CS_DBLCLKS 时第二次按下以 WM_LBUTTONDBLCLK 送达，
 // 由宿主转成 OnLButtonDblClk。用勾选框样式验证：每次点击都切换勾选，单击 + 双击后应切回未勾选。
 // 修复前第二击只上报双击、按钮没有进入按下态，抬起时不算点击，结果停在已勾选。
 static Result Test_DblClkCountsAsSecondClick()

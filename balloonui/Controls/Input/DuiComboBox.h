@@ -133,11 +133,13 @@ PopupNotifyAction ClassifyPopupNotify(UINT code, UINT ctrlId);
 //
 // 事件（ctrlId = combo id）：
 //   · DUIN_VALUECHANGED — 选项变化或 editable 输入变化时触发。
-//                          extra >= 0：从 popup 选了一项，extra = newIndex
-//                                      （此时 m_curSel == newIndex）。
-//                          extra == -1：editable 模式手输入触发；m_curSel
-//                                      被重置为 -1，除非输入文本完全匹配
-//                                      某个 item（这种情况会自动选中那个 item）。
+//                          extra 恒为通知发出时的 m_curSel：
+//                          · 从 popup 选了一项：extra = 该项索引（>= 0）。
+//                          · editable 模式手动输入：输入文本与某个 item 完全
+//                            相同时自动选中该 item，extra = 它的索引（>= 0）；
+//                            否则 m_curSel 重置为 -1，extra == -1。
+//                          所以 extra >= 0 既可能来自 popup 选择，也可能来自
+//                          editable 模式下的输入恰好与某项完全相同。
 //   · DUICBN_ITEMDELETE — 下拉里点了某项右侧的删除叉；extra = 项索引
 //                          （已映射回 m_items 下标，过滤态下也对得上）。
 //                          仅在 SetShowItemDelete(true) 时可能触发。本控件
@@ -357,7 +359,7 @@ public:
     bool    OnLButtonUp(POINT pt, UINT mkFlags) override;
 
     // 鼠标移入 / 移出：悬停时边框换成 active 色（OnPaint 里按 m_bHover 取色），要重画一次
-    // （BUG-105，2026-10-06）。写成内联，理由同 DuiButton::OnMouseEnter。
+    // （2026-10-06）。写成内联，理由同 DuiButton::OnMouseEnter。
     bool    OnMouseEnter() override
     {
         const bool handled = DuiControl::OnMouseEnter();

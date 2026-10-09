@@ -173,7 +173,7 @@ public:
     // 窗口类：改大小时整窗重绘（CS_HREDRAW | CS_VREDRAW），系统在双击时限内的第二次按下送 WM_LBUTTONDBLCLK
     // （CS_DBLCLKS）。2026-10-06 之前这里声明的样式是 0，但从未生效：基类是 CWindowImpl<DuiHost>，ATL 的
     // CWindowImpl<T>::Create 按模板参数 DuiHost 取窗口类，全部框架窗口实际注册的都是 __DuiHost__，带的正是
-    // 上面三个样式（bugs.md BUG-103）。现在声明改成与实际一致，并由下面的 Create 让它生效，窗口行为不变，
+    // 上面三个样式。现在声明改成与实际一致，并由下面的 Create 让它生效，窗口行为不变，
     // 只是窗口类名变为 __DuiFrameWindow__。
     DECLARE_WND_CLASS_EX(_T("__DuiFrameWindow__"), CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS, COLOR_WINDOW)
 
@@ -181,7 +181,7 @@ public:
     ~DuiFrameWindow();
 
     // 创建窗口，参数与 ATL CWindowImpl::Create 相同。不能直接用继承来的 Create：它按模板参数 DuiHost 取窗口类，
-    // 注册的是 __DuiHost__，本类声明的窗口类永远用不上（BUG-103，与 DuiPopupHost 的 BUG-101 同一原因）。这里按
+    // 注册的是 __DuiHost__，本类声明的窗口类永远用不上（与 DuiPopupHost 的同类问题原因相同）。这里按
     // ATL CWindowImpl::Create 的同样步骤，只把窗口类信息换成本类的：先注册本类的窗口类，再按窗口类编号创建窗口；
     // 窗口过程仍是 ATL 的 StartWindowProc，消息照常经 thunk 派发给本对象的消息映射。
     // 写成内联：不给静态库新增外部符号，按新头文件编的程序链接旧库时不会缺符号。它不是虚函数，调用处按新头文件

@@ -263,7 +263,7 @@ public:
     bool    OnLButtonUp  (POINT pt, UINT mkFlags) override;
     bool    OnSetCursor  (POINT pt) override;
 
-    // 双击（2026-10-06，bugs.md BUG-103）：框架窗口的窗口类带 CS_DBLCLKS，系统双击时限内的第二次按下以
+    // 双击（2026-10-06）：框架窗口的窗口类带 CS_DBLCLKS，系统双击时限内的第二次按下以
     // WM_LBUTTONDBLCLK 送达、不再有 WM_LBUTTONDOWN。基类只上报 DUIN_DBLCLK，按钮没有进入按下态，抬起时也就不发
     // DUIN_CLICK —— 快速连点两下只算一次点击。这里先按一次按下处理（抬起时照常发 DUIN_CLICK，与 Windows 标准
     // 按钮一致：快速连点两下即两次点击），再照基类上报 DUIN_DBLCLK（列表项、缩略图等子类靠它实现「双击打开」）。
@@ -279,7 +279,7 @@ public:
     }
 
     // 鼠标移入 / 移出：基类只改悬停标志、发通知，不重画；按钮的悬停配色与各子类按 IsHover() 画的
-    // 悬停底都要靠这里重画一次，否则要等别的原因重画这块区域才出现或消失（BUG-105，2026-10-06）。
+    // 悬停底都要靠这里重画一次，否则要等别的原因重画这块区域才出现或消失（2026-10-06）。
     // 写成内联：不给静态库新增外部符号，按新头文件编的程序链接旧库时不会缺符号。
     bool    OnMouseEnter() override
     {

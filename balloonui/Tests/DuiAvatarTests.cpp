@@ -466,7 +466,7 @@ static Result Test_BitmapEdgeAntialiased()
     return OK(_T("BitmapEdgeAntialiased"));
 }
 
-// 圆角半径为 1 的圆角矩形仍能画出位图（文件共享详情头部的类型图标就用这个设置，见 bugs.md BUG-70）。
+// 圆角半径为 1 的圆角矩形仍能画出位图（文件共享详情头部的类型图标就用这个设置）。
 static Result Test_BitmapRadius1Draws()
 {
     const int kSize = 32;

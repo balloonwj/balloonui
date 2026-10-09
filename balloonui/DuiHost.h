@@ -278,7 +278,7 @@ public:
     // DuiControl 的 OnLButtonDblClk 永不触发，此时可在<u>运行期、按需</u>
     // 打开"双击合成"。
     //
-    // 注意（2026-10-06 更正，bugs.md BUG-103）：此前这里写的是"balloonui 的
+    // 注意（2026-10-06 更正）：此前这里写的是"balloonui 的
     // 窗口类（__DuiHost__ / __DuiFrameWindow__）未注册 CS_DBLCLKS"，与实际
     // 不符 —— __DuiHost__ 由 DECLARE_WND_CLASS 声明，默认样式含 CS_DBLCLKS；
     // __DuiFrameWindow__ 现在也明确带 CS_DBLCLKS。这两类窗口里系统本就会投递

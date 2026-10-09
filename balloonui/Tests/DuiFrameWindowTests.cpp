@@ -324,7 +324,7 @@ static Result Test_ResizeClientHonorsMinSize()
 }
 
 
-// 框架窗口按本类声明的窗口类注册（BUG-103，2026-10-06）：类名为 __DuiFrameWindow__，样式与修复前实际生效的
+// 框架窗口按本类声明的窗口类注册（2026-10-06）：类名为 __DuiFrameWindow__，样式与修复前实际生效的
 // __DuiHost__ 相同（改大小整窗重绘、带双击），窗口行为不变。修复前这里取到的类名是 __DuiHost__。
 static Result Test_WindowClassIsOwn()
 {
