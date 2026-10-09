@@ -47,9 +47,9 @@ The library ships with 30+ controls, grouped into seven categories under
 
 | Category | Controls |
 |---|---|
-| Basic | `DuiLabel` `DuiButton` `DuiAvatar` `DuiBadge` `DuiSeparator` `DuiGroupBox` |
+| Basic | `DuiLabel` `DuiButton` `DuiAvatar` `DuiBadge` `DuiSeparator` `DuiGroupBox` `DuiToast` |
 | Input | `DuiEdit` `DuiRichEdit` `DuiSearchBox` `DuiSpinBox` `DuiComboBox` `DuiSlider` `DuiSwitch` |
-| List / container | `DuiListBox` `DuiTreeView` `DuiTab` `DuiTabPage` `DuiMenu` `DuiMenuBar` |
+| List / container | `DuiListBox` `DuiVirtualList` `DuiTreeView` `DuiTab` `DuiTabPage` `DuiMenu` `DuiMenuBar` |
 | Layout | `DuiLayout` (`DuiVBox` / `DuiHBox` / `DuiGrid`) `DuiDock` `DuiSplitter` |
 | Feedback | `DuiProgressBar` `DuiToolTip` `DuiPopupHost` `DuiEmojiPanel` |
 | Media | `DuiGif` `DuiImageOle` |
@@ -133,9 +133,9 @@ pages for you.
 `DuiFrameWindow` provides a complete borderless top-level window: a
 9-grid stretched background, a custom-drawn title bar, min / max / close
 buttons, `WM_NCHITTEST`-driven corner resize, and a layout-hosted client
-area. In practice a single
-`DuiXmlBuilder::FromFrameXml(xml)` is enough to spin up a full main
-window.
+area. Parsing one `<frame-window>` XML snippet with
+`DuiXmlBuilder::FromFrameXml` gives you both the window configuration and
+the client-area control tree (see "Quick start" below).
 
 ![Title bar full view](docs/images/demo_titlebar_full.png)
 ![9-grid background](docs/images/bg-9grid-medium.png)
@@ -159,9 +159,12 @@ inside the library.
 ## Theme and palette
 
 `DuiTheme` / `DuiResMgr` centrally manage colors, fonts, and spacing.
-The default UI font is **Microsoft YaHei 9pt** (CHINESE_GB2312); every
-DUI control pulls its font from `DuiResMgr::GetDefaultFont()`, so the
-whole library can be re-skinned in one place.
+The default UI font is **Microsoft YaHei 9pt**. The face name is kept by
+`DuiTheme`; a host can switch it for the UI language at startup with
+`DuiTheme::Inst().SetDefaultFontFace()` (call it before the first font is
+fetched). Fonts are cached per DPI in `DuiResMgr`, and every control fetches
+them through `DuiControl::GetDefaultFont()` with the DPI of its own window,
+so text resizes when a window moves to a monitor with a different scale.
 
 ![Theme swatches](docs/images/ctl-theme-swatches.png)
 
@@ -174,17 +177,25 @@ Complex UIs can be described as a short XML snippet and handed to
 chains of `AddChild`:
 
 ```xml
-<frame-window title="Settings" width="640" height="480">
-  <vbox padding="12" spacing="8">
-    <label text="Account settings"/>
-    <hbox spacing="8">
-      <label text="Username"/>
-      <edit id="ed_user" width="240"/>
+<frame-window title="Settings" min-w="480" min-h="240">
+  <vbox padding="12" gap="8">
+    <label text="Account settings" fixedHeight="24"/>
+    <hbox gap="8" fixedHeight="28">
+      <label text="Username" fixedWidth="60"/>
+      <edit id="101" fixedWidth="240"/>
     </hbox>
-    <button id="btn_ok" text="Save" style="pushbutton"/>
+    <button id="102" text="Save" fixedWidth="96" fixedHeight="32" alignCross="near"/>
   </vbox>
 </frame-window>
 ```
+
+A few conventions that are easy to get wrong: `id` is a number (event
+handlers tell controls apart by it; 1–3 are taken by the title bar's
+minimize / maximize / close buttons); spacing between children is `gap`;
+sizes are `fixedWidth` / `fixedHeight`, and a width inside a vertical box
+(or a height inside a horizontal box) also needs `alignCross`, otherwise
+the control is stretched; the window's own size is set in code with
+`ResizeClient`.
 
 Every built-in tag maps to a built-in control class; business code can
 extend the dispatch table through `CustomFactory`.
@@ -211,10 +222,11 @@ See the header comments in `balloonui/BalloonUiFeatures.h` and the
 
 | Project | Path | Description |
 |---|---|---|
-| balloonui | `balloonui/` | The library itself, can be built as static lib or DLL |
+| balloonui | `balloonui/` | The library itself: `balloonui.vcxproj` builds a DLL, `balloonui_static.vcxproj` a static library |
 | DuiGallery | `DuiGallery/` | All-controls showcase window — every control has its own page |
 | NewChatDemo | `NewChatDemo/` | Full chat-UI demo (XML layout + custom controls) |
 | CloudMelodyDesktop | `CloudMelodyDesktop/` | Desktop music player demo (multi-page + media assets) |
+| XChat | `XChat/` | Demo modelled on a popular chat app's PC client (login, multi-view main panel, settings) |
 | DemoTaskManager | `DemoTaskManager/` | Task-Manager-style demo (multi-column TreeView + multi Tab) |
 | DemoChatBubble | `DemoChatBubble/` | Chat-bubble control demo |
 | DemoCircularProgress | `DemoCircularProgress/` | Circular progress ring demo |
@@ -223,7 +235,10 @@ See the header comments in `balloonui/BalloonUiFeatures.h` and the
 | DemoTextBadgeTile | `DemoTextBadgeTile/` | Text-badge tile demo |
 | DemoTreeViewLargeData | `DemoTreeViewLargeData/` | TreeView large-data performance demo |
 
-Open `Demos.sln` at the root to load all projects at once.
+Open `Demos.sln` at the root to load the DLL build of the library and every
+demo above at once. The static-library project
+`balloonui/balloonui_static.vcxproj` is not in it; reference it from your own
+solution.
 
 ### Demo screenshots
 
@@ -257,30 +272,57 @@ Smaller demos illustrate single controls or single element types:
 ## Quick start
 
 ```cpp
-#include "balloonui/DuiHost.h"
 #include "balloonui/DuiXmlBuilder.h"
 #include "balloonui/Controls/Window/DuiFrameWindow.h"
 
 using namespace balloonwjui;
 
-// Inside ATL CFrameWindowImpl::OnCreate:
-const char* xml = R"(
-  <frame-window title="Hello" width="320" height="200">
-    <vbox padding="16" spacing="8">
-      <label text="Hello, balloonui!"/>
-      <button id="btn_ok" text="OK" style="pushbutton"/>
-    </vbox>
-  </frame-window>
-)";
+// Button id used in the XML. 1-3 are taken by the title bar's minimize /
+// maximize / close buttons, so application controls must not use them.
+const UINT kIdOk = 101;
 
-auto* host = DuiXmlBuilder::FromFrameXml(xml);
-host->Create(/* parent hwnd */);
-host->ShowWindow(SW_SHOW);
+// Main window. Control notifications arrive as WM_DUI_NOTIFY on the window
+// itself: wParam is the control id, lParam is a DuiNotify*.
+class HelloFrame : public DuiFrameWindow
+{
+public:
+    BEGIN_MSG_MAP(HelloFrame)
+        MESSAGE_HANDLER(WM_DUI_NOTIFY, OnDuiNotify)
+        CHAIN_MSG_MAP(DuiFrameWindow)
+    END_MSG_MAP()
 
-// Handle the button click in the parent window's OnDuiNotify:
-// case DUIN_BUTTON_CLICKED:
-//   if (id == "btn_ok") { /* ... */ }
-//   break;
+    LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lParam, BOOL& bHandled)
+    {
+        const DuiNotify* n = reinterpret_cast<const DuiNotify*>(lParam);
+        if (n->code == DUIN_CLICK && n->ctrlId == kIdOk)
+        {
+            PostMessage(WM_CLOSE);
+            return 0;
+        }
+        // Hand everything else back: DuiFrameWindow handles the title bar buttons
+        bHandled = FALSE;
+        return 0;
+    }
+};
+
+// Create the window (e.g. in WinMain, after WTL's _Module is initialized):
+const char* kXml =
+    "<frame-window title=\"Hello\" min-w=\"320\" min-h=\"200\">"
+    "  <vbox padding=\"16\" gap=\"8\">"
+    "    <label text=\"Hello, balloonui!\" fixedHeight=\"24\"/>"
+    "    <button id=\"101\" text=\"OK\" fixedWidth=\"88\" fixedHeight=\"32\" alignCross=\"near\"/>"
+    "  </vbox>"
+    "</frame-window>";
+
+DuiFrameWindowConfig cfg;
+std::unique_ptr<DuiControl> root = DuiXmlBuilder::FromFrameXml(kXml, cfg);
+
+HelloFrame frame;
+frame.Create(NULL, CWindow::rcDefault, _T("Hello"), WS_OVERLAPPEDWINDOW);
+frame.ApplyConfig(cfg);                    // window attributes apply after Create
+frame.SetClientContent(std::move(root));   // the subtree inside <frame-window> is the client area
+frame.ResizeClient(320, 200);              // whole-window size, title bar included
+frame.ShowWindow(SW_SHOW);
 ```
 
 For richer examples, open the DuiGallery project — every control can be
@@ -288,28 +330,46 @@ triggered there in isolation, with all its states reachable from the UI.
 
 ---
 
+## Tests
+
+The library's unit tests live in `balloonui/Tests/` and are compiled into the
+DuiGallery project (`Debug|Win32`). On startup the Debug build of
+`Bin/DuiGallery.exe` runs every case and writes the results to
+`%TEMP%\DuiGallery_tests.log`: one `[summary] ... passed=N failed=M` line per
+group, failing cases prefixed with `[FAIL]`. You never need to look at the
+window — start it, wait for the log, then end the process.
+`SystemCaretLeavesNoPixelsOnScreen` in `DuiRichEditCaretTests` captures the
+real screen; in an environment without a visible screen (such as a hidden
+desktop) it reports `screen capture failed`.
+
+---
+
 ## Directory layout
 
 ```
-third_party/
-├── balloonui/              Library source
-│   ├── Controls/           Seven category subdirs
-│   ├── Tests/              Unit / integration tests
-│   ├── BalloonUiApi.h      DLL import / export macros
-│   ├── BalloonUiFeatures.h Compile-time feature strip
+balloonui/ (repository root)
+├── balloonui/                    Library source
+│   ├── Controls/                 Seven category subdirs
+│   ├── Tests/                    Unit / integration tests (built into DuiGallery)
+│   ├── BalloonUiApi.h            DLL import / export macros
+│   ├── BalloonUiFeatures.h       Compile-time feature strip
 │   ├── DuiHost / DuiControl / DuiLayout / DuiTheme ...   kernel
-│   └── balloonui.vcxproj
-├── DuiGallery/             All-controls showcase
-├── NewChatDemo/            Chat UI demo
-├── CloudMelodyDesktop/     Music player demo
-├── Demo*/                  Small single-purpose demos
+│   ├── balloonui.vcxproj         DLL build
+│   └── balloonui_static.vcxproj  Static-library build
+├── DuiGallery/                   All-controls showcase
+├── NewChatDemo/                  Chat UI demo
+├── CloudMelodyDesktop/           Music player demo
+├── XChat/                        Chat-app PC client demo
+├── Demo*/                        Small single-purpose demos
 ├── docs/
-│   ├── guides.html         Companion guide
-│   └── images/             Documentation assets
-├── wtl10.1/                Bundled WTL 10.1
-├── Goldens/                Golden images (used for regression diffing)
-├── Bin/                    Output directory
-└── Demos.sln               Loads every project at once
+│   ├── guides.html / guides_en.html          Companion guide (source)
+│   ├── guides.md / guides_en.md              Markdown version, generated by html_to_md.py
+│   ├── windowless-richedit*.md               Design and test notes for the windowless rich edit
+│   └── images/                               Documentation assets
+├── wtl10.1/                      Bundled WTL 10.1 (with its ReadMe.html)
+├── Bin/                          Output directory
+├── clear.bat                     Removes build output (git clean -fdX)
+└── Demos.sln                     Loads the DLL build and every demo
 ```
 
 ---

@@ -40,9 +40,9 @@ balloonui 走 **"宿主一个 HWND，子控件全部 DUI"** 的路线：
 
 | 类别 | 控件 |
 |---|---|
-| Basic（基础） | `DuiLabel` `DuiButton` `DuiAvatar` `DuiBadge` `DuiSeparator` `DuiGroupBox` |
+| Basic（基础） | `DuiLabel` `DuiButton` `DuiAvatar` `DuiBadge` `DuiSeparator` `DuiGroupBox` `DuiToast` |
 | Input（输入） | `DuiEdit` `DuiRichEdit` `DuiSearchBox` `DuiSpinBox` `DuiComboBox` `DuiSlider` `DuiSwitch` |
-| List（列表 / 容器） | `DuiListBox` `DuiTreeView` `DuiTab` `DuiTabPage` `DuiMenu` `DuiMenuBar` |
+| List（列表 / 容器） | `DuiListBox` `DuiVirtualList` `DuiTreeView` `DuiTab` `DuiTabPage` `DuiMenu` `DuiMenuBar` |
 | Layout（布局） | `DuiLayout` (`DuiVBox` / `DuiHBox` / `DuiGrid`) `DuiDock` `DuiSplitter` |
 | Feedback（反馈） | `DuiProgressBar` `DuiToolTip` `DuiPopupHost` `DuiEmojiPanel` |
 | Media（多媒体） | `DuiGif` `DuiImageOle` |
@@ -114,8 +114,8 @@ VBox / HBox / Grid 三件套覆盖常规线性 / 网格布局；Dock 覆盖"上�
 
 `DuiFrameWindow` 提供完整的无边框顶层窗口：9-grid 拉伸背景、自绘标题栏、
 min / max / close 按钮、`WM_NCHITTEST` 边角拖拽 resize、客户区 layout 嵌入
-——业务侧通常一句 `DuiXmlBuilder::FromFrameXml(xml)` 就能生成一个完整的主
-窗口。
+——业务侧用 `DuiXmlBuilder::FromFrameXml` 解析一段 `<frame-window>` XML，
+就能同时得到窗口配置与客户区控件树（用法见下文「快速开始」）。
 
 ![标题栏全貌](docs/images/demo_titlebar_full.png)
 ![9-grid 背景](docs/images/bg-9grid-medium.png)
@@ -137,8 +137,10 @@ min / max / close 按钮、`WM_NCHITTEST` 边角拖拽 resize、客户区 layout
 ## 主题与配色
 
 `DuiTheme` / `DuiResMgr` 把颜色、字体、间距集中托管。默认 UI 字体为
-**微软雅黑 9pt**（CHINESE_GB2312），所有 DUI 控件统一从 `DuiResMgr::
-GetDefaultFont()` 取字体，可一键替换。
+**微软雅黑 9pt**，字体名由 `DuiTheme` 管理，宿主可以在启动时用
+`DuiTheme::Inst().SetDefaultFontFace()` 按界面语言改换（须在第一次取字体之前
+调用）。字体按 DPI 缓存在 `DuiResMgr` 里，控件经 `DuiControl::GetDefaultFont()`
+按自己所在窗口的 DPI 取用，窗口移到缩放比例不同的显示器后字号随之变化。
 
 ![主题色板](docs/images/ctl-theme-swatches.png)
 
@@ -150,17 +152,22 @@ GetDefaultFont()` 取字体，可一键替换。
 长长的 `AddChild` 链：
 
 ```xml
-<frame-window title="Settings" width="640" height="480">
-  <vbox padding="12" spacing="8">
-    <label text="账号设置"/>
-    <hbox spacing="8">
-      <label text="用户名"/>
-      <edit id="ed_user" width="240"/>
+<frame-window title="Settings" min-w="480" min-h="240">
+  <vbox padding="12" gap="8">
+    <label text="账号设置" fixedHeight="24"/>
+    <hbox gap="8" fixedHeight="28">
+      <label text="用户名" fixedWidth="60"/>
+      <edit id="101" fixedWidth="240"/>
     </hbox>
-    <button id="btn_ok" text="保存" style="pushbutton"/>
+    <button id="102" text="保存" fixedWidth="96" fixedHeight="32" alignCross="near"/>
   </vbox>
 </frame-window>
 ```
+
+几条容易写错的约定：`id` 是数字（事件里按它区分控件，1~3 留给标题栏的
+最小化 / 最大化 / 关闭按钮）；子控件间距用 `gap`；尺寸用 `fixedWidth` /
+`fixedHeight`，竖直布局里设宽度（水平布局里设高度）要同时写 `alignCross`，
+否则会被拉满；窗口本身的宽高在代码里用 `ResizeClient` 设置。
 
 每个内置 tag 都对应一个内置控件类；业务可以通过 `CustomFactory` 扩展自己
 的 tag。
@@ -184,10 +191,11 @@ GetDefaultFont()` 取字体，可一键替换。
 
 | 工程 | 路径 | 说明 |
 |---|---|---|
-| balloonui | `balloonui/` | 控件库本体，可以编成静态库或 DLL |
+| balloonui | `balloonui/` | 控件库本体，`balloonui.vcxproj` 编成 DLL，`balloonui_static.vcxproj` 编成静态库 |
 | DuiGallery | `DuiGallery/` | 全控件演示窗，每个控件都有单独的展示页 |
 | NewChatDemo | `NewChatDemo/` | 完整的聊天界面 Demo（XML 布局 + 自定义控件） |
 | CloudMelodyDesktop | `CloudMelodyDesktop/` | 桌面音乐播放器 Demo（多页面 + 多媒体素材） |
+| XChat | `XChat/` | 仿某信 PC 客户端界面的 Demo（登录、多视图主面板、设置页） |
 | DemoTaskManager | `DemoTaskManager/` | 任务管理器风格 Demo（多列 TreeView + 多 Tab） |
 | DemoChatBubble | `DemoChatBubble/` | 聊天气泡控件 Demo |
 | DemoCircularProgress | `DemoCircularProgress/` | 圆形进度环 Demo |
@@ -196,7 +204,8 @@ GetDefaultFont()` 取字体，可一键替换。
 | DemoTextBadgeTile | `DemoTextBadgeTile/` | 文字徽章瓦片 Demo |
 | DemoTreeViewLargeData | `DemoTreeViewLargeData/` | TreeView 大数据量性能 Demo |
 
-打开根目录 `Demos.sln` 即可一次性加载所有工程。
+打开根目录 `Demos.sln` 即可一次性加载 DLL 版控件库与上表全部 Demo。静态库工程
+`balloonui/balloonui_static.vcxproj` 不在其中，由使用方自己的解决方案引用。
 
 ### Demo 截图
 
@@ -229,30 +238,56 @@ NewChatDemo / CloudMelodyDesktop / 任务管理器演示了"完整应用"级别�
 ## 快速开始
 
 ```cpp
-#include "balloonui/DuiHost.h"
 #include "balloonui/DuiXmlBuilder.h"
 #include "balloonui/Controls/Window/DuiFrameWindow.h"
 
 using namespace balloonwjui;
 
-// 在 ATL CFrameWindowImpl::OnCreate 里：
-const char* xml = R"(
-  <frame-window title="Hello" width="320" height="200">
-    <vbox padding="16" spacing="8">
-      <label text="Hello, balloonui!"/>
-      <button id="btn_ok" text="OK" style="pushbutton"/>
-    </vbox>
-  </frame-window>
-)";
+// XML 里按钮的 id。1~3 被标题栏的最小化 / 最大化 / 关闭按钮占用，业务控件不要用。
+const UINT kIdOk = 101;
 
-auto* host = DuiXmlBuilder::FromFrameXml(xml);
-host->Create(/* parent hwnd */);
-host->ShowWindow(SW_SHOW);
+// 主窗口。控件的通知以 WM_DUI_NOTIFY 发给窗口自己：wParam 是控件 id，
+// lParam 是 DuiNotify*。
+class HelloFrame : public DuiFrameWindow
+{
+public:
+    BEGIN_MSG_MAP(HelloFrame)
+        MESSAGE_HANDLER(WM_DUI_NOTIFY, OnDuiNotify)
+        CHAIN_MSG_MAP(DuiFrameWindow)
+    END_MSG_MAP()
 
-// 监听按钮点击：在父窗口的 OnDuiNotify 里
-// case DUIN_BUTTON_CLICKED:
-//   if (id == "btn_ok") { /* ... */ }
-//   break;
+    LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lParam, BOOL& bHandled)
+    {
+        const DuiNotify* n = reinterpret_cast<const DuiNotify*>(lParam);
+        if (n->code == DUIN_CLICK && n->ctrlId == kIdOk)
+        {
+            PostMessage(WM_CLOSE);
+            return 0;
+        }
+        // 其余通知交回基类：标题栏三个按钮的点击由 DuiFrameWindow 处理
+        bHandled = FALSE;
+        return 0;
+    }
+};
+
+// 建窗（例如在 WinMain 里，WTL 的 _Module 已初始化之后）：
+const char* kXml =
+    "<frame-window title=\"Hello\" min-w=\"320\" min-h=\"200\">"
+    "  <vbox padding=\"16\" gap=\"8\">"
+    "    <label text=\"Hello, balloonui!\" fixedHeight=\"24\"/>"
+    "    <button id=\"101\" text=\"OK\" fixedWidth=\"88\" fixedHeight=\"32\" alignCross=\"near\"/>"
+    "  </vbox>"
+    "</frame-window>";
+
+DuiFrameWindowConfig cfg;
+std::unique_ptr<DuiControl> root = DuiXmlBuilder::FromFrameXml(kXml, cfg);
+
+HelloFrame frame;
+frame.Create(NULL, CWindow::rcDefault, _T("Hello"), WS_OVERLAPPEDWINDOW);
+frame.ApplyConfig(cfg);                    // 窗口属性要在 Create 之后应用
+frame.SetClientContent(std::move(root));   // <frame-window> 里的子树作为客户区
+frame.ResizeClient(320, 200);              // 整窗尺寸，标题栏也在其内
+frame.ShowWindow(SW_SHOW);
 ```
 
 更完整的示例可直接打开 DuiGallery 工程跑一下，每个控件都能在 Gallery 里
@@ -260,28 +295,43 @@ host->ShowWindow(SW_SHOW);
 
 ---
 
+## 测试
+
+控件库的单元测试在 `balloonui/Tests/` 下，编进 DuiGallery 工程（`Debug|Win32`）。
+Debug 版 `Bin/DuiGallery.exe` 启动时会跑完全部用例，并把结果写到
+`%TEMP%\DuiGallery_tests.log`，每组用例一行 `[summary] ... passed=N failed=M`，
+失败的用例以 `[FAIL]` 开头。所以不必看窗口：启动它，等日志出现，再结束进程即可。
+`DuiRichEditCaretTests` 的 `SystemCaretLeavesNoPixelsOnScreen` 要从真实屏幕截图，
+在隐藏桌面等看不到屏幕的环境里运行时会报 `screen capture failed`。
+
+---
+
 ## 目录结构
 
 ```
-third_party/
-├── balloonui/              控件库源码
-│   ├── Controls/           按类别分七大子目录
-│   ├── Tests/              单元 / 集成测试
-│   ├── BalloonUiApi.h      DLL 导入 / 导出宏
-│   ├── BalloonUiFeatures.h 按需裁剪开关
+balloonui/（仓库根目录）
+├── balloonui/                    控件库源码
+│   ├── Controls/                 按类别分七大子目录
+│   ├── Tests/                    单元 / 集成测试（编进 DuiGallery）
+│   ├── BalloonUiApi.h            DLL 导入 / 导出宏
+│   ├── BalloonUiFeatures.h       按需裁剪开关
 │   ├── DuiHost / DuiControl / DuiLayout / DuiTheme ...   kernel
-│   └── balloonui.vcxproj
-├── DuiGallery/             全控件演示窗
-├── NewChatDemo/            聊天界面 Demo
-├── CloudMelodyDesktop/     音乐播放器 Demo
-├── Demo*/                  小型单点 Demo
+│   ├── balloonui.vcxproj         编成 DLL
+│   └── balloonui_static.vcxproj  编成静态库
+├── DuiGallery/                   全控件演示窗
+├── NewChatDemo/                  聊天界面 Demo
+├── CloudMelodyDesktop/           音乐播放器 Demo
+├── XChat/                        仿某信 PC 客户端 Demo
+├── Demo*/                        小型单点 Demo
 ├── docs/
-│   ├── guides.html         配套指南
-│   └── images/             文档配图
-├── wtl10.1/                仓内 WTL 10.1
-├── Goldens/                金图（用于回归对比）
-├── Bin/                    输出目录
-└── Demos.sln               一次性加载所有工程
+│   ├── guides.html / guides_en.html          配套指南（源文件）
+│   ├── guides.md / guides_en.md              同上的 Markdown 版，由 html_to_md.py 生成
+│   ├── windowless-richedit*.md               无窗口富文本控件的设计与测试记录
+│   └── images/                               文档配图
+├── wtl10.1/                      仓内 WTL 10.1（含其 ReadMe.html）
+├── Bin/                          输出目录
+├── clear.bat                     清理编译产物（git clean -fdX）
+└── Demos.sln                     加载 DLL 版控件库与全部 Demo
 ```
 
 ---
