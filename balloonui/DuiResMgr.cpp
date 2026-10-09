@@ -2,6 +2,7 @@
 #include "DuiResMgr.h"
 #include "ImageEx.h"
 #include "DuiDpi.h"
+#include "DuiTheme.h"   // GetDefaultFontFace：默认字体的字体名
 
 namespace balloonwjui {
 
@@ -57,65 +58,54 @@ CImageEx* DuiResMgr::AcquireImage(LPCTSTR lpszFileName)
     return LoadImage(lpszFileName);
 }
 
-HFONT DuiResMgr::GetDefaultFont()
+namespace {
+
+// 默认字体的磅值：标准 Windows 界面正文字号。
+const int kDefaultFontPt = 9;
+// 1 英寸 = 72 磅。字高按 lfHeight = -MulDiv(pt, dpi, 72) 由磅值换算为设备像素。
+const int kPointsPerInch = 72;
+// 缓存键中 DPI 所占的起始位：低 32 位放 (磅值 << 1) | 是否加粗，高 32 位放 DPI。
+const int kDpiKeyShift = 32;
+
+// 由 (dpi, pt, bold) 生成字体缓存键。三者任一不同即得到不同的键。
+unsigned long long MakeFontKey(int dpi, int pt, bool bold)
 {
-    if (m_hDefaultFont)
-    {
-        return m_hDefaultFont;
-    }
-    if (m_dpi <= 0)
-    {
-        m_dpi = DuiDpi::GetSystemDpi();
-    }
-    LOGFONT lf = { 0 };
-    // 9pt -> negative height in device units. -MulDiv(9, dpi, 72).
-    // Matches the standard Windows UI body size; auto-applied to every
-    // DUI control + menu + tooltip because they all go through this.
-    lf.lfHeight = -::MulDiv(9, m_dpi, 72);
-    lf.lfWeight = FW_NORMAL;
-    lf.lfCharSet = GB2312_CHARSET;
-    lf.lfQuality = CLEARTYPE_QUALITY;
-    lf.lfPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
-    _tcsncpy_s(lf.lfFaceName, _T("Microsoft YaHei"), _TRUNCATE);
-    m_hDefaultFont = ::CreateFontIndirect(&lf);
-    if (!m_hDefaultFont)
-    {
-        // Fallback if YaHei isn't installed - shouldn't happen on Win7+.
-        _tcsncpy_s(lf.lfFaceName, _T("SimSun"), _TRUNCATE);
-        m_hDefaultFont = ::CreateFontIndirect(&lf);
-    }
-    return m_hDefaultFont;
+    const unsigned long long low = ((unsigned long long)(unsigned int)pt << 1)
+                                 | (bold ? 1ULL : 0ULL);
+    return ((unsigned long long)(unsigned int)dpi << kDpiKeyShift) | low;
 }
 
-HFONT DuiResMgr::GetFontByPointSize(int pt, bool bold)
+} // namespace
+
+int DuiResMgr::EnsureDpi()
 {
-    // 退化:磅值非法时回退到默认字体(避免 caller 检查负值)。
-    if (pt <= 0)
-    {
-        return GetDefaultFont();
-    }
     if (m_dpi <= 0)
     {
         m_dpi = DuiDpi::GetSystemDpi();
     }
+    return m_dpi;
+}
 
-    // 缓存 key:磅值左移 1 位 + 粗细标志, 与 admin ui::UiFont 同方案。
-    const int key = (pt << 1) | (bold ? 1 : 0);
-
-    auto it = m_fontCache.find(key);
-    if (it != m_fontCache.end())
+HFONT DuiResMgr::GetCachedFont(FontCache& cache, int dpi, int pt, bool bold, BYTE quality)
+{
+    const unsigned long long key = MakeFontKey(dpi, pt, bold);
+    FontCache::const_iterator it = cache.find(key);
+    if (it != cache.end())
     {
         return it->second;
     }
 
     LOGFONT lf = { 0 };
     // pt -> 设备单位的负 height:-MulDiv(pt, dpi, 72)。
-    lf.lfHeight = -::MulDiv(pt, m_dpi, 72);
+    lf.lfHeight = -::MulDiv(pt, dpi, kPointsPerInch);
     lf.lfWeight = bold ? FW_BOLD : FW_NORMAL;
-    lf.lfCharSet = GB2312_CHARSET;
-    lf.lfQuality = CLEARTYPE_QUALITY;
+    // 字体名取 DuiTheme 的默认字体（缺省为微软雅黑，宿主可按界面语言改换）。字符集：微软雅黑沿用 GB2312，
+    // 与改动之前一致；其它字体（如 Segoe UI、Yu Gothic UI）不支持 GB2312，指定它会让系统换用别的字体，改用 DEFAULT
+    const CString face = DuiTheme::Inst().GetDefaultFontFace();
+    lf.lfCharSet = (face.CompareNoCase(_T("Microsoft YaHei")) == 0) ? GB2312_CHARSET : DEFAULT_CHARSET;
+    lf.lfQuality = quality;
     lf.lfPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
-    _tcsncpy_s(lf.lfFaceName, _T("Microsoft YaHei"), _TRUNCATE);
+    _tcsncpy_s(lf.lfFaceName, face, _TRUNCATE);
     HFONT hf = ::CreateFontIndirect(&lf);
     if (!hf)
     {
@@ -125,48 +115,70 @@ HFONT DuiResMgr::GetFontByPointSize(int pt, bool bold)
     }
     if (hf)
     {
-        m_fontCache[key] = hf;
+        cache[key] = hf;
     }
     return hf;
 }
 
+void DuiResMgr::ReleaseCache(FontCache& cache)
+{
+    for (FontCache::iterator it = cache.begin(); it != cache.end(); ++it)
+    {
+        if (it->second)
+        {
+            ::DeleteObject(it->second);
+        }
+    }
+    cache.clear();
+}
+
+int DuiResMgr::ResolveDpi(int dpi)
+{
+    return (dpi > 0) ? dpi : EnsureDpi();
+}
+
+HFONT DuiResMgr::GetDefaultFont()
+{
+    return GetDefaultFontForDpi(EnsureDpi());
+}
+
+HFONT DuiResMgr::GetFontByPointSize(int pt, bool bold)
+{
+    return GetFontByPointSizeForDpi(pt, bold, EnsureDpi());
+}
+
 HFONT DuiResMgr::GetAntiAliasedFontByPointSize(int pt, bool bold)
+{
+    return GetAntiAliasedFontByPointSizeForDpi(pt, bold, EnsureDpi());
+}
+
+HFONT DuiResMgr::GetDefaultFontForDpi(int dpi)
+{
+    // 9pt 正文字号，与标准 Windows 界面一致；所有 DUI 控件、菜单、提示条
+    // 未单独指定字体时都用它。
+    return GetCachedFont(m_defaultFontCache, ResolveDpi(dpi), kDefaultFontPt, false,
+                         CLEARTYPE_QUALITY);
+}
+
+HFONT DuiResMgr::GetFontByPointSizeForDpi(int pt, bool bold, int dpi)
+{
+    // 退化:磅值非法时回退到默认字体(避免 caller 检查负值)。
+    if (pt <= 0)
+    {
+        return GetDefaultFontForDpi(dpi);
+    }
+    return GetCachedFont(m_fontCache, ResolveDpi(dpi), pt, bold, CLEARTYPE_QUALITY);
+}
+
+HFONT DuiResMgr::GetAntiAliasedFontByPointSizeForDpi(int pt, bool bold, int dpi)
 {
     if (pt <= 0)
     {
-        return GetDefaultFont();    // 默认字体已是 CLEARTYPE_QUALITY, 但
-                                    // pt<=0 是"用默认"语义, 不必返 AA。
+        return GetDefaultFontForDpi(dpi);   // 默认字体已是 CLEARTYPE_QUALITY, 但
+                                            // pt<=0 是"用默认"语义, 不必返 AA。
     }
-    if (m_dpi <= 0)
-    {
-        m_dpi = DuiDpi::GetSystemDpi();
-    }
-
-    const int key = (pt << 1) | (bold ? 1 : 0);
-    auto it = m_aaFontCache.find(key);
-    if (it != m_aaFontCache.end())
-    {
-        return it->second;
-    }
-
-    LOGFONT lf = { 0 };
-    lf.lfHeight = -::MulDiv(pt, m_dpi, 72);
-    lf.lfWeight = bold ? FW_BOLD : FW_NORMAL;
-    lf.lfCharSet = GB2312_CHARSET;
-    lf.lfQuality = ANTIALIASED_QUALITY;      // 与 GetFontByPointSize 唯一差别
-    lf.lfPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
-    _tcsncpy_s(lf.lfFaceName, _T("Microsoft YaHei"), _TRUNCATE);
-    HFONT hf = ::CreateFontIndirect(&lf);
-    if (!hf)
-    {
-        _tcsncpy_s(lf.lfFaceName, _T("SimSun"), _TRUNCATE);
-        hf = ::CreateFontIndirect(&lf);
-    }
-    if (hf)
-    {
-        m_aaFontCache[key] = hf;
-    }
-    return hf;
+    // 与 GetFontByPointSizeForDpi 唯一差别是 ANTIALIASED_QUALITY。
+    return GetCachedFont(m_aaFontCache, ResolveDpi(dpi), pt, bold, ANTIALIASED_QUALITY);
 }
 
 void DuiResMgr::SetDpi(int dpi)
@@ -175,61 +187,17 @@ void DuiResMgr::SetDpi(int dpi)
     {
         dpi = DuiDpi::kDefaultDpi;
     }
-    if (m_dpi == dpi)
-    {
-        return;
-    }
+    // 只切换当前 DPI，已创建的字体一律保留：控件可能仍保存着它们的句柄，在这里
+    // DeleteObject 会让这些控件随后用已失效的句柄绘制。各 DPI 的字体分别缓存，
+    // 切回用过的 DPI 时直接复用。
     m_dpi = dpi;
-    if (m_hDefaultFont)
-    {
-        ::DeleteObject(m_hDefaultFont);
-        m_hDefaultFont = nullptr;
-    }
-    // (pt, bold) 缓存也整张清空,惰性重建。
-    for (auto& kv : m_fontCache)
-    {
-        if (kv.second)
-        {
-            ::DeleteObject(kv.second);
-        }
-    }
-    m_fontCache.clear();
-    for (auto& kv : m_aaFontCache)
-    {
-        if (kv.second)
-        {
-            ::DeleteObject(kv.second);
-        }
-    }
-    m_aaFontCache.clear();
-    // Lazy rebuild on next GetDefaultFont() / GetFontByPointSize() so we
-    // don't pay for the CreateFontIndirect on a DPI change that no caller
-    // cares about.
 }
 
 DuiResMgr::~DuiResMgr()
 {
-    if (m_hDefaultFont)
-    {
-        ::DeleteObject(m_hDefaultFont);
-        m_hDefaultFont = nullptr;
-    }
-    for (auto& kv : m_fontCache)
-    {
-        if (kv.second)
-        {
-            ::DeleteObject(kv.second);
-        }
-    }
-    m_fontCache.clear();
-    for (auto& kv : m_aaFontCache)
-    {
-        if (kv.second)
-        {
-            ::DeleteObject(kv.second);
-        }
-    }
-    m_aaFontCache.clear();
+    ReleaseCache(m_defaultFontCache);
+    ReleaseCache(m_fontCache);
+    ReleaseCache(m_aaFontCache);
 }
 
 } // namespace balloonwjui

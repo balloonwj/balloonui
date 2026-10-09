@@ -9,6 +9,12 @@
 #include "DuiEditTests.h"
 #include "../DuiHost.h"
 #include "../DuiNotify.h"
+#if BUI_FEATURE_SEARCHBOX
+#include "../Controls/Input/DuiSearchBox.h"
+#endif
+#if BUI_FEATURE_COMBOBOX
+#include "../Controls/Input/DuiComboBox.h"
+#endif
 
 namespace balloonwjui {
 
@@ -72,6 +78,17 @@ const int kOffscreenH = 200;
 // 宿主子窗口的尺寸（像素）。通知类用例不校验布局，够大即可。
 const int kHostW = 300;
 const int kHostH = 40;
+
+// ---- 纯文本模式用例的样本文本 ----
+//
+// 取登录窗账号框的真实形态：6 个字符，末尾不带空白。富文本模式下，第 7 个
+// 位置是文档末尾那个看不见的段落结束符，选区能扩进去，界面上表现为文字后面
+// 多出一小块高亮。
+const TCHAR* const kPlainSample = _T("MY0127");
+const long kPlainSampleLen = 6;     // kPlainSample 的字符数
+
+// 选区终点取 -1 表示「一直到文档末尾」，与引擎的约定一致。
+const long kSelToEnd = -1;
 
 // =================================================================
 // 断言助手（与 DuiRichEditTests 保持一致）
@@ -366,8 +383,9 @@ static Result Test_ComputeIconRectGeometry()
 // 建一个已经布局过的控件，供图标与内边距类用例使用。
 // **必须先给矩形**：文本区是由控件矩形减去边框和内边距算出来的，没有矩形
 // 时怎么改内边距都看不出差别。
-//   e：待布局的控件。
-static void SetUpLaidOutEdit(DuiEdit& e)
+//   e：待布局的控件。参数类型取基类，是为了让纯文本模式用例里作对照的
+//      DuiRichEdit 也能用同一个助手。
+static void SetUpLaidOutEdit(DuiRichEdit& e)
 {
     RECT rc;
     ::SetRect(&rc, 0, 0, kCtrlW, kCtrlH);
@@ -812,6 +830,165 @@ static Result Test_SetTextNotifiesAndNoNotifyVariantDoesNot()
     return OK(_T("SetTextNotifiesAndNoNotifyVariantDoesNot"));
 }
 
+// =================================================================
+// 八、纯文本模式
+// =================================================================
+//
+// 2026-09-30 登录窗账号框出现的问题：光标在文字末尾时按 Shift+→、或者拖选
+// 越过文字末尾，文字后面会多出一小块高亮，看起来像是账号末尾有空格。实际
+// 上文本里并没有空白字符，被选中的是富文本模式下文档末尾那个看不见的段落
+// 结束符。纯文本模式下引擎不允许选区越过文本末尾，这一块也就选不中了。
+//
+// 普通输入框用不到分段格式（字体与颜色都是整体设置的），因此一律切到纯
+// 文本模式。下面几条用例都直接向引擎查询，而不是读控件自己记下的标志位，
+// 这样引擎若拒绝了切换，用例能如实报出来。
+
+// 引擎当前是否处于纯文本模式。
+//   edit：被查询的控件（引用，不转移所有权）。
+//   返回：true 表示引擎报告的文本模式带有纯文本标志。
+static bool IsEnginePlainText(DuiRichEdit& edit)
+{
+    const LRESULT mode = edit.SendMessageToEngine(EM_GETTEXTMODE, 0, 0);
+    return (mode & TM_PLAINTEXT) != 0;
+}
+
+// 模拟按住 Shift 再按一次方向键 →。
+//
+// 排版引擎判断 Shift 是否按下读的是本线程的键盘状态，所以这里临时改写键盘
+// 状态，按键送完立即恢复，不影响后续用例。
+//   edit：接收按键的控件（引用，不转移所有权）。
+static void PressShiftRight(DuiRichEdit& edit)
+{
+    BYTE keys[256];
+    ::GetKeyboardState(keys);
+    const BYTE oldShift = keys[VK_SHIFT];
+    //键盘状态里最高位置位表示该键处于按下状态
+    keys[VK_SHIFT] = 0x80;
+    ::SetKeyboardState(keys);
+
+    edit.OnKeyDown(VK_RIGHT, 0);
+
+    keys[VK_SHIFT] = oldShift;
+    ::SetKeyboardState(keys);
+}
+
+//新建的普通输入框，引擎处于纯文本模式。
+//
+//这一条钉住构造函数里的切换：切换只在文档为空时才会被引擎接受，挪到设置
+//文字之后就会静默失效，界面上看不出任何异常，直到有人再次选中那个段落标记。
+static Result Test_PlainTextModeByDefault()
+{
+    DuiEdit e;
+    EXPECT_BOOL(IsEnginePlainText(e), true, _T("PlainText/engineModeAfterConstruct"));
+
+    //写入文字之后仍然是纯文本模式。
+    e.SetText(kPlainSample);
+    EXPECT_BOOL(IsEnginePlainText(e), true, _T("PlainText/engineModeAfterSetText"));
+    return OK(_T("PlainTextModeByDefault"));
+}
+
+//选区不能越过文本末尾：无论是指定终点超出一格，还是用 -1 表示一直选到末尾，
+//读回来的终点都应当等于文本长度。
+static Result Test_SelectionStopsAtTextEnd()
+{
+    DuiEdit e;
+    e.SetText(kPlainSample);
+    EXPECT_INT(e.GetTextLength(), kPlainSampleLen, _T("SelEnd/textLength"));
+
+    long cpMin = 0;
+    long cpMax = 0;
+
+    //终点比文本多出一格：多出的那一格正是段落结束符，不该被选中。
+    e.SetSel(kPlainSampleLen, kPlainSampleLen + 1);
+    e.GetSel(cpMin, cpMax);
+    EXPECT_INT(cpMin, kPlainSampleLen, _T("SelEnd/pastEndMin"));
+    EXPECT_INT(cpMax, kPlainSampleLen, _T("SelEnd/pastEndMax"));
+
+    //全选只覆盖文字本身。
+    e.SetSel(0, kSelToEnd);
+    e.GetSel(cpMin, cpMax);
+    EXPECT_INT(cpMin, 0,               _T("SelEnd/selectAllMin"));
+    EXPECT_INT(cpMax, kPlainSampleLen, _T("SelEnd/selectAllMax"));
+    return OK(_T("SelectionStopsAtTextEnd"));
+}
+
+//光标在文字末尾时按 Shift+→，选区保持为空。
+//
+//同一套按键先在一个富文本模式的单行 DuiRichEdit 上跑一遍作为对照：那边必须
+//真的选中了一格。对照组若没有选中，说明模拟按键没有生效，这时如果只看输入框
+//这一侧，用例会在什么都没验证的情况下误报通过。
+static Result Test_ShiftRightAtEndSelectsNothing()
+{
+    long cpMin = 0;
+    long cpMax = 0;
+
+    //对照组：富文本模式下，段落结束符可以被选中。
+    DuiRichEdit rich;
+    rich.SetMultiLine(false);
+    SetUpLaidOutEdit(rich);
+    rich.SetText(kPlainSample);
+    rich.SetSel(kPlainSampleLen, kPlainSampleLen);
+    PressShiftRight(rich);
+    rich.GetSel(cpMin, cpMax);
+    EXPECT_INT(cpMax, kPlainSampleLen + 1, _T("ShiftRight/richControlSelectsEop"));
+
+    //被测对象：普通输入框。
+    DuiEdit e;
+    SetUpLaidOutEdit(e);
+    e.SetText(kPlainSample);
+    e.SetSel(kPlainSampleLen, kPlainSampleLen);
+    PressShiftRight(e);
+    e.GetSel(cpMin, cpMax);
+    EXPECT_INT(cpMin, kPlainSampleLen, _T("ShiftRight/editMin"));
+    EXPECT_INT(cpMax, kPlainSampleLen, _T("ShiftRight/editMax"));
+    return OK(_T("ShiftRightAtEndSelectsNothing"));
+}
+
+//密码框在纯文本模式下照常工作：引擎显示掩码，取回的仍是原文。
+static Result Test_PasswordWorksInPlainTextMode()
+{
+    DuiEdit e;
+    e.SetPassword(true);
+    e.SetText(kPlainSample);
+
+    EXPECT_BOOL(IsEnginePlainText(e), true, _T("Password/plainText"));
+    EXPECT_BOOL(e.IsPasswordMode(),   true, _T("Password/engineMaskOn"));
+    EXPECT_STR(e.GetText(), kPlainSample,   _T("Password/textReadBack"));
+    return OK(_T("PasswordWorksInPlainTextMode"));
+}
+
+//派生自 DuiEdit 的输入框同样处于纯文本模式：搜索框本身，以及可编辑下拉框
+//内嵌的那个输入框。登录窗的账号框就是后者。
+static Result Test_SubclassesInheritPlainTextMode()
+{
+#if BUI_FEATURE_SEARCHBOX
+    DuiSearchBox search;
+    EXPECT_BOOL(IsEnginePlainText(search), true, _T("Inherit/searchBox"));
+#endif
+
+#if BUI_FEATURE_COMBOBOX
+    DuiComboBox combo;
+    combo.SetEditable(true);
+    DuiRichEdit* pInner = nullptr;
+    const std::vector<std::unique_ptr<DuiControl>>& children = combo.Children();
+    for (size_t i = 0; i < children.size(); ++i)
+    {
+        pInner = dynamic_cast<DuiRichEdit*>(children[i].get());
+        if (pInner != nullptr)
+        {
+            break;
+        }
+    }
+    if (pInner == nullptr)
+    {
+        return Fail(_T("Inherit/comboHasEdit"),
+                    _T("Inherit/comboHasEdit: editable combo box has no inner edit child"));
+    }
+    EXPECT_BOOL(IsEnginePlainText(*pInner), true, _T("Inherit/comboInnerEdit"));
+#endif
+    return OK(_T("SubclassesInheritPlainTextMode"));
+}
+
 } // 匿名命名空间
 
 CString RunAll()
@@ -844,6 +1021,12 @@ CString RunAll()
         // ---- 通知（需要真窗口）----
         { _T("EnterEscapeNotifications"),         &Test_EnterEscapeNotifications         },
         { _T("SetTextNotifiesAndNoNotifyVariantDoesNot"), &Test_SetTextNotifiesAndNoNotifyVariantDoesNot },
+        // ---- 纯文本模式 ----
+        { _T("PlainTextModeByDefault"),           &Test_PlainTextModeByDefault           },
+        { _T("SelectionStopsAtTextEnd"),          &Test_SelectionStopsAtTextEnd          },
+        { _T("ShiftRightAtEndSelectsNothing"),    &Test_ShiftRightAtEndSelectsNothing    },
+        { _T("PasswordWorksInPlainTextMode"),     &Test_PasswordWorksInPlainTextMode     },
+        { _T("SubclassesInheritPlainTextMode"),   &Test_SubclassesInheritPlainTextMode   },
     };
 
     CString out;

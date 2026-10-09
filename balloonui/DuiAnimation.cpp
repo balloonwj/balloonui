@@ -138,10 +138,15 @@ void DuiAnim::Finish()
 // DuiAnimMgr
 // =====================================================================
 
-// 共享脉冲定时器的触发间隔，单位毫秒。16ms ≈ 60Hz，与 DuiAnimation.h 顶部
-// 注释所述一致 —— hover 渐变 / popup 滑入 / 滚动平滑这类 150~300ms 的短动画
-// 在 60Hz 下已经看不出台阶，再快只是白白多占 CPU。
-static const UINT kAnimPulseIntervalMs = 16;
+// 共享脉冲定时器<u>请求</u>的触发间隔，单位毫秒。目标是约 60Hz：hover 渐变 / popup
+// 滑入 / 滚动平滑这类 150~300ms 的短动画在 60Hz 下已经看不出台阶。
+//
+// 取 10 而不是 16（2026-09-30 修改）：系统定时器约 15.6ms 才跳一次，SetTimer 的实际触发
+// 时刻会对齐到这个节拍上。请求 16ms 时，16 比一个节拍多出一点点，大多要等到第二个节拍
+// （约 31ms）才触发 —— 实测平均间隔 25ms、约 40Hz，滚动动画肉眼可见地发顿。请求 10ms
+// 时每个节拍都会触发，实测平均间隔 16.5ms、约 60Hz。10 也是 SetTimer 允许的最小值
+// （USER_TIMER_MINIMUM），再小会被系统改回 10。定时器只在有动画时才存在，空闲期不耗电。
+static const UINT kAnimPulseIntervalMs = 10;
 
 DuiAnimMgr& DuiAnimMgr::Inst()
 {

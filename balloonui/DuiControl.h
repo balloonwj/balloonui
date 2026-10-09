@@ -81,6 +81,32 @@ public:
     DuiHost*    GetHost()   const { return m_pHost; }
     void        AttachToHost(DuiHost* host);   // sets m_pHost recursively
 
+    // ---- DPI 与字体 ----
+    //
+    // 不同缩放比例的显示器上，窗口各有各的 DPI。控件绘制、测量文字时应按自己所在
+    // 窗口的 DPI 取字体，而不是按 DuiResMgr 的全局 DPI —— 后者只是最近一次建窗或
+    // DPI 变化时记下的值，多显示器缩放比例不同时会与本窗口不符。
+
+    // 本控件所用的 DPI：已挂到宿主且宿主窗口已创建时，取宿主窗口的 DPI（随窗口所在
+    // 显示器变化）；否则取 DuiResMgr 的当前全局 DPI。
+    //   返回：DPI，恒 > 0。
+    int         GetDpi() const;
+
+    // 按本控件的 DPI 从 DuiResMgr 取共享字体，参数含义同 DuiResMgr 的同名接口。
+    // 所有权在 DuiResMgr，<u>不要</u> DeleteObject。DPI 变化后再取得到的是按新 DPI
+    // 缩放的另一份，所以不要长期保存句柄，绘制与测量时现取即可（DuiResMgr 有缓存，
+    // 现取只是一次查表）。
+    HFONT       GetDefaultFont() const;
+    HFONT       GetFontByPointSize(int pt, bool bold = false) const;
+    HFONT       GetAntiAliasedFontByPointSize(int pt, bool bold = false) const;
+
+    // 宿主窗口的 DPI 变化（收到 WM_DPICHANGED）时，宿主对整棵控件树逐个调用本函数，
+    // 父控件先于子控件；随后整棵树重新布局并重画。按 DPI 预先算好并缓存了字体或
+    // 尺寸参数的控件覆写它刷新缓存（例如 DuiRichEdit 按新 DPI 重设默认字体）。
+    // 调用时 GetDpi() 已返回新值。默认实现什么也不做。
+    //   dpi：新的 DPI。
+    virtual void OnDpiChanged(int /*dpi*/) {}
+
     // Identity
     void        SetCtrlId(UINT id) { m_uCtrlId = id; }
     UINT        GetCtrlId() const  { return m_uCtrlId; }
@@ -225,7 +251,21 @@ public:
     virtual bool OnRawMessage(UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT& lResult);
 
     // Convenience: invalidate own rect through the host.
+    //
+    // 失效矩形会与祖先链上每一个「把子控件裁剪在自己矩形内绘制」的容器
+    // （GetChildClipRect 返回 true 的祖先，目前是 DuiScrollView）依次求交，再交给
+    // 宿主。这类容器矩形之外的失效画不出任何东西，却会让宿主把相邻控件一并重画：
+    // 滚动视口里的内容控件高度往往远超视口，滚动后它的矩形伸到视口上下方，不求交
+    // 的话每次滚动都会让整个窗口重画。交集为空（本控件此刻完全不可见）时不产生失效。
     void Invalidate();
+
+    // 本控件绘制子控件时是否把它们裁剪在某个矩形之内；是则经 outClip 返回该矩形
+    // （宿主客户区坐标）。Invalidate 据此把子孙控件的失效区域限制在可见范围内。
+    //   outClip：出参，返回 true 时填写裁剪矩形；返回 false 时不会被读取。
+    //   返回：默认 false —— 普通容器不裁剪子控件，子控件可能本来就画在父容器之外，
+    //         其失效必须原样上报。覆写为 true 的控件必须保证 OnPaint 确实把子控件
+    //         裁在返回的矩形之内，否则矩形外的那部分会得不到重画。
+    virtual bool GetChildClipRect(RECT& /*outClip*/) const { return false; }
 
     // Convenience: ask host to capture / release / set focus / set timer to this control.
     void Capture();
@@ -249,6 +289,14 @@ protected:
     // Internal: host calls this when adding control to the tree.
     void SetParent_(DuiControl* parent) { m_pParent = parent; }
     void SetHost_(DuiHost* host)        { m_pHost = host; }
+
+    // 宿主内部使用：对本控件及其全部子孙按先父后子的顺序调用 OnDpiChanged(dpi)。
+    void DispatchDpiChanged_(int dpi);
+
+    // 宿主内部使用：按各子孙控件当前的矩形，把整棵子树（不含本控件）逐层重新布局
+    // 一遍。容器给子控件 SetRect 时，矩形没变的子控件不会重新布局，而 DPI 变化后
+    // 它们的内部排版（依赖字号）可能已经过时，所以 DPI 变化时要显式走这一遍。
+    void RelayoutDescendants_();
 
 protected:
     RECT          m_rcItem{};       // host-client coords

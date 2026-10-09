@@ -4,6 +4,7 @@
 #if BUI_FEATURE_TOOLTIP
 
 #include "../../DuiResMgr.h"
+#include "../../DuiDpi.h"
 
 namespace balloonwjui {
 
@@ -41,6 +42,10 @@ public:
         {
             return;
         }
+
+        // 提示框窗口尚未创建，按将要弹出的位置所在显示器的 DPI 取字体；
+        // 测量与绘制都用这一个 DPI，保证尺寸与文字一致。
+        m_dpi = DuiDpi::GetDpiForPoint(screenPt);
 
         // Measure text in the default DUI font (Microsoft YaHei).
         SIZE sz = MeasureText(m_text);
@@ -89,12 +94,13 @@ private:
         GetClientRect(&rc);
 
         // Background already painted by OnEraseBkgnd; draw the text.
-        HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+        HFONT useFont = DuiResMgr::Inst().GetDefaultFontForDpi(m_dpi);
         HFONT oldFont = useFont ? (HFONT)::SelectObject(dc, useFont) : nullptr;
         int oldBk = ::SetBkMode(dc, TRANSPARENT);
         COLORREF oldClr = ::SetTextColor(dc, RGB(40, 40, 40));
         rc.DeflateRect(8, 4);
-        ::DrawText(dc, m_text, -1, &rc, DT_LEFT | DT_TOP | DT_SINGLELINE);
+        //单行与多行（文字含换行符）用不同的格式标志，与 MeasureText 的测量方式一致
+        ::DrawText(dc, m_text, -1, &rc, DuiToolTipMgr::TextDrawFlags(m_text));
         ::SetTextColor(dc, oldClr);
         ::SetBkMode(dc, oldBk);
         if (oldFont)
@@ -106,10 +112,9 @@ private:
     SIZE MeasureText(const CString& text) const
     {
         HDC hdc = ::GetDC(nullptr);
-        HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+        HFONT useFont = DuiResMgr::Inst().GetDefaultFontForDpi(m_dpi);
         HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
-        SIZE sz = { 0, 0 };
-        ::GetTextExtentPoint32(hdc, text, text.GetLength(), &sz);
+        const SIZE sz = DuiToolTipMgr::MeasureTextExtent(hdc, text);
         if (oldFont)
         {
             ::SelectObject(hdc, oldFont);
@@ -123,6 +128,7 @@ public:
 
 private:
     CString m_text;
+    int     m_dpi = 0;   // Show 时按弹出位置所在显示器取的 DPI；0 = 尚未 Show，按全局 DPI 处理
 };
 
 // =====================================================================
@@ -133,6 +139,38 @@ DuiToolTipMgr& DuiToolTipMgr::Inst()
 {
     static DuiToolTipMgr s_inst;
     return s_inst;
+}
+
+UINT DuiToolTipMgr::TextDrawFlags(const CString& text)
+{
+    const UINT flags = DT_LEFT | DT_TOP;
+    //含换行符时按多行排版，DrawText 遇到换行符会另起一行
+    if (text.Find(_T('\n')) >= 0)
+    {
+        return flags;
+    }
+    return flags | DT_SINGLELINE;
+}
+
+SIZE DuiToolTipMgr::MeasureTextExtent(HDC hdc, const CString& text)
+{
+    SIZE sz = { 0, 0 };
+    if (text.IsEmpty())
+    {
+        return sz;
+    }
+    const UINT flags = TextDrawFlags(text);
+    if ((flags & DT_SINGLELINE) != 0)
+    {
+        ::GetTextExtentPoint32(hdc, text, text.GetLength(), &sz);
+        return sz;
+    }
+    //多行：DT_CALCRECT 只计算、不绘制，算出的矩形宽为最长一行、高为行数 × 行高
+    RECT rc = { 0, 0, 0, 0 };
+    ::DrawText(hdc, text, text.GetLength(), &rc, flags | DT_CALCRECT);
+    sz.cx = rc.right - rc.left;
+    sz.cy = rc.bottom - rc.top;
+    return sz;
 }
 
 void DuiToolTipMgr::Register(DuiControl* ctrl, LPCTSTR text)

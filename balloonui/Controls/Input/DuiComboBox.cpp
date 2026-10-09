@@ -17,10 +17,10 @@ namespace {
 // Combo body fill / border colors. The body is rounded with kCornerPx and
 // the border tracks input state so the user can see hover / open / focus
 // the same way DuiEdit does. Disabled drops to a muted gray.
+// The normal / active border colors are per-instance members (m_borderNormal /
+// m_borderActive, see SetBorderColors); their defaults live in DuiComboBox.h.
 const COLORREF kBgDisabled     = RGB(240, 240, 240);   // flat light gray
 const COLORREF kBorderDisabled = RGB(190, 190, 190);   // muted gray
-const COLORREF kBorderActive   = RGB( 80, 130, 200);   // hover OR popup-open
-const COLORREF kBorderNormal   = RGB(150, 150, 150);   // resting medium gray
 
 // Down arrow on the right side. Color follows enabled state; the disabled
 // variant is light gray so the arrow visibly fades along with the border.
@@ -131,6 +131,25 @@ RECT ClampPopupToWorkArea(const RECT& comboScreen, int popupW, int popupH,
     return rc;
 }
 
+PopupNotifyAction ClassifyPopupNotify(UINT code, UINT ctrlId)
+{
+    //只认列表本身发来的通知：列表内部滚动条滚动时同样发 DUIN_VALUECHANGED，
+    //它的 ctrlId 不是 kPopupListCtrlId，不能当成选中
+    if (ctrlId != kPopupListCtrlId)
+    {
+        return kPopupNotifyIgnore;
+    }
+    if (code == DUIN_VALUECHANGED)
+    {
+        return kPopupNotifySelect;
+    }
+    if (code == (UINT)DuiListBox::DUITN_ITEMDELETE)
+    {
+        return kPopupNotifyItemDelete;
+    }
+    return kPopupNotifyIgnore;
+}
+
 } // namespace combopopup
 
 // ---------------------------------------------------------------------------
@@ -208,9 +227,11 @@ public:
         MESSAGE_HANDLER_EX(WM_DUI_NOTIFY, OnDuiNotify)
     END_MSG_MAP()
 
+    // 打开浮层。items 为各行（文字、副文字、图标，见 DuiComboBox::BuildPopupItems），
+    // iconSize 为图标边长（像素），其余参数含义见下拉框的同名设置。
     void Open(DuiComboBox* owner, const RECT& screenRc,
-              const std::vector<CString>& items, int curSel, int itemH,
-              bool showItemDelete);
+              const std::vector<DuiComboBox::PopupItem>& items, int curSel, int itemH,
+              int iconSize, bool showItemDelete);
 
     // Standard WTL hook: runs after WM_NCDESTROY, never inside one of our
     // own message handlers, so 'delete this' is safe here.
@@ -256,8 +277,8 @@ private:
 };
 
 void DuiComboBoxPopup::Open(DuiComboBox* owner, const RECT& screenRc,
-                            const std::vector<CString>& items, int curSel, int itemH,
-                            bool showItemDelete)
+                            const std::vector<DuiComboBox::PopupItem>& items, int curSel, int itemH,
+                            int iconSize, bool showItemDelete)
 {
     m_owner = owner;
     Create(NULL, (RECT*)&screenRc, NULL, WS_POPUP | WS_BORDER, WS_EX_TOOLWINDOW | WS_EX_TOPMOST);
@@ -277,14 +298,19 @@ void DuiComboBoxPopup::Open(DuiComboBox* owner, const RECT& screenRc,
                         SWP_NOZORDER | SWP_NOACTIVATE);
 
     auto lb = std::unique_ptr<DuiListBox>(new DuiListBox());
-    lb->SetCtrlId(1);
+    //OnDuiNotify 据这个 id 区分列表本身与列表内部滚动条发来的通知
+    lb->SetCtrlId(combopopup::kPopupListCtrlId);
     lb->SetItemHeight(itemH);
     // 每行右侧的删除叉由 combo 决定开不开；关着时 DuiListBox 的绘制与命中
     // 与从前完全一致。
     lb->SetShowItemDelete(showItemDelete);
+    // 每行的图标与副文字（没设的行为 NULL / 空串，绘制与以前相同）
+    lb->SetIconSize(iconSize);
     for (size_t i = 0; i < items.size(); ++i)
     {
-        lb->AddItem(items[i], (LPARAM)i);
+        const int row = lb->AddItem(items[i].m_text, (LPARAM)i);
+        lb->SetItemIcon(row, items[i].m_icon);
+        lb->SetItemSubText(row, items[i].m_subText);
     }
     if (curSel >= 0 && curSel < (int)items.size())
     {
@@ -349,7 +375,10 @@ LRESULT DuiComboBoxPopup::OnDuiNotify(UINT, WPARAM, LPARAM lParam)
     {
         return 0;
     }
-    if (n->code == DUIN_VALUECHANGED && m_owner)
+    //宿主会把树里所有控件的通知都转过来，包括列表内部滚动条的 DUIN_VALUECHANGED（extra 是
+    //滚动位置）。只比较通知码的话，滚一下滚轮就被当成选中、浮层随即关闭，故先按 ctrlId 分类
+    const combopopup::PopupNotifyAction action = combopopup::ClassifyPopupNotify(n->code, n->ctrlId);
+    if (action == combopopup::kPopupNotifySelect && m_owner)
     {
         // Write back to combo first; then schedule our own teardown to run
         // after this handler unwinds. Calling DestroyWindow synchronously
@@ -358,7 +387,7 @@ LRESULT DuiComboBoxPopup::OnDuiNotify(UINT, WPARAM, LPARAM lParam)
         m_owner->OnPopupSelected((int)n->extra);
         RequestClose();
     }
-    else if (n->code == (UINT)DuiListBox::DUITN_ITEMDELETE && m_owner)
+    else if (action == combopopup::kPopupNotifyItemDelete && m_owner)
     {
         // 点了某行的删除叉。先把通知冒给 combo 的宿主（业务侧多半要弹二次确认），
         // 再收掉浮层 —— 与选中那一支同样的理由：不能在本 handler 里同步销毁自己。
@@ -386,6 +415,9 @@ DuiComboBox::~DuiComboBox()
 int DuiComboBox::AddString(LPCTSTR sz)
 {
     m_items.push_back(sz ? CString(sz) : CString());
+    // 图标与副文字两个数组始终与 m_items 等长
+    m_itemIcons.push_back(NULL);
+    m_itemSubTexts.push_back(CString());
     Invalidate();
     return (int)m_items.size() - 1;
 }
@@ -397,6 +429,14 @@ void DuiComboBox::DeleteString(int index)
         return;
     }
     m_items.erase(m_items.begin() + index);
+    if (index < (int)m_itemIcons.size())
+    {
+        m_itemIcons.erase(m_itemIcons.begin() + index);
+    }
+    if (index < (int)m_itemSubTexts.size())
+    {
+        m_itemSubTexts.erase(m_itemSubTexts.begin() + index);
+    }
     if (m_curSel == index)
     {
         m_curSel = -1;
@@ -411,8 +451,70 @@ void DuiComboBox::DeleteString(int index)
 void DuiComboBox::ResetContent()
 {
     m_items.clear();
+    m_itemIcons.clear();
+    m_itemSubTexts.clear();
     m_curSel = -1;
     Invalidate();
+}
+
+void DuiComboBox::SetItemIcon(int index, HBITMAP hbm)
+{
+    if (index < 0 || index >= (int)m_items.size())
+    {
+        return;
+    }
+    m_itemIcons.resize(m_items.size(), NULL);
+    m_itemIcons[index] = hbm;
+}
+
+HBITMAP DuiComboBox::GetItemIcon(int index) const
+{
+    if (index < 0 || index >= (int)m_items.size() || index >= (int)m_itemIcons.size())
+    {
+        return NULL;
+    }
+    return m_itemIcons[index];
+}
+
+void DuiComboBox::SetItemSubText(int index, LPCTSTR sz)
+{
+    if (index < 0 || index >= (int)m_items.size())
+    {
+        return;
+    }
+    m_itemSubTexts.resize(m_items.size());
+    m_itemSubTexts[index] = sz ? sz : _T("");
+}
+
+CString DuiComboBox::GetItemSubText(int index) const
+{
+    if (index < 0 || index >= (int)m_items.size() || index >= (int)m_itemSubTexts.size())
+    {
+        return CString();
+    }
+    return m_itemSubTexts[index];
+}
+
+std::vector<DuiComboBox::PopupItem> DuiComboBox::BuildPopupItems(const std::vector<int>& filteredIndices) const
+{
+    std::vector<PopupItem> out;
+    const bool filtering = !filteredIndices.empty();
+    const size_t count = filtering ? filteredIndices.size() : m_items.size();
+    out.reserve(count);
+    for (size_t k = 0; k < count; ++k)
+    {
+        const int realIdx = filtering ? filteredIndices[k] : (int)k;
+        if (realIdx < 0 || realIdx >= (int)m_items.size())
+        {
+            continue;
+        }
+        PopupItem item;
+        item.m_text = m_items[realIdx];
+        item.m_subText = GetItemSubText(realIdx);
+        item.m_icon = GetItemIcon(realIdx);
+        out.push_back(item);
+    }
+    return out;
 }
 
 CString DuiComboBox::GetItemText(int index) const
@@ -467,27 +569,31 @@ void DuiComboBox::OpenPopup()
     // Decide which items to show. Incremental-search filter (when active)
     // narrows the list; the filter map also remaps "selected popup index"
     // back to the original item index in OnPopupSelected.
-    std::vector<CString> popupItems;
+    // 各行的文字、副文字与图标由 BuildPopupItems 按过滤映射表取出（未过滤时取全部）。
+    const bool filtering = m_incSearch && !m_filteredIndices.empty();
+    const std::vector<int> noFilter;
+    std::vector<PopupItem> popupItems = BuildPopupItems(filtering ? m_filteredIndices : noFilter);
     int popupCurSel = -1;
-    if (m_incSearch && !m_filteredIndices.empty())
+    if (filtering)
     {
-        popupItems.reserve(m_filteredIndices.size());
+        // 浮层里的第几行：只数映射表里有效的下标（与 BuildPopupItems 跳过越界下标的口径一致）
+        int row = 0;
         for (size_t k = 0; k < m_filteredIndices.size(); ++k)
         {
-            int realIdx = m_filteredIndices[k];
-            if (realIdx >= 0 && realIdx < (int)m_items.size())
+            const int realIdx = m_filteredIndices[k];
+            if (realIdx < 0 || realIdx >= (int)m_items.size())
             {
-                popupItems.push_back(m_items[realIdx]);
-                if (realIdx == m_curSel)
-                {
-                    popupCurSel = (int)k;
-                }
+                continue;
             }
+            if (realIdx == m_curSel)
+            {
+                popupCurSel = row;
+            }
+            ++row;
         }
     }
     else
     {
-        popupItems = m_items;
         popupCurSel = m_curSel;
     }
     if (popupItems.empty())
@@ -525,7 +631,7 @@ void DuiComboBox::OpenPopup()
     // raw pointer for re-entry checks only - ownership is on the popup
     // itself once it's been Open()'d.
     m_popup = new DuiComboBoxPopup();
-    m_popup->Open(this, rc, popupItems, popupCurSel, m_itemH, m_showItemDelete);
+    m_popup->Open(this, rc, popupItems, popupCurSel, m_itemH, m_iconSize, m_showItemDelete);
     m_popupOpen = true;
 }
 
@@ -652,7 +758,7 @@ void DuiComboBox::OnPaint(HDC hdc, const RECT& rcDirty)
     }
     else
     {
-        brdClr = (m_bHover || m_popupOpen) ? kBorderActive : kBorderNormal;
+        brdClr = (m_bHover || m_popupOpen) ? m_borderActive : m_borderNormal;
     }
     HBRUSH br = ::CreateSolidBrush(bgClr);
     HPEN   pn = ::CreatePen(PS_SOLID, 1, brdClr);
@@ -704,7 +810,7 @@ void DuiComboBox::OnPaint(HDC hdc, const RECT& rcDirty)
                        ? m_items[m_curSel] : CString();
         if (!text.IsEmpty())
         {
-            HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+            HFONT useFont = GetDefaultFont();
             HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
             int oldBk = ::SetBkMode(hdc, TRANSPARENT);
             COLORREF oldClr = ::SetTextColor(hdc, m_bEnabled ? kTextEnabled : kTextDisabled);
@@ -804,6 +910,17 @@ void DuiComboBox::SetArrowColor(COLORREF c)
         return;
     }
     m_arrowColor = c;
+    Invalidate();
+}
+
+void DuiComboBox::SetBorderColors(COLORREF normal, COLORREF active)
+{
+    if (m_borderNormal == normal && m_borderActive == active)
+    {
+        return;
+    }
+    m_borderNormal = normal;
+    m_borderActive = active;
     Invalidate();
 }
 

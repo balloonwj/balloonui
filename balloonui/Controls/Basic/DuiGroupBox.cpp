@@ -168,7 +168,7 @@ void DuiGroupBox::OnPaint(HDC hdc, const RECT& rcDirty)
     // behind so the border line passes cleanly behind the text.
     if (!m_title.IsEmpty())
     {
-        HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+        HFONT useFont = GetDefaultFont();
         HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
         SIZE sz = {};
         ::GetTextExtentPoint32(hdc, m_title, m_title.GetLength(), &sz);

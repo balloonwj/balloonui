@@ -273,7 +273,10 @@ static HBITMAP Make9x9Bitmap()
     return hbm;
 }
 
-// Sample one pixel from a top-down 32bpp DIBSection.
+// 从一张自上而下存储的 32 位 DIBSection 里取一个像素。本文件的位图全部以负的 biHeight 创建，
+// 内存第 y 行就是显示的第 y 行。不要按 GetObject 返回的 dsBmih.biHeight 去"修正" y：GetObject
+// 对自上而下存储的位图同样返回正的高度，原先按它翻转行号，正好抵消了 DuiNinePatch::Draw 里
+// 同样的翻转，把"自上而下存储的源图被画颠倒"这个问题掩盖了（2026-10-01 修复）。
 static COLORREF SampleHbm(HBITMAP hbm, int x, int y)
 {
     DIBSECTION ds = {};
@@ -283,11 +286,6 @@ static COLORREF SampleHbm(HBITMAP hbm, int x, int y)
     }
     ARGB* px = (ARGB*)ds.dsBm.bmBits;
     int stride = ds.dsBm.bmWidthBytes / 4;
-    int H = ds.dsBmih.biHeight;
-    if (H > 0)  // bottom-up: invert y
-    {
-        y = H - 1 - y;
-    }
     ARGB p = px[y * stride + x];
     return RGB(p.r, p.g, p.b);
 }

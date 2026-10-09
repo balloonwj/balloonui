@@ -148,7 +148,8 @@ void DuiInspector::PaintOverlay(DuiHost* host, HDC hdc) const
         return;
     }
 
-    HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+    // 叠加层画在宿主窗口上，按宿主窗口的 DPI 取字体。
+    HFONT useFont = DuiResMgr::Inst().GetDefaultFontForDpi(host->GetDpi());
     HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
     SIZE sz = {};
     ::GetTextExtentPoint32(hdc, info, info.GetLength(), &sz);

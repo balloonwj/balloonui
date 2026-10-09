@@ -621,7 +621,7 @@ auto root = balloonwjui::DuiXmlBuilder::FromString(xml.c_str(), fac);
 
 | 层级 | API | 影响 |
 | --- | --- | --- |
-| 全局字体 | `DuiResMgr::Inst().GetDefaultFont()` | 所有控件默认 UI 字体 |
+| 全局字体 | `DuiControl::GetDefaultFont()`（控件内）/ `DuiResMgr::Inst().GetDefaultFontForDpi(dpi)` | 所有控件默认 UI 字体，按控件所在窗口的 DPI 缩放 |
 | 主题色 | `DuiTheme` 命名空间常量 | 品牌色、状态色（online/away/red） |
 | per-控件 | 各 Set* 接口（见下） | 该实例 |
 
@@ -1496,6 +1496,8 @@ host.SetRoot(std::move(root));
 | `SetText(LPCTSTR)` / `GetText()` | 文本内容 |
 | `SetMode(ModeText\|ModeLink)` | 切换文本 / 链接 |
 | `SetTextColor(COLORREF)` | 非链接文本色 |
+| `SetTextPointSize(pt, bold)` / `GetTextPointSize()` / `IsTextBold()` | 按磅值设字号（推荐）：控件只记磅值，绘制、测量时按所在窗口的 DPI 取字体，窗口换到缩放比例不同的显示器后字号跟着变。`pt <= 0` 恢复默认字体 |
+| `SetFont(HFONT)` / `GetFont()` | 设调用方自己创建的字体（caller-owned，控件不释放，**不随 DPI 变化**）；与 `SetTextPointSize` 互斥，后设的撤销先设的。`GetFont()` 返回显式设定的字体（按磅值设的返回当前 DPI 下取到的那一份），都没设时返回 `nullptr` |
 | `SetLinkColor / SetHoverColor / SetVisitedColor` | 链接配色 |
 | `SetWordWrap(bool)` | 开启 DT_WORDBREAK 自动换行 |
 | `MeasureHeight(width)` | 返回给定宽度下渲染所需高度（DT_CALCRECT） |
@@ -1619,8 +1621,8 @@ host.SetRoot(std::move(root));
 | `SetVariant(Variant) / GetVariant()` | 视觉变体 Primary / Default / Outlined / Ghost / Danger / Text。`StylePushButton` 全部 6 个 Variant 都生效；`StyleCheckbox` / `StyleRadio` 仅 Ghost / Outlined / Text 三个透明 Variant 接管外框色板，其余 Variant 兜底回 kLight；`StyleIcon` 忽略。与 `SetBgBitmap` 冲突时位图优先 |
 | `PaletteFor(Variant, ButtonState)` [static] | 纯函数：返回 `ButtonPalette{ bg, text, border }`。`bg` / `border` 取 `CLR_INVALID` 表示透明 / 不描边 |
 | `SetAntiAlias(bool) / IsAntiAlias()` | 外框 / Checkbox 方框 glyph 是否走抗锯齿绘制（默认 `true`）。关时退回 GDI `::RoundRect` 兜底（8px 圆角可见锯齿）；开时走 `DuiAA::FillRoundRect`。Radio 圆形 glyph 始终 AA，与该开关无关 |
-| `SetFont(HFONT) / GetFont()` | 设置自定义文字字体。HFONT caller-owned，控件不释放。`nullptr`（默认）走 `DuiResMgr::GetDefaultFont()`（YaHei 9pt） |
-| `SetTextPointSize(int pt, bool bold = false)` | 便捷 setter：按磅值 + 粗细从 `DuiResMgr::GetFontByPointSize` 拿缓存字体并 `SetFont`。`pt <= 0` 退化为默认字体 |
+| `SetFont(HFONT) / GetFont()` | 设置调用方自己创建的字体。HFONT caller-owned，控件不释放，**不随 DPI 变化**，并撤销 `SetTextPointSize` 设的字号。`nullptr`（默认）走按控件 DPI 取的默认字体（YaHei 9pt）。`GetFont()` 返回显式设定的字体（按磅值设的返回当前 DPI 下取到的那一份），都没设时返回 `nullptr` |
+| `SetTextPointSize(int pt, bool bold = false)` | 按磅值 + 粗细设字号，并撤销 `SetFont` 设的字体。控件只记磅值，绘制时按所在窗口的 DPI 向 `DuiResMgr` 现取缓存字体，字号随 DPI 变化。`pt <= 0` 恢复默认字体；`GetTextPointSize()` / `IsTextBold()` 读回 |
 | `SetLeadingIcon(HBITMAP) / GetLeadingIcon()` | 设置文字左侧图标位图。**仅 `StylePushButton` 生效**；其它 Style 忽略。HBITMAP caller-owned。图标走 `::AlphaBlend`，支持 32bpp 预乘 alpha。整组（图标 + gap + 文字）按 `m_dtFlags` 对齐（默认水平居中） |
 | `SetLeadingIconSize(int px)` / `SetLeadingIconGap(int px)` | 图标绘制边长（默认 `16`，`<= 0` 钳到 1）/ 图标与文字间距（默认 `6`，`< 0` 钳到 0） |
 
@@ -1800,7 +1802,7 @@ m_toast->Show(_T("请先在左侧选择一个 agent"));
 | `SetIconSize(int) / GetIconSize()` | 图标边长(像素, 正方形);默认 16;<= 0 钳到 1。 |
 | `SetIconGap(int) / GetIconGap()` | 图标与文字间距;默认 8;<0 钳 0。 |
 | `SetFont(HFONT) / GetFont()` | 自定义字体。HFONT caller-owned, 控件不释放;nullptr(默认) 走 toast 内部默认字体(YaHei 9pt + ANTIALIASED_QUALITY)。<u>注</u>:由于 toast 走 PARGB + AlphaBlend 合成, ClearType 字体会出现子像素错位"重影",caller 应传 `lfQuality=ANTIALIASED_QUALITY` 的 HFONT;或直接走 SetTextPointSize 内部自动用 AA 字体。 |
-| `SetTextPointSize(int pt, bool bold=false)` | 便捷 setter:按磅值 + 粗细从 `DuiResMgr::GetAntiAliasedFontByPointSize` 拿 AA 缓存字体并 `SetFont`。pt <= 0 退化为默认字体(等同 SetFont(nullptr))。 |
+| `SetTextPointSize(int pt, bool bold=false)` | 按磅值 + 粗细设字号,并撤销 SetFont 设的字体。控件只记磅值,绘制时按所在窗口的 DPI 从 `DuiResMgr` 现取 AA 缓存字体,字号随 DPI 变化。pt <= 0 退化为默认字体(等同 SetFont(nullptr))。`SetFont` 设的字体不随 DPI 变化。 |
 | `SetTopOffset(int) / GetTopOffset()` | 距父客户区顶的偏移(像素);默认 40。 |
 | `SetMaxWidth(int) / GetMaxWidth()` | 最大宽度(像素);默认 0 = 不限;>0 时文字超出 (maxWidth - icon - gap - 2×padding) 后截断加 "…"。 |
 | `MeasureWidth(textPx, hasIcon, iconSize, iconGap)` [static] | 纯函数:量算 toast 总宽。 |
@@ -3000,6 +3002,25 @@ tv->AddChild(gMobile, _T("Project Comet"));
 
 DuiGallery 演示：TreeView tab → **"Multi-level nesting (arbitrary depth)"** section（5 层深的组织架构 + Expand all / Collapse all 按钮）。
 
+#### 大数据量与重新排序
+
+几千上万个节点时的几条行为（2026-10-01 起）：
+
+- **按 id 访问是常数时间**：`SetItemLabel` / `SetItemIcon` / `GetItemLabel` 等按 id 读写的方法经内部的 id 对照表直接定位，不随节点数变慢。节点 id 只增不减，`Clear` 之后也不会复用旧 id。
+- **可见行按需重算**：`AddRoot` / `AddChild` / `Remove` / 折叠展开等结构变化只做标记，下一次读可见行（绘制、命中测试、`GetVisibleCount` 等）时才重算一次。连续添加几千个节点不需要任何批量接口。
+- **深度优先建树最快**：给某个节点加子节点时，若它的子树一直延伸到末尾（先建完一个部门再建下一个部门就是这样），新节点直接追加，不扫描子树。
+- **重新排序用 `MoveRoot`**：把一个根节点连同整棵子树移到另一个根节点之前（`beforeId` 传 -1 表示移到最后），节点 id、选中、折叠状态都保留。开销与移动距离成正比。插入到指定位置可写成"先 `AddRoot` 追加，再 `MoveRoot`"。
+
+```
+// 会话列表收到新消息：更新该行内容，再把它挪到第一个非置顶会话之前
+tv->SetItemSubLabel(convNode, _T("[图片]"));
+tv->MoveRoot(convNode, firstUnpinnedNode);   // 返回 false 表示参数不是根节点
+
+// 插入到指定位置 = 追加 + 移动
+int fav = tv->AddRoot(_T("我的收藏"));
+tv->MoveRoot(fav, firstRootNode);            // 挪到最顶上
+```
+
 #### 节点 icon
 
 每个节点可挂一份独立的 HBITMAP 作 icon，绘制在 ▶ glyph 与 label 之间的 18×18 槽位（`kIconSizePx`）。位图所有权由 caller 持有（控件只存裸指针），相同位图可被多个节点共享。
@@ -3986,9 +4007,11 @@ DuiGallery 演示：FrameWindow tab → "Min / Max drag size limits" section 三
 
 ![DuiScrollBar 垂直 + 水平](images/ctl-scrollbar-states.png)
 
-*左侧：垂直滚动条；右侧：水平滚动条。thumb 位置随 SetPos 改变。*
+*左侧：垂直滚动条；右侧：水平滚动条。thumb 位置随 SetPos 改变。（截图为 2026-10-04 改为悬浮式细滑块之前的样式。）*
 
 独立滚动条 + 内置滚动容器。`DuiScrollView::SetContent(child)` 装内容，`SetContentHeight(h)`（或 `SetAutoContentHeight(true)` 自动量高）告知滚动范围。
+
+**外观（悬浮式细滑块）：**只画一根 5 像素宽、两端为半圆的半透明灰色滑块（灰 `0x5A`、不透明度 120/255，再乘以淡入淡出的 alpha），贴在控件矩形右缘往里 2 像素处（水平滚动条为下缘），不画轨道；滑块沿主轴最短 36 像素。控件矩形本身是比滑块宽的「命中带」，`DuiScrollView` / `DuiListBox` / `DuiTreeView` 把它浮在内容之上、贴右缘放置，默认宽 `DuiScrollBar::kOverlayBandPx`（11 像素），<u>内容按全宽排版</u>；滚动条出现时命中带内的鼠标事件归滚动条，即使它当前处于隐藏态。按下滑块拖动；按在轨道空白处时滑块中心先跳到点击处，接着可以继续拖。
 
 **典型父：**`DuiScrollBar` 通常<u>不直接</u>用 —— `DuiScrollView` 内部自动创建并管理。如确需独立用（自定义 view 自管滚动条 / 内置 scrollbar 不能套 DuiScrollView 的场景），典型父：任意 layout 容器。
 
@@ -4000,7 +4023,7 @@ DuiGallery 演示：FrameWindow tab → "Min / Max drag size limits" section 三
 auto sv = std::make_unique<balloonwjui::DuiScrollView>();
 sv->SetContent(BuildLongVBox());
 sv->SetContentHeight(2400);   // 内容总高
-sv->SetScrollBarWidth(12);
+// 命中带宽度用默认的 11 像素即可；SetScrollBarWidth(0) 表示不要滚动条
 vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 ```
 
@@ -4014,11 +4037,11 @@ vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 
 #### auto-hide / 渐隐
 
-`DuiScrollBar` 内置一套 auto-hide 状态机：默认 alpha=0 不可见但仍占控件位置；caller 主动触发 `TriggerShow()` 后渐入到 alpha=1，800ms 内没新事件就自动渐出回 0。常见用法：list 控件在 OnMouseMove / OnMouseWheel 调 `TriggerShow()`，OnMouseLeave 调 `StartFadeOut()` —— 鼠标在 list 区显示，移开短延迟后隐藏。`DuiListBox` / `DuiVirtualList` 内嵌的 sb 已经默认开启 auto-hide，不需 caller 额外配置。
+`DuiScrollBar` 内置一套 auto-hide 状态机，<u>默认开启</u>：新建时 alpha=0 不可见但仍占控件位置、仍可命中；滚动（滚轮、拖动、点击轨道）或鼠标进入滚动条时渐入到 alpha=1（200ms），800ms 内没有新的操作就渐出回 0（300ms）；鼠标悬停在滚动条上或正在拖动时，计时到期也不渐出，离开 / 松开后重新计时。容器在自家 OnMouseWheel / 键盘翻页里调 `TriggerShow()`，在 OnMouseLeave 里调 `StartFadeOut()`。`DuiScrollView` / `DuiListBox` / `DuiTreeView` / `DuiRichEdit` 内嵌的滚动条都已按此处理，不需 caller 额外配置；鼠标只在列表行上移动、没有滚动时，滚动条不会出现。
 
 | 方法 | 含义 |
 | --- | --- |
-| `SetAutoHide(bool)` | 开启 / 关闭 auto-hide。开启时立即把 alpha 拉到 0；关闭时拉到 1（保持完全可见）。 |
+| `SetAutoHide(bool)` | 开启 / 关闭 auto-hide（默认开启）。开启时立即把 alpha 拉到 0；关闭时拉到 1（保持完全可见）。先关再开可以立即隐藏滚动条、取消进行中的渐入渐出。 |
 | `IsAutoHide()` | 查询当前是否处于 auto-hide 模式。 |
 | `TriggerShow()` | 立即启动 fade-in（200ms 渐入到 1.0）+ 重置 800ms idle 计时器。caller 在 hover / 滚轮事件里调。auto-hide 关闭时是 no-op。 |
 | `StartFadeOut()` | 取消 idle 计时器，启动 fade-out（300ms 渐出到 0）。caller 在 OnMouseLeave 里调。auto-hide 关闭时是 no-op。 |
@@ -4026,15 +4049,23 @@ vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 
 **不必挂 pulse**：auto-hide 的 fade 走 `DuiAnimMgr`，而 `DuiAnimMgr` 自带 16ms 共享脉冲定时器 —— 有活跃动画时自行装上、播完自行卸掉。caller 所在的 frame <u>不需要</u>写 `SetTimer`，也不该再调 `TickAll`；只要该线程在正常泵消息，渐入渐出就会自己跑起来。`TickAll` 仍是 public 的，但只用于单元测试手动驱动。
 
+#### 滚轮步长
+
+滚动量随滚轮消息的 `zDelta` 成比例：普通鼠标一格（`WHEEL_DELTA` = 120）滚 3 行，行高由 `SetLineSize` 决定（`DuiScrollView` 取 16px）。精确式触摸板、高精度滚轮一次只发很小的 `zDelta`，按每 40 滚一行累积，凑满一行才滚一行，余量留到下一次；滚动方向反转时清掉余量。
+
+#### 视口之外的失效不会引起重画
+
+`DuiScrollView` 绘制时把内容裁在视口之内，因此覆写了 `DuiControl::GetChildClipRect`：它的子孙控件调用 `Invalidate` 时，失效矩形先与视口求交再交给宿主，完全落在视口之外的子控件不产生任何失效。滚动后内容控件的矩形会伸出视口很远，不求交的话每滚一格都会让视口上下方的控件跟着重画。
+
+自定义容器若同样把子控件裁剪在自己的矩形内绘制，可以覆写 `GetChildClipRect` 返回该矩形，得到同样的效果。<u>没有</u>做裁剪的容器不要覆写：子控件可能本来就画在父容器之外，那部分会得不到重画。
+
 ```
-// 自定义 list 控件启用 auto-hide：
+// 自定义 list 控件内嵌滚动条（auto-hide 默认开启；鼠标进入滚动条时它自己会渐入）：
 ctor() {
     auto sb = std::make_unique<balloonwjui::DuiScrollBar>(/*horizontal=*/false);
-    sb->SetAutoHide(true);
     m_sb = sb.get();
-    AddChild(std::move(sb));
+    AddChild(std::move(sb));   // Layout 里把它摆到右缘、宽 DuiScrollBar::kOverlayBandPx，内容仍按全宽排
 }
-bool OnMouseMove(POINT, UINT) override { if (m_sb) m_sb->TriggerShow(); ... }
 bool OnMouseLeave()           override { if (m_sb) m_sb->StartFadeOut(); ... }
 bool OnMouseWheel(POINT pt, short z, UINT mk) override {
     if (m_sb) {
@@ -4063,6 +4094,7 @@ bool OnMouseWheel(POINT pt, short z, UINT mk) override {
 | `OnMouseEnter/Leave/Move/Down/Up/DblClk` | 鼠标事件，返回 true 消费 |
 | `OnChar / OnKeyDown` | 键盘事件 |
 | `OnSetCursor(POINT)` | 返回 true 表示已 SetCursor |
+| `OnDpiChanged(int dpi)` | 宿主窗口的 DPI 变化（`WM_DPICHANGED`）时按先父后子的顺序回调，随后整棵控件树重新布局并重画。按 DPI 预先算好并缓存了字体或尺寸的控件在这里刷新缓存；默认什么也不做 |
 
 #### 常用调用
 
@@ -4074,18 +4106,27 @@ bool OnMouseWheel(POINT pt, short z, UINT mk) override {
 | `Invalidate()` | 请求重绘自身 rect |
 | `Capture / ReleaseCapture / SetFocus` | DUI 内部捕获/焦点（非 Win32） |
 | `NotifyParent(code, extra=0)` | 向 HWND 父发 WM_DUI_NOTIFY |
+| `GetDpi()` | 本控件所在窗口的 DPI；尚未挂到已创建的窗口上时取 `DuiResMgr` 的全局 DPI |
+| `GetDefaultFont() / GetFontByPointSize(pt, bold) / GetAntiAliasedFontByPointSize(pt, bold)` | 按本控件的 DPI 取共享字体（所有权在 `DuiResMgr`）。绘制与测量时现取即可，不要长期保存句柄 —— DPI 变化后再取得到的是另一份 |
 
 <a id="DuiResMgr"></a>
 
 ### DuiResMgr — 资源管理器
 
-单例。包装 `CSkinManager`（图片）+ 进程级默认 UI 字体（Microsoft YaHei 9pt GB2312，惰性创建，DPI 变化时重建）。
+单例。包装 `CSkinManager`（图片）+ 进程级共享 UI 字体（Microsoft YaHei GB2312，按 (DPI, 磅值, 是否加粗) 分别缓存、惰性创建）。`SetDpi` 只切换全局 DPI，**不销毁**任何已创建的字体 —— 控件可能还保存着它们的句柄；切回用过的 DPI 时直接复用，全部字体在进程退出时统一释放。
 
 ```
-HFONT f = balloonwjui::DuiResMgr::Inst().GetDefaultFont();
+// 控件内：按控件所在窗口的 DPI 取（推荐）
+HFONT f = GetDefaultFont();   // DuiControl 成员
 ::SelectObject(hdc, f);
 
-// WM_DPICHANGED 时由 DuiHost 自动调用：
+// 控件外、已知 DPI：
+HFONT g = balloonwjui::DuiResMgr::Inst().GetFontByPointSizeForDpi(12, true, dpi);
+
+// 不属于任何窗口的代码：按全局 DPI 取
+HFONT h = balloonwjui::DuiResMgr::Inst().GetDefaultFont();
+
+// 建窗与 WM_DPICHANGED 时由 DuiHost 自动调用（只切换全局 DPI，不销毁字体）：
 balloonwjui::DuiResMgr::Inst().SetDpi(newDpi);
 
 CImageEx* img = balloonwjui::DuiResMgr::Inst().AcquireImage(_T("button_normal.png"));
@@ -4095,13 +4136,14 @@ CImageEx* img = balloonwjui::DuiResMgr::Inst().AcquireImage(_T("button_normal.pn
 
 ### DuiDpi — 高 DPI 支持
 
-命名空间，三个函数：
+命名空间，以下几个函数：
 
 |   |   |
 | --- | --- |
 | `OptInPerMonitorV2()` | WinMain 早期调用一次，启用 per-monitor v2 DPI 感知 |
 | `GetSystemDpi()` | 主显示器 DPI（默认 96） |
 | `GetWindowDpi(HWND)` | 该窗口当前 DPI（per-monitor v2 感知） |
+| `GetDpiForPoint(POINT)` | 屏幕上某一点所在显示器的 DPI。用于建窗之前就要按目标显示器测量内容的场合（菜单、提示框先测量尺寸再在指定位置建窗） |
 | `Scale(logical, dpi)` | 逻辑 px → 设备 px |
 | `Unscale(device, dpi)` | 设备 px → 逻辑 px |
 
@@ -4252,7 +4294,7 @@ bool MyControl::OnLButtonUp(POINT, UINT)
 
 ① `m_rcItem` 是父布局已经算好的本控件矩形（host 客户区坐标），所有绘制都在它内部进行 — 你不需要自己处理坐标偏移。
 
-② 默认字体一律走 `DuiResMgr::Inst().GetDefaultFont()`（Microsoft YaHei 9pt GB2312），不要硬编码 LOGFONT。
+② 默认字体在控件内优先走 `GetDefaultFont()`（`DuiControl` 成员，按控件所在窗口的 DPI 取 Microsoft YaHei 9pt GB2312），不要硬编码 LOGFONT，也不要把取到的句柄长期保存。下面示例里的 `DuiResMgr::Inst().GetDefaultFont()` 按全局 DPI 取，单显示器下与前者相同；多显示器缩放比例不同时应改用前者。
 
 ③ 非轴向几何（圆 / 三角 / 对角线）必须走 `DuiPaintAA` 或直接 `Gdiplus::Graphics + SetSmoothingMode(AntiAlias)`，否则有锯齿。
 
@@ -7798,7 +7840,7 @@ Windows 的"二进制对象接口"标准。一组带 `QueryInterface / AddRef / 
 
 **DPI**（dots per inch）= 屏幕每英寸像素数。Windows 默认 96 DPI 即"100% 缩放"；用户可以在显示设置里把缩放调到 125%（120 DPI）/ 150%（144 DPI）/ 200%（192 DPI）等，让 UI 在高分辨率屏上不至于太小。
 
-**Per-Monitor V2** 是 Windows 10 1703 起的"DPI 感知"模式，告诉 OS 程序<u>每个显示器各算各的 DPI</u>，主屏 100% 副屏 200% 跨屏拖动时 UI 自动变大。balloonui 在 `DuiDpi::OptInPerMonitorV2()` 一次性开启，所有 `DuiHost` 自动接收 `WM_DPICHANGED` 并通过 `GetDpi()` 暴露当前 DPI 给控件做缩放。
+**Per-Monitor V2** 是 Windows 10 1703 起的"DPI 感知"模式，告诉 OS 程序<u>每个显示器各算各的 DPI</u>，主屏 100% 副屏 200% 跨屏拖动时 UI 自动变大。balloonui 在 `DuiDpi::OptInPerMonitorV2()` 一次性开启，所有 `DuiHost` 自动接收 `WM_DPICHANGED` 并通过 `GetDpi()` 暴露当前 DPI 给控件做缩放。控件取字体时按所在窗口的 DPI 取（`DuiControl::GetDefaultFont` 等），缩放比例不同的显示器上的窗口因此各用各的字号；DPI 变化时宿主经 `OnDpiChanged` 通知整棵控件树并重新布局。
 
 在 balloonui 里"96-dpi 逻辑像素"指<u>DPI=96 时的物理像素值</u>，运行时按 `actual = MulDiv(logical, GetDpi(), 96)` 缩放（如 `DuiFrameWindow` 的 `m_borderPx`）。
 

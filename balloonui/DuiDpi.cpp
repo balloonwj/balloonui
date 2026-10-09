@@ -49,6 +49,36 @@ int GetWindowDpi(HWND hwnd)
     return GetSystemDpi();
 }
 
+int GetDpiForPoint(POINT screenPt)
+{
+    // GetDpiForMonitor 在 shcore.dll 里（Windows 8.1+）。动态解析，老系统上
+    // 二进制照样能加载。第二个参数 0 即 MDT_EFFECTIVE_DPI。
+    typedef HRESULT (WINAPI *FN_GetDpiForMonitor)(HMONITOR, int, UINT*, UINT*);
+    const int kEffectiveDpi = 0;
+    static FN_GetDpiForMonitor s_pGetDpi = nullptr;
+    static bool s_resolved = false;
+    if (!s_resolved)
+    {
+        s_resolved = true;
+        HMODULE shcore = ::LoadLibrary(_T("shcore.dll"));
+        if (shcore)
+        {
+            s_pGetDpi = (FN_GetDpiForMonitor)::GetProcAddress(shcore, "GetDpiForMonitor");
+        }
+    }
+    if (s_pGetDpi)
+    {
+        HMONITOR mon = ::MonitorFromPoint(screenPt, MONITOR_DEFAULTTONEAREST);
+        UINT dpiX = 0;
+        UINT dpiY = 0;
+        if (mon && SUCCEEDED(s_pGetDpi(mon, kEffectiveDpi, &dpiX, &dpiY)) && dpiX > 0)
+        {
+            return (int)dpiX;
+        }
+    }
+    return GetSystemDpi();
+}
+
 bool OptInPerMonitorV2()
 {
     // SetProcessDpiAwarenessContext + DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2:

@@ -152,20 +152,37 @@ void DuiButton::SetAntiAlias(bool on)
 
 void DuiButton::SetFont(HFONT hFont)
 {
-    if (m_font == hFont)
+    if (m_font == hFont && m_textPt == 0)
     {
         return;
     }
     m_font = hFont;
+    m_textPt = 0;
+    m_textBold = false;
     Invalidate();
+}
+
+HFONT DuiButton::GetFont() const
+{
+    if (m_font)
+    {
+        return m_font;
+    }
+    if (m_textPt > 0)
+    {
+        return GetFontByPointSize(m_textPt, m_textBold);
+    }
+    return nullptr;
 }
 
 void DuiButton::SetTextPointSize(int pt, bool bold)
 {
-    // pt <= 0 退化为默认字体(等同 SetFont(nullptr))。
-    HFONT hf = (pt <= 0) ? nullptr
-                         : DuiResMgr::Inst().GetFontByPointSize(pt, bold);
-    SetFont(hf);
+    // pt <= 0 退化为默认字体(等同 SetFont(nullptr))。只记磅值, 绘制时按控件
+    // 所在窗口的 DPI 现取字体。
+    m_font = nullptr;
+    m_textPt = (pt > 0) ? pt : 0;
+    m_textBold = (pt > 0) ? bold : false;
+    Invalidate();
 }
 
 void DuiButton::SetLeadingIcon(HBITMAP hBmp)
@@ -721,9 +738,14 @@ void DuiButton::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
     }
 
     // ---- Font scope + LeadingIcon + Label 三段共用 ----
-    // 字体优先级:caller SetFont 设的 m_font > DuiResMgr 默认 9pt YaHei。
+    // 字体优先级:SetFont / SetTextPointSize 显式设定的字体 > 本控件 DPI 下的
+    // 默认 9pt YaHei。
     // LeadingIcon 量文字宽和 Label 绘制必须共用同一字体,所以提到 if 外。
-    HFONT useFont = m_font ? m_font : DuiResMgr::Inst().GetDefaultFont();
+    HFONT useFont = GetFont();
+    if (!useFont)
+    {
+        useFont = GetDefaultFont();
+    }
     HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
 
     // LeadingIcon —— 仅 StylePushButton 生效;设了 m_leadingIcon 时画。
@@ -761,9 +783,13 @@ void DuiButton::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
         {
             groupLeft = (m_rcItem.left + m_rcItem.right - groupW) / 2;
         }
-        if (groupLeft < m_rcItem.left + kEdgePadPx)
+        // 只有图标、没有文字时(2026-10-08):不再套用 12 像素的左边距下限,图标直接居中;
+        // 按钮比图标还窄时贴左边。窄的纯图标按钮(如 32 像素宽、18 像素图标)原先被推到离左边 12 像素,
+        // 看上去偏右。有文字时照旧,整组放不下就从左边距处开始。
+        const int minLeft = m_text.IsEmpty() ? m_rcItem.left : (m_rcItem.left + kEdgePadPx);
+        if (groupLeft < minLeft)
         {
-            groupLeft = m_rcItem.left + kEdgePadPx;
+            groupLeft = minLeft;
         }
         int iconY = m_rcItem.top + (btnH - iconSz) / 2;
 

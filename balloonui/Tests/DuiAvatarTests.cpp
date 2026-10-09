@@ -1,6 +1,10 @@
 #include "stdafx.h"
 #include "DuiAvatarTests.h"
 
+#include <math.h>     // fabs：像素到中心的距离
+#include <stdlib.h>   // abs：颜色分量比较
+#include <vector>
+
 #if BUI_FEATURE_AVATAR
 
 
@@ -258,6 +262,289 @@ static Result Test_PaintSmoke_TinyRect()
     return OK(_T("PaintSmoke_TinyRect"));
 }
 
+// 造一张 32 位源图：显示时上半为红、下半为蓝。topDown 选内存里的行序：为 true 时 biHeight 为负
+// （显示的第 0 行在像素数据开头），为 false 时 biHeight 为正（显示的第 0 行在最后）。
+static HBITMAP MakeTwoBandSrc(int sz, bool topDown)
+{
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize     = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth    = sz;
+    bi.bmiHeader.biHeight   = topDown ? -sz : sz;
+    bi.bmiHeader.biPlanes   = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP h = ::CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!h)
+    {
+        return nullptr;
+    }
+    BYTE* p = (BYTE*)bits;
+    for (int y = 0; y < sz; ++y)
+    {
+        const int memRow = topDown ? y : (sz - 1 - y);
+        const bool upper = (y < sz / 2);
+        for (int x = 0; x < sz; ++x)
+        {
+            BYTE* px = p + (memRow * sz + x) * 4;
+            px[0] = upper ? 0 : 255;    // 蓝
+            px[1] = 0;                  // 绿
+            px[2] = upper ? 255 : 0;    // 红
+            px[3] = 255;                // 透明度：完全不透明，预乘与否结果相同
+        }
+    }
+    return h;
+}
+
+// 用 DuiAvatar 画一张上红下蓝的源图，判断画出来是否仍是上半红、下半蓝。
+static bool PaintKeepsOrientation(bool topDown, CString& detail)
+{
+    const int kSize = 64;
+    DuiAvatar a;
+    a.SetRect(RECT{ 0, 0, kSize, kSize });
+    a.SetShape(DuiAvatar::ShapeRoundRect);
+    a.SetCornerRadius(4);
+    HBITMAP src = MakeTwoBandSrc(kSize, topDown);
+    HBITMAP dst = MakeDestBitmap(kSize);
+    if (!src || !dst)
+    {
+        detail = _T("dib create failed");
+        return false;
+    }
+    a.SetBitmap(src);
+
+    HDC hdc = ::CreateCompatibleDC(nullptr);
+    HGDIOBJ old = ::SelectObject(hdc, dst);
+    a.OnPaint(hdc, RECT{ 0, 0, kSize, kSize });
+    const COLORREF top = ::GetPixel(hdc, kSize / 2, kSize / 8);
+    const COLORREF bottom = ::GetPixel(hdc, kSize / 2, kSize - kSize / 8);
+    ::SelectObject(hdc, old);
+    ::DeleteDC(hdc);
+    ::DeleteObject(dst);
+    a.SetBitmap(nullptr);
+    ::DeleteObject(src);
+
+    const bool topRed = GetRValue(top) > 200 && GetBValue(top) < 60;
+    const bool bottomBlue = GetBValue(bottom) > 200 && GetRValue(bottom) < 60;
+    if (!topRed || !bottomBlue)
+    {
+        detail.Format(_T("top=(%d,%d,%d) bottom=(%d,%d,%d)"),
+                      GetRValue(top), GetGValue(top), GetBValue(top),
+                      GetRValue(bottom), GetGValue(bottom), GetBValue(bottom));
+        return false;
+    }
+    return true;
+}
+
+// GetObject() 对自上而下存储的 DIBSection 同样返回正的 dsBmih.biHeight，行序不能据此推测。
+// 两种行序的源图都必须画得方向正确。
+static Result Test_BitmapOrientation()
+{
+    CString detail;
+    if (!PaintKeepsOrientation(true, detail))
+    {
+        return Fail(_T("BitmapOrientation"), _T("top-down source flipped: ") + detail);
+    }
+    if (!PaintKeepsOrientation(false, detail))
+    {
+        return Fail(_T("BitmapOrientation"), _T("bottom-up source flipped: ") + detail);
+    }
+    return OK(_T("BitmapOrientation"));
+}
+
+// ---- 位图头像边缘抗锯齿（2026-10-04）----
+
+// 抗锯齿检查用的头像边长（像素）与源位图颜色（纯色，与白底、透明区域都能区分）。
+static const int kAaSize = 48;
+static const BYTE kAaSrcRed   = 50;
+static const BYTE kAaSrcGreen = 100;
+static const BYTE kAaSrcBlue  = 200;
+
+// 判定「纯源色」「纯白」的颜色容差（每个分量）。
+static const int kAaTolerance = 3;
+
+// 只检查圆周的斜向部分：离中心横、纵距离都不小于边长除以这个数。上下左右四个切点附近的边缘几乎
+// 是水平或竖直的，整行有色紧挨整行白色正是平直边缘的正确画法，不算锯齿。
+static const int kAaDiagonalDivisor = 5;
+
+// 判断颜色是否在容差内等于 (r, g, b)。
+static bool AaNear(COLORREF c, int r, int g, int b)
+{
+    return abs((int)GetRValue(c) - r) <= kAaTolerance
+        && abs((int)GetGValue(c) - g) <= kAaTolerance
+        && abs((int)GetBValue(c) - b) <= kAaTolerance;
+}
+
+// 画一张 avatar 到 sz 见方的白底位图上，取出全部像素（按行存放）。
+static bool PaintAvatarPixels(DuiAvatar& a, int sz, std::vector<COLORREF>& out)
+{
+    HBITMAP dst = MakeDestBitmap(sz);
+    if (!dst)
+    {
+        return false;
+    }
+    HDC hdc = ::CreateCompatibleDC(nullptr);
+    HGDIOBJ old = ::SelectObject(hdc, dst);
+    a.OnPaint(hdc, RECT{ 0, 0, sz, sz });
+    ::GdiFlush();
+    out.resize((size_t)sz * sz);
+    for (int y = 0; y < sz; ++y)
+    {
+        for (int x = 0; x < sz; ++x)
+        {
+            out[(size_t)y * sz + x] = ::GetPixel(hdc, x, y);
+        }
+    }
+    ::SelectObject(hdc, old);
+    ::DeleteDC(hdc);
+    ::DeleteObject(dst);
+    return true;
+}
+
+// 位图头像在圆周斜向部分的硬台阶数：横向或纵向相邻的两个像素一个是纯源色、一个是纯白。用「先设裁剪区
+// 再 DrawImage」切出的圆形边缘只有这两种像素，必然有这种台阶；抗锯齿的边缘两者之间总有过渡色。
+static int CountDiagonalHardSteps(const std::vector<COLORREF>& px, int sz)
+{
+    const double c = (sz - 1) / 2.0;
+    const double minD = (double)sz / kAaDiagonalDivisor;
+    int n = 0;
+    for (int y = 0; y < sz; ++y)
+    {
+        for (int x = 0; x < sz; ++x)
+        {
+            if (fabs(x - c) < minD || fabs(y - c) < minD)
+            {
+                continue;
+            }
+            const COLORREF a = px[(size_t)y * sz + x];
+            const int nx[2] = { x + 1, x };
+            const int ny[2] = { y, y + 1 };
+            for (int k = 0; k < 2; ++k)
+            {
+                if (nx[k] >= sz || ny[k] >= sz)
+                {
+                    continue;
+                }
+                const COLORREF b = px[(size_t)ny[k] * sz + nx[k]];
+                const bool aSrc = AaNear(a, kAaSrcRed, kAaSrcGreen, kAaSrcBlue);
+                const bool bSrc = AaNear(b, kAaSrcRed, kAaSrcGreen, kAaSrcBlue);
+                const bool aWhite = AaNear(a, 255, 255, 255);
+                const bool bWhite = AaNear(b, 255, 255, 255);
+                if ((aSrc && bWhite) || (bSrc && aWhite))
+                {
+                    ++n;
+                }
+            }
+        }
+    }
+    return n;
+}
+
+// 位图头像（圆形）的边缘应当抗锯齿：圆周斜向部分没有纯源色紧挨纯白的硬台阶。
+static Result Test_BitmapEdgeAntialiased()
+{
+    DuiAvatar a;
+    a.SetRect(RECT{ 0, 0, kAaSize, kAaSize });
+    a.SetShape(DuiAvatar::ShapeCircle);
+    HBITMAP src = MakeAvatarSrc();
+    if (!src)
+    {
+        return Fail(_T("BitmapEdgeAntialiased"), _T("src dib failed"));
+    }
+    a.SetBitmap(src);
+    std::vector<COLORREF> px;
+    const bool ok = PaintAvatarPixels(a, kAaSize, px);
+    a.SetBitmap(nullptr);
+    ::DeleteObject(src);
+    if (!ok)
+    {
+        return Fail(_T("BitmapEdgeAntialiased"), _T("dest dib failed"));
+    }
+    const COLORREF center = px[(size_t)(kAaSize / 2) * kAaSize + kAaSize / 2];
+    EXPECT_TRUE(AaNear(center, kAaSrcRed, kAaSrcGreen, kAaSrcBlue), _T("BitmapEdgeAntialiased/center"));
+    EXPECT_INT(CountDiagonalHardSteps(px, kAaSize), 0, _T("BitmapEdgeAntialiased/hardSteps"));
+    return OK(_T("BitmapEdgeAntialiased"));
+}
+
+// 圆角半径为 1 的圆角矩形仍能画出位图（文件共享详情头部的类型图标就用这个设置，见 bugs.md BUG-70）。
+static Result Test_BitmapRadius1Draws()
+{
+    const int kSize = 32;
+    DuiAvatar a;
+    a.SetRect(RECT{ 0, 0, kSize, kSize });
+    a.SetShape(DuiAvatar::ShapeRoundRect);
+    a.SetCornerRadius(1);
+    HBITMAP src = MakeAvatarSrc();
+    if (!src)
+    {
+        return Fail(_T("BitmapRadius1Draws"), _T("src dib failed"));
+    }
+    a.SetBitmap(src);
+    std::vector<COLORREF> px;
+    const bool ok = PaintAvatarPixels(a, kSize, px);
+    a.SetBitmap(nullptr);
+    ::DeleteObject(src);
+    if (!ok)
+    {
+        return Fail(_T("BitmapRadius1Draws"), _T("dest dib failed"));
+    }
+    const COLORREF center = px[(size_t)(kSize / 2) * kSize + kSize / 2];
+    EXPECT_TRUE(AaNear(center, kAaSrcRed, kAaSrcGreen, kAaSrcBlue), _T("BitmapRadius1Draws/center"));
+    return OK(_T("BitmapRadius1Draws"));
+}
+
+// 源位图里透明的部分画出来仍透出底色（白），不能变黑。系统图标四角就是透明的。
+static Result Test_BitmapTransparentStaysClear()
+{
+    const int kSize = 32;
+    // 源图：左上四分之一完全透明，其余为源色。
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize     = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth    = kSize;
+    bi.bmiHeader.biHeight   = -kSize;
+    bi.bmiHeader.biPlanes   = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP src = ::CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!src)
+    {
+        return Fail(_T("BitmapTransparentStaysClear"), _T("src dib failed"));
+    }
+    BYTE* p = (BYTE*)bits;
+    for (int y = 0; y < kSize; ++y)
+    {
+        for (int x = 0; x < kSize; ++x)
+        {
+            BYTE* px = p + (y * kSize + x) * 4;
+            const bool clear = (x < kSize / 2 && y < kSize / 2);
+            px[0] = clear ? 0 : kAaSrcBlue;    // 预乘透明通道：透明处三个分量都是 0
+            px[1] = clear ? 0 : kAaSrcGreen;
+            px[2] = clear ? 0 : kAaSrcRed;
+            px[3] = clear ? 0 : 255;
+        }
+    }
+    DuiAvatar a;
+    a.SetRect(RECT{ 0, 0, kSize, kSize });
+    a.SetShape(DuiAvatar::ShapeRoundRect);
+    a.SetCornerRadius(1);
+    a.SetBitmap(src);
+    std::vector<COLORREF> out;
+    const bool ok = PaintAvatarPixels(a, kSize, out);
+    a.SetBitmap(nullptr);
+    ::DeleteObject(src);
+    if (!ok)
+    {
+        return Fail(_T("BitmapTransparentStaysClear"), _T("dest dib failed"));
+    }
+    // 透明区域中间与不透明区域中间各取一点。
+    const COLORREF clearPx = out[(size_t)(kSize / 4) * kSize + kSize / 4];
+    const COLORREF solidPx = out[(size_t)(kSize * 3 / 4) * kSize + kSize * 3 / 4];
+    EXPECT_TRUE(AaNear(clearPx, 255, 255, 255), _T("BitmapTransparentStaysClear/clear"));
+    EXPECT_TRUE(AaNear(solidPx, kAaSrcRed, kAaSrcGreen, kAaSrcBlue), _T("BitmapTransparentStaysClear/solid"));
+    return OK(_T("BitmapTransparentStaysClear"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_STR
 #undef EXPECT_TRUE
@@ -281,6 +568,10 @@ CString RunAll()
         { _T("PaintSmoke_Initials"),  &Test_PaintSmoke_Initials  },
         { _T("PaintSmoke_Bitmap"),    &Test_PaintSmoke_Bitmap    },
         { _T("PaintSmoke_TinyRect"),  &Test_PaintSmoke_TinyRect  },
+        { _T("BitmapOrientation"),    &Test_BitmapOrientation    },
+        { _T("BitmapEdgeAntialiased"),       &Test_BitmapEdgeAntialiased       },
+        { _T("BitmapRadius1Draws"),          &Test_BitmapRadius1Draws          },
+        { _T("BitmapTransparentStaysClear"), &Test_BitmapTransparentStaysClear },
     };
 
     CString out;

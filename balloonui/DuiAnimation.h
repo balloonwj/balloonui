@@ -8,8 +8,9 @@
 //
 // 用途：让 DUI 控件做 hover 渐变、popup 滑入、滚动平滑、GIF 帧步进等
 // 短时长属性 tween。两部分：
-//   · DuiAnimMgr：进程单例，自带一个 16ms（约 60Hz）的线程定时器
-//     ::SetTimer(NULL, 0, 16, PulseProc)。维护一组活跃 DuiAnim，每次
+//   · DuiAnimMgr：进程单例，自带一个约 60Hz 的线程定时器
+//     ::SetTimer(NULL, 0, 10, PulseProc)（请求 10ms，实际随系统定时器节拍约
+//     15.6ms 触发一次，取值理由见 DuiAnimation.cpp 的 kAnimPulseIntervalMs）。维护一组活跃 DuiAnim，每次
 //     pulse 都 tick 一遍。定时器<u>按需</u>存在：Add 让活跃列表从空变
 //     非空时装上，列表清空（全部完成或 Clear）时立刻卸掉，空闲期不会
 //     有定时器长期挂着。
@@ -170,8 +171,9 @@ private:
 };
 
 // Process-wide animation scheduler. Owns every running DuiAnim and drives
-// them from a single 16ms thread timer that only exists while there is
-// something to animate (see IsSelfDriving).
+// them from a single ~60Hz thread timer (requested at 10ms, fires on every
+// ~15.6ms system timer tick) that only exists while there is something to
+// animate (see IsSelfDriving).
 class BUI_API DuiAnimMgr
 {
 public:

@@ -170,10 +170,46 @@ class DuiFrameTitleBar;
 class BUI_API DuiFrameWindow : public DuiHost
 {
 public:
-    DECLARE_WND_CLASS_EX(_T("__DuiFrameWindow__"), 0, COLOR_WINDOW)
+    // 窗口类：改大小时整窗重绘（CS_HREDRAW | CS_VREDRAW），系统在双击时限内的第二次按下送 WM_LBUTTONDBLCLK
+    // （CS_DBLCLKS）。2026-10-06 之前这里声明的样式是 0，但从未生效：基类是 CWindowImpl<DuiHost>，ATL 的
+    // CWindowImpl<T>::Create 按模板参数 DuiHost 取窗口类，全部框架窗口实际注册的都是 __DuiHost__，带的正是
+    // 上面三个样式（bugs.md BUG-103）。现在声明改成与实际一致，并由下面的 Create 让它生效，窗口行为不变，
+    // 只是窗口类名变为 __DuiFrameWindow__。
+    DECLARE_WND_CLASS_EX(_T("__DuiFrameWindow__"), CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS, COLOR_WINDOW)
 
     DuiFrameWindow();
     ~DuiFrameWindow();
+
+    // 创建窗口，参数与 ATL CWindowImpl::Create 相同。不能直接用继承来的 Create：它按模板参数 DuiHost 取窗口类，
+    // 注册的是 __DuiHost__，本类声明的窗口类永远用不上（BUG-103，与 DuiPopupHost 的 BUG-101 同一原因）。这里按
+    // ATL CWindowImpl::Create 的同样步骤，只把窗口类信息换成本类的：先注册本类的窗口类，再按窗口类编号创建窗口；
+    // 窗口过程仍是 ATL 的 StartWindowProc，消息照常经 thunk 派发给本对象的消息映射。
+    // 写成内联：不给静态库新增外部符号，按新头文件编的程序链接旧库时不会缺符号。它不是虚函数，调用处按新头文件
+    // 编译后即用上本函数，不必等静态库重编。
+    // 子类自己用 DECLARE_WND_CLASS 声明的窗口类同样不会生效，一律注册为 __DuiFrameWindow__。
+    //   参数：hWndParent 父 / 所有者窗口；rect 初始位置（NULL 时为 CWindow::rcDefault）；szWindowName 标题；
+    //         dwStyle / dwExStyle 窗口样式（为 0 时取窗口特性类的默认值，与 ATL 相同）；MenuOrID 菜单或子窗口 id；
+    //         lpCreateParam 传给 WM_CREATE 的参数。
+    //   返回：窗口句柄，失败返回 NULL。
+    HWND Create(HWND hWndParent, ATL::_U_RECT rect = NULL, LPCTSTR szWindowName = NULL,
+                DWORD dwStyle = 0, DWORD dwExStyle = 0, ATL::_U_MENUorID MenuOrID = 0U,
+                LPVOID lpCreateParam = NULL)
+    {
+        ATL::CWndClassInfo& info = DuiFrameWindow::GetWndClassInfo();
+        if (info.m_lpszOrigName == NULL)
+        {
+            info.m_lpszOrigName = GetWndClassName();
+        }
+        const ATOM atom = info.Register(&m_pfnSuperWindowProc);
+        dwStyle = GetWndStyle(dwStyle);
+        dwExStyle = GetWndExStyle(dwExStyle);
+        if (szWindowName == NULL)
+        {
+            szWindowName = GetWndCaption();
+        }
+        return ATL::CWindowImplBaseT<ATL::CWindow, ATL::CControlWinTraits>::Create(
+            hWndParent, rect, szWindowName, dwStyle, dwExStyle, MenuOrID, atom, lpCreateParam);
+    }
 
     // ---- 标题栏属性 ----
 
@@ -250,6 +286,22 @@ public:
     //   （但 resize 边缘 hit-test 仍激活；要彻底禁拖再 SetResizable(false)）。
     void    SetMaxSize(int w, int h);
     SIZE    GetMaxSize() const { return SIZE{ m_maxW, m_maxH }; }
+
+    // 设置客户区尺寸（px）。本类在 WM_NCCALCSIZE 里去掉了系统非客户区，客户区就是整个
+    // 窗口，故本方法直接把整窗设为 nWidth × nHeight。
+    //
+    // 为什么要同名覆盖 ATL 的 CWindow::ResizeClient：ATL 版本按窗口样式用
+    // AdjustWindowRectEx 再叠加一圈系统标题栏与边框（WS_OVERLAPPEDWINDOW 在 120 DPI 下
+    // 宽 18、高 47），这一圈在本类里全部变成客户区，窗口因此比要求的大，且多出的量随
+    // DPI 与系统主题变化。ATL 的这个函数不是虚函数，经由 CWindow 指针或引用调用时仍会
+    // 走到 ATL 版本，须通过 DuiFrameWindow 或其子类调用。
+    //   nWidth / nHeight：目标宽、高（px）；-1 表示该方向保持当前窗口尺寸（与 ATL 版本一致）。
+    //   bRedraw：FALSE 时不重绘（SWP_NOREDRAW）。
+    //   返回：窗口无效或 SetWindowPos 失败时返回 FALSE。
+    //   注意：请求的尺寸低于 SetMinSize 设定的下限时，系统会把窗口抬到下限，调用方要连带
+    //         把下限改对。标题栏也在这个尺寸之内，内容区的高度是 nHeight 减去
+    //         GetTitleBarHeight()。
+    BOOL    ResizeClient(int nWidth, int nHeight, BOOL bRedraw = TRUE);
 
     // ---- 标题栏自定义图标按钮 ----
     //

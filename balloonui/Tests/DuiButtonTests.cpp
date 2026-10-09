@@ -871,6 +871,176 @@ static Result Test_FontIconVariantTriple()
     return OK(_T("FontIconVariantTriple"));
 }
 
+// 快速双击算两次点击（BUG-103，2026-10-06）：窗口类带 CS_DBLCLKS 时第二次按下以 WM_LBUTTONDBLCLK 送达，
+// 由宿主转成 OnLButtonDblClk。用勾选框样式验证：每次点击都切换勾选，单击 + 双击后应切回未勾选。
+// 修复前第二击只上报双击、按钮没有进入按下态，抬起时不算点击，结果停在已勾选。
+static Result Test_DblClkCountsAsSecondClick()
+{
+    DuiButton b;
+    b.SetButtonType(DuiButton::StyleCheckbox);
+    b.SetRect(RECT{ 0, 0, 100, 30 });
+    b.OnLButtonDown(POINT{ 50, 15 }, 0);
+    b.OnLButtonUp  (POINT{ 50, 15 }, 0);
+    EXPECT_BOOL(b.IsChecked(), true, _T("DblClk/firstClick"));
+    b.OnLButtonDblClk(POINT{ 50, 15 }, 0);
+    b.OnLButtonUp    (POINT{ 50, 15 }, 0);
+    EXPECT_BOOL(b.IsChecked(), false, _T("DblClk/secondClick"));
+    return OK(_T("DblClkCountsAsSecondClick"));
+}
+
+// ----- 只有图标的按钮：图标居中（2026-10-08，屏幕共享标注工具条最左边三个按钮的图标偏右） -----
+
+// 画前置图标的位图边长（像素），与标注工具条的图标一致
+const int kIconOnlyIconPx = 18;
+// 画按钮用的位图宽高（像素）：比被测按钮宽，按钮之外画出来的部分也能看到
+const int kIconOnlyCanvasW = 48;
+const int kIconOnlyCanvasH = 30;
+
+// 把按钮画到一张白底的 32 位位图上，返回图标颜色（洋红）在中间那一行出现的最左、最右列；没有找到时返回 false
+static bool PaintAndFindIcon(DuiButton& b, int& minX, int& maxX)
+{
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize     = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth    = kIconOnlyCanvasW;
+    bi.bmiHeader.biHeight   = -kIconOnlyCanvasH;
+    bi.bmiHeader.biPlanes   = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HDC screen = ::GetDC(nullptr);
+    HDC dc = ::CreateCompatibleDC(screen);
+    ::ReleaseDC(nullptr, screen);
+    HBITMAP canvas = ::CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (canvas == nullptr || dc == nullptr)
+    {
+        if (dc != nullptr)
+        {
+            ::DeleteDC(dc);
+        }
+        return false;
+    }
+    HGDIOBJ old = ::SelectObject(dc, canvas);
+    BYTE* px = (BYTE*)bits;
+    for (int i = 0; i < kIconOnlyCanvasW * kIconOnlyCanvasH * 4; ++i)
+    {
+        px[i] = 255;
+    }
+    RECT dirty = { 0, 0, kIconOnlyCanvasW, kIconOnlyCanvasH };
+    b.OnPaint(dc, dirty);
+    ::GdiFlush();
+    minX = -1;
+    maxX = -1;
+    const int row = kIconOnlyCanvasH / 2;
+    for (int x = 0; x < kIconOnlyCanvasW; ++x)
+    {
+        const BYTE* p = px + (row * kIconOnlyCanvasW + x) * 4;
+        //洋红：红、蓝都高，绿低
+        if (p[2] > 200 && p[0] > 200 && p[1] < 60)
+        {
+            if (minX < 0)
+            {
+                minX = x;
+            }
+            maxX = x;
+        }
+    }
+    ::SelectObject(dc, old);
+    ::DeleteObject(canvas);
+    ::DeleteDC(dc);
+    return minX >= 0;
+}
+
+// 边长为 kIconOnlyIconPx 的洋红色 32 位位图（不透明，预乘与否结果相同）
+static HBITMAP MakeMagentaIcon()
+{
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize     = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth    = kIconOnlyIconPx;
+    bi.bmiHeader.biHeight   = -kIconOnlyIconPx;
+    bi.bmiHeader.biPlanes   = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP hbm = ::CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (hbm == nullptr)
+    {
+        return nullptr;
+    }
+    BYTE* p = (BYTE*)bits;
+    for (int i = 0; i < kIconOnlyIconPx * kIconOnlyIconPx; ++i)
+    {
+        p[i * 4 + 0] = 255;
+        p[i * 4 + 1] = 0;
+        p[i * 4 + 2] = 255;
+        p[i * 4 + 3] = 255;
+    }
+    return hbm;
+}
+
+// 32 像素宽、没有文字的按钮：18 像素的图标左右留白相等（相差不超过 1 像素）。
+// 修改前图标左端被限制在离左边至少 12 像素处，左 12、右 2。
+static Result Test_LeadingIconOnlyCentered()
+{
+    const int btnW = 32;
+    HBITMAP icon = MakeMagentaIcon();
+    DuiButton b;
+    b.SetButtonType(DuiButton::StylePushButton);
+    b.SetText(_T(""));
+    b.SetLeadingIcon(icon);
+    b.SetLeadingIconSize(kIconOnlyIconPx);
+    b.SetRect(RECT{ 0, 0, btnW, kIconOnlyCanvasH });
+    int minX = 0;
+    int maxX = 0;
+    const bool found = PaintAndFindIcon(b, minX, maxX);
+    ::DeleteObject(icon);
+    EXPECT_BOOL(found, true, _T("IconOnly/found"));
+    const int left = minX;
+    const int right = btnW - 1 - maxX;
+    EXPECT_BOOL(left - right <= 1 && right - left <= 1, true, _T("IconOnly/centered"));
+    return OK(_T("LeadingIconOnlyCentered"));
+}
+
+// 有文字的窄按钮：整组放不下时图标仍离左边 12 像素（原有行为不变）。
+static Result Test_LeadingIconWithTextKeepsEdgePad()
+{
+    const int btnW = 40;
+    const int edgePad = 12;
+    HBITMAP icon = MakeMagentaIcon();
+    DuiButton b;
+    b.SetButtonType(DuiButton::StylePushButton);
+    b.SetText(_T("Text"));
+    b.SetLeadingIcon(icon);
+    b.SetLeadingIconSize(kIconOnlyIconPx);
+    b.SetRect(RECT{ 0, 0, btnW, kIconOnlyCanvasH });
+    int minX = 0;
+    int maxX = 0;
+    const bool found = PaintAndFindIcon(b, minX, maxX);
+    ::DeleteObject(icon);
+    EXPECT_BOOL(found, true, _T("IconText/found"));
+    EXPECT_INT(minX, edgePad, _T("IconText/edgePad"));
+    return OK(_T("LeadingIconWithTextKeepsEdgePad"));
+}
+
+// 没有文字、按钮比图标还窄：图标贴按钮左边（不再被推到 12 像素之外）。
+static Result Test_LeadingIconOnlyNarrowButtonHugsLeft()
+{
+    const int btnW = 14;
+    HBITMAP icon = MakeMagentaIcon();
+    DuiButton b;
+    b.SetButtonType(DuiButton::StylePushButton);
+    b.SetText(_T(""));
+    b.SetLeadingIcon(icon);
+    b.SetLeadingIconSize(kIconOnlyIconPx);
+    b.SetRect(RECT{ 0, 0, btnW, kIconOnlyCanvasH });
+    int minX = 0;
+    int maxX = 0;
+    const bool found = PaintAndFindIcon(b, minX, maxX);
+    ::DeleteObject(icon);
+    EXPECT_BOOL(found, true, _T("IconNarrow/found"));
+    EXPECT_INT(minX, 0, _T("IconNarrow/left"));
+    return OK(_T("LeadingIconOnlyNarrowButtonHugsLeft"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_BOOL
 
@@ -921,7 +1091,11 @@ CString RunAll()
         { _T("LeadingIconCoexistsWithVariant"),  &Test_LeadingIconCoexistsWithVariant  },
         { _T("LeadingIconCallerOwned"),          &Test_LeadingIconCallerOwned          },
         { _T("LeadingIconStateOnNonPushButton"), &Test_LeadingIconStateOnNonPushButton },
-        { _T("FontIconVariantTriple"),           &Test_FontIconVariantTriple           }
+        { _T("FontIconVariantTriple"),           &Test_FontIconVariantTriple           },
+        { _T("DblClkCountsAsSecondClick"),       &Test_DblClkCountsAsSecondClick       },
+        { _T("LeadingIconOnlyCentered"),             &Test_LeadingIconOnlyCentered             },
+        { _T("LeadingIconWithTextKeepsEdgePad"),     &Test_LeadingIconWithTextKeepsEdgePad     },
+        { _T("LeadingIconOnlyNarrowButtonHugsLeft"), &Test_LeadingIconOnlyNarrowButtonHugsLeft }
     };
 
     CString out;

@@ -36,6 +36,8 @@ const int kVPaddingPx = 8;
 const double kAlphaEpsilon = 0.001;
 // 文本截断"..."字符串:用于 ApplyEllipsis。
 LPCTSTR const kEllipsis = _T("...");
+// 未设字体时的默认字号(磅):与库内其它控件的默认正文字号一致。
+const int kDefaultTextPt = 9;
 
 // 在 path 上构造一个圆角矩形(浮点坐标), 供 OnPaint 的背景与阴影复用,
 // 避免两处各写一份四段 AddArc。
@@ -242,22 +244,44 @@ void DuiToast::SetIconGap(int px)
 
 void DuiToast::SetFont(HFONT hFont)
 {
-    if (m_font == hFont)
+    if (m_font == hFont && m_textPt == 0)
     {
         return;
     }
     m_font = hFont;
+    m_textPt = 0;
+    m_textBold = false;
     Invalidate();
+}
+
+HFONT DuiToast::GetFont() const
+{
+    if (m_font)
+    {
+        return m_font;
+    }
+    if (m_textPt > 0)
+    {
+        // 走 AA 字体而非 ClearType, 避免 ClearType + AlphaBlend 子像素错位"重影"。
+        return GetAntiAliasedFontByPointSize(m_textPt, m_textBold);
+    }
+    return nullptr;
+}
+
+HFONT DuiToast::ResolveFont() const
+{
+    HFONT hf = GetFont();
+    return hf ? hf : GetAntiAliasedFontByPointSize(kDefaultTextPt, false);
 }
 
 void DuiToast::SetTextPointSize(int pt, bool bold)
 {
     // pt <= 0 退化为默认字体(等同 SetFont(nullptr) → 走 toast 默认 AA 字体)。
-    // 注意:走 GetAntiAliasedFontByPointSize 而非 GetFontByPointSize, 避免
-    // ClearType + AlphaBlend 子像素错位"重影"。
-    HFONT hf = (pt <= 0) ? nullptr
-                         : DuiResMgr::Inst().GetAntiAliasedFontByPointSize(pt, bold);
-    SetFont(hf);
+    // 只记磅值, 绘制时按控件所在窗口的 DPI 现取字体。
+    m_font = nullptr;
+    m_textPt = (pt > 0) ? pt : 0;
+    m_textBold = (pt > 0) ? bold : false;
+    Invalidate();
 }
 
 void DuiToast::SetTopOffset(int px)
@@ -502,22 +526,8 @@ void DuiToast::Layout(const RECT& rcAvail)
     {
         HDC dc = ::GetDC(nullptr);
         Gdiplus::Graphics g(dc);
-        Gdiplus::Font* font = nullptr;
-        if (m_font)
-        {
-            font = new Gdiplus::Font(dc, m_font);
-        }
-        else
-        {
-            LOGFONT lf = {};
-            lf.lfHeight = -::MulDiv(9, DuiDpi::GetSystemDpi(), 72);
-            lf.lfWeight = FW_NORMAL;
-            lf.lfCharSet = GB2312_CHARSET;
-            lf.lfQuality = ANTIALIASED_QUALITY;
-            lf.lfPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
-            _tcsncpy_s(lf.lfFaceName, _T("Microsoft YaHei"), _TRUNCATE);
-            font = new Gdiplus::Font(dc, &lf);
-        }
+        // 字体按本控件所在窗口的 DPI 取(见 ResolveFont), 与 OnPaint 一致。
+        Gdiplus::Font* font = new Gdiplus::Font(dc, ResolveFont());
         if (font && font->GetLastStatus() == Gdiplus::Ok)
         {
             Gdiplus::RectF bound;
@@ -698,24 +708,9 @@ void DuiToast::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
         if (!m_text.IsEmpty())
         {
             // Gdiplus::Font 从 HFONT 转需要 hdc;借 host hdc 即可(只用于字体度量)。
-            // m_font 是 caller-owned HFONT;nullptr 则构造 LOGFONT 默认。
-            Gdiplus::Font* font = nullptr;
-            if (m_font)
-            {
-                font = new Gdiplus::Font(hdc, m_font);
-            }
-            else
-            {
-                // 默认 9pt YaHei ANTIALIASED_QUALITY (与之前 Layout 量算一致)。
-                LOGFONT lf = {};
-                lf.lfHeight = -::MulDiv(9, DuiDpi::GetSystemDpi(), 72);
-                lf.lfWeight = FW_NORMAL;
-                lf.lfCharSet = GB2312_CHARSET;
-                lf.lfQuality = ANTIALIASED_QUALITY;
-                lf.lfPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
-                _tcsncpy_s(lf.lfFaceName, _T("Microsoft YaHei"), _TRUNCATE);
-                font = new Gdiplus::Font(hdc, &lf);
-            }
+            // 字体按本控件所在窗口的 DPI 取:显式设定的字体, 或默认 9pt YaHei
+            // ANTIALIASED_QUALITY(与 Layout 量算一致, 见 ResolveFont)。
+            Gdiplus::Font* font = new Gdiplus::Font(hdc, ResolveFont());
 
             if (font && font->GetLastStatus() == Gdiplus::Ok)
             {

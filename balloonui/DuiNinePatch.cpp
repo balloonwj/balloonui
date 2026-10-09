@@ -2,6 +2,7 @@
 #include "DuiNinePatch.h"
 #include <gdiplus.h>
 #include <algorithm>
+#include <vector>
 
 #pragma comment(lib, "gdiplus.lib")
 
@@ -322,6 +323,68 @@ bool Draw(HDC hdc, HBITMAP hbm,
     return DrawCells(hdc, hbm, bm, cells, opts);
 }
 
+// 把一张 32 位 DIBSection 复制成一张自己持有像素的 GDI+ 位图：用 GetDIBits 按自上而下的
+// 行序读出像素。复制失败时返回 nullptr，由调用方退回 FromHBITMAP。
+//
+// 为什么不直接包一层 ds.dsBm.bmBits：DIBSection 的行序无法从 GetObject 得知。GetObject 对
+// 自上而下存储的位图（创建时 biHeight 为负）同样返回正的 dsBmih.biHeight，按这个正负推测
+// 行序会把所有自上而下存储的源图画成上下颠倒（2026-10-01 修复；DuiAvatar 之前修过同样的
+// 问题）。GetDIBits 按位图实际的行序读取，再转换成调用方要求的行序。
+static Gdiplus::Bitmap* CopyDibTopDown(HBITMAP hbm, int w, int h,
+                                       Gdiplus::PixelFormat fmt)
+{
+    if (w <= 0 || h <= 0)
+    {
+        return nullptr;
+    }
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth       = w;
+    bi.bmiHeader.biHeight      = -h;        // 负高：要求按自上而下的行序读出
+    bi.bmiHeader.biPlanes      = 1;
+    bi.bmiHeader.biBitCount    = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
+    Gdiplus::Bitmap* bmp = new Gdiplus::Bitmap(w, h, fmt);
+    Gdiplus::Rect rc(0, 0, w, h);
+    Gdiplus::BitmapData data = {};
+    if (bmp->GetLastStatus() != Gdiplus::Ok
+        || bmp->LockBits(&rc, Gdiplus::ImageLockModeWrite, fmt, &data) != Gdiplus::Ok)
+    {
+        delete bmp;
+        return nullptr;
+    }
+
+    // GetDIBits 写出的 32 位像素行是紧密排列的（天然按 DWORD 对齐）。锁定区的行跨度与之相同时
+    // 直接写进锁定区，否则先写进临时缓冲区，再逐行复制过去。
+    const int rowBytes = w * 4;
+    int lines = 0;
+    HDC hdcScreen = ::GetDC(nullptr);
+    if (data.Stride == rowBytes)
+    {
+        lines = ::GetDIBits(hdcScreen, hbm, 0, (UINT)h, data.Scan0, &bi, DIB_RGB_COLORS);
+    }
+    else
+    {
+        std::vector<BYTE> buf((size_t)rowBytes * (size_t)h);
+        lines = ::GetDIBits(hdcScreen, hbm, 0, (UINT)h, buf.data(), &bi, DIB_RGB_COLORS);
+        for (int y = 0; y < h; ++y)
+        {
+            memcpy((BYTE*)data.Scan0 + (LONG_PTR)data.Stride * y,
+                   buf.data() + (size_t)rowBytes * (size_t)y, (size_t)rowBytes);
+        }
+    }
+    ::ReleaseDC(nullptr, hdcScreen);
+    bmp->UnlockBits(&data);
+
+    if (lines != h)
+    {
+        delete bmp;
+        return nullptr;
+    }
+    return bmp;
+}
+
 // 把 9 块 (src, dst) 真正画到 hdc 上 — 共用底层。
 static bool DrawCells(HDC hdc, HBITMAP hbm, const BITMAP& bm,
                       const Cell cells[9], const Options& opts)
@@ -331,12 +394,8 @@ static bool DrawCells(HDC hdc, HBITMAP hbm, const BITMAP& bm,
 
     // Wrap the HBITMAP for GDI+ once and reuse for all 9 blits.
     //
-    // For 32bpp DIBSections we always go through the explicit-bits path
-    // (Bitmap ctor with stride + format + bits pointer). FromHBITMAP is
-    // a known-unreliable choice here: it ignores the DIB's biHeight sign,
-    // so a top-down DIB gets rendered upside-down. Building the Bitmap
-    // directly with a signed stride lets GDI+ read rows in the order the
-    // bytes are actually laid out.
+    // 32 位 DIBSection：用 GetDIBits 按自上而下的行序把像素复制进 GDI+ 位图（行序为什么不能
+    // 从 GetObject 推测，见 CopyDibTopDown 的说明）。其余来源照旧走下面的 FromHBITMAP。
     //
     // Format choice: PARGB if opts.hasAlpha (caller promises pre-multiplied
     // alpha), otherwise 32bppRGB so GDI+ does not blend stale alpha bytes.
@@ -347,21 +406,10 @@ static bool DrawCells(HDC hdc, HBITMAP hbm, const BITMAP& bm,
     bool hasDib = (::GetObject(hbm, sizeof(ds), &ds) == sizeof(ds));
     if (hasDib && ds.dsBm.bmBitsPixel == 32 && ds.dsBm.bmBits != nullptr)
     {
-        // biHeight > 0 means bottom-up: bits start at the bottom row,
-        // memory ascends toward the top. Point GDI+ at the bottom row
-        // with a negative stride so it walks upward.
-        int stride = ds.dsBm.bmWidthBytes;
-        BYTE* bits = (BYTE*)ds.dsBm.bmBits;
-        if (ds.dsBmih.biHeight > 0)
-        {
-            bits   = bits + (LONG_PTR)stride * (ds.dsBmih.biHeight - 1);
-            stride = -stride;
-        }
         Gdiplus::PixelFormat fmt = opts.hasAlpha
             ? PixelFormat32bppPARGB
             : PixelFormat32bppRGB;
-        pImgOwned = new Gdiplus::Bitmap(bm.bmWidth, bm.bmHeight,
-                                        stride, fmt, bits);
+        pImgOwned = CopyDibTopDown(hbm, bm.bmWidth, bm.bmHeight, fmt);
         pImg = pImgOwned;
     }
     if (!pImg)

@@ -13,6 +13,11 @@
 // 工作机制：
 //   · caller 通过 SetCallbacks 装俩 handler。drop 成功时对应 callback
 //     在 UI 线程上调（IDropTarget::Drop 在目标窗口线程跑）。
+//   · 位图回调拿到的 HBITMAP <u>只在回调执行期间有效</u>：它就是拖放源交来的那张
+//     位图，回调一返回本类就会 ReleaseStgMedium 把它释放掉。要在回调之后继续用
+//    （存起来、稍后绘制），必须在回调里自己复制一份（如 CopyImage 加
+//     LR_CREATEDIBSECTION，强制真的复制，不会退化成返回原句柄），副本归调用方释放。
+//     不要 DeleteObject 回调里拿到的那个句柄。
 //   · 生命期：caller 持有 helper 实例。host HWND 就绪时 Register(hwnd)，
 //     dtor 里 Unregister()。包装的 IDropTarget 由 OLE 引用计数。
 //   · 需要 ::OleInitialize 已经调过（典型 WinMain 早期一次）。
@@ -23,7 +28,7 @@
 //     balloonwjui::DuiDropTargetHelper helper;
 //     helper.SetCallbacks(
 //         [](const std::vector<CString>& paths) { /* 发文件 */ },
-//         [](HBITMAP hbm)                       { /* 粘位图 */ });
+//         [](HBITMAP hbm)                       { /* 粘位图：hbm 只在本回调内有效，要留就当场复制 */ });
 //     helper.Register(m_hWnd);
 //     // ~Dialog 里：helper.Unregister();
 //
@@ -44,13 +49,16 @@ class DuiDropTargetImpl;     // forward decl, lives in cpp
 //   balloonwjui::DuiDropTargetHelper helper;
 //   helper.SetCallbacks(
 //       [](const std::vector<CString>& paths) { /* send files */ },
-//       [](HBITMAP hbm)                       { /* paste bitmap */ });
+//       [](HBITMAP hbm)                       { /* paste bitmap; hbm is valid only inside this callback, copy it to keep it */ });
 //   helper.Register(m_hWnd);
 //   // ... in ~Dialog: helper.Unregister();
 class DuiDropTargetHelper
 {
 public:
     typedef std::function<void(const std::vector<CString>&)> FilesCallback;
+    // 位图回调。参数是拖放源交来的位图，<u>只在回调执行期间有效</u>，所有权不归回调方：
+    // 回调返回后本类即释放它。要保留就在回调里自己复制一份，副本由调用方释放；
+    // 不要对参数本身 DeleteObject。见文件头"工作机制"一节。
     typedef std::function<void(HBITMAP)>                     BitmapCallback;
 
     // 拖动过程中的三个可选回调（见下面 SetDragCallbacks）。一个都不设时，本类

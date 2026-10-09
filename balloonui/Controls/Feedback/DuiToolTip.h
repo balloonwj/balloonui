@@ -30,6 +30,9 @@
 //     // 控件注册：
 //     DuiToolTipMgr::Inst().Register(myCtrl, _T("发送一条消息"));
 //
+//     // 多行提示（2026-10-06 起）：文字里用 '\n' 分行，浮窗按最长一行定宽
+//     DuiToolTipMgr::Inst().Register(myCtrl, _T("第一行\n第二行"));
+//
 //     // 控件 dtor 里取消注册：
 //     ~MyCtrl() { DuiToolTipMgr::Inst().Unregister(this); }
 //
@@ -73,6 +76,23 @@ public:
 
     // 程序触发关闭（host 在 size / capture 切换时调，避免 tooltip 跟丢）。
     void    HideNow();
+
+    // ---- 文字排版（2026-10-06 起支持多行）----
+    //
+    // 文字里含换行符 '\n' 时按多行排版：各行左对齐，宽度取最长的一行，高度为行数 × 行高；
+    // 不含换行符时与原先相同，按单行排版。提示浮窗的测量与绘制共用下面两个函数，保证
+    // 浮窗尺寸与绘制出的文字一致。
+
+    // 返回绘制提示文字时 DrawText 用的格式标志：单行为 DT_LEFT | DT_TOP | DT_SINGLELINE，
+    // 多行去掉 DT_SINGLELINE。
+    //   text：提示文字。
+    static UINT TextDrawFlags(const CString& text);
+
+    // 用 hdc 当前选入的字体量出提示文字的尺寸（像素）。单行用 GetTextExtentPoint32
+    // （与原先一致），多行用 DrawText 的 DT_CALCRECT。
+    //   hdc：已选好字体的设备上下文（借用，不转移所有权）。
+    //   text：提示文字；为空时返回 {0, 0}。
+    static SIZE MeasureTextExtent(HDC hdc, const CString& text);
 
     // ---- 测试用 ----
     bool    IsShowing() const  { return m_window != nullptr; }

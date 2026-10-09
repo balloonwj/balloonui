@@ -200,9 +200,13 @@ public:
         {
             if (m_bmpCb && med.hBitmap)
             {
-                HBITMAP copy = (HBITMAP)::CopyImage(med.hBitmap, IMAGE_BITMAP, 0, 0,
-                                                    LR_COPYRETURNORG);
-                m_bmpCb(copy ? copy : med.hBitmap);
+                // 直接把拖放源交来的位图交给回调，它只在回调执行期间有效（约定见
+                // DuiDropTarget.h 的 BitmapCallback）。这里原先用 CopyImage 加
+                // LR_COPYRETURNORG "复制"一份：尺寸色深一致时该标志直接返回原句柄，
+                // 等于没复制，回调存下的句柄在下面释放后失效；偶尔真复制出来的那份
+                // 又不会被释放，造成 GDI 对象泄漏（单测 BitmapDropLeavesNoGdiObjects
+                // 在旧写法下实测每次拖放多出一个 GDI 对象）。
+                m_bmpCb(med.hBitmap);
             }
             ::ReleaseStgMedium(&med);
             if (pEffect)

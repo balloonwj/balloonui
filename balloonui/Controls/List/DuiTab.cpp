@@ -328,7 +328,7 @@ int DuiTab::TextWidthOf(LPCTSTR text) const
         return 0;
     }
     HDC hdc = ::GetDC(nullptr);
-    HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+    HFONT useFont = GetDefaultFont();
     HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
     SIZE sz = { 0, 0 };
     ::GetTextExtentPoint32(hdc, text, (int)_tcslen(text), &sz);
@@ -745,7 +745,7 @@ void DuiTab::DrawTab(HDC hdc, int index) const
         rText.left += m_iconSize + m_iconGap;
     }
 
-    HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+    HFONT useFont = GetDefaultFont();
     HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
     int oldBk = ::SetBkMode(hdc, TRANSPARENT);
     COLORREF oldClr = ::SetTextColor(hdc, sel ? m_clrTextSel : m_clrText);

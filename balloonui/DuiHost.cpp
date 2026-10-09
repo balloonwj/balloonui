@@ -488,6 +488,7 @@ int DuiHost::OnCreate(LPCREATESTRUCT)
     // Cache per-monitor DPI so controls can read it without re-querying
     // every paint. Refreshed by WM_DPICHANGED later.
     m_dpi = DuiDpi::GetWindowDpi(m_hWnd);
+    m_hasWindowDpi = true;
     DuiResMgr::Inst().SetDpi(m_dpi);
 
     if (m_root)
@@ -512,7 +513,15 @@ LRESULT DuiHost::OnDpiChangedMsg(UINT, WPARAM wParam, LPARAM lParam, BOOL& bHand
         dpi = DuiDpi::kDefaultDpi;
     }
     m_dpi = dpi;
+    m_hasWindowDpi = true;
     DuiResMgr::Inst().SetDpi(dpi);
+
+    // 先把新 DPI 通知到每个控件，让按 DPI 缓存了字体或尺寸的控件刷新缓存，
+    // 下面移动窗口触发的布局用的才是新参数。
+    if (m_root)
+    {
+        m_root->DispatchDpiChanged_(dpi);
+    }
 
     // Apply the suggested rect (system-computed for the new monitor).
     if (lParam)
@@ -523,11 +532,15 @@ LRESULT DuiHost::OnDpiChangedMsg(UINT, WPARAM wParam, LPARAM lParam, BOOL& bHand
                      SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
+    // 整棵树重新布局。用 ForceLayout 而不是 SetRect：客户区矩形可能没变（lParam
+    // 为空，或建议矩形与原尺寸相同），SetRect 会因此直接返回；矩形没变的子控件
+    // 也要逐层重排，因为它们的内部排版依赖字号。
     if (m_root)
     {
         CRect rc;
         GetClientRect(&rc);
-        m_root->SetRect(rc);
+        m_root->ForceLayout(rc);
+        m_root->RelayoutDescendants_();
     }
     DestroyBackBuffer();        // size of buffer changes with new client
     Invalidate(FALSE);

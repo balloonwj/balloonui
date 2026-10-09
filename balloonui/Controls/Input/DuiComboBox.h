@@ -51,6 +51,35 @@ const int kPopupMinRows = 1;
 RECT ClampPopupToWorkArea(const RECT& comboScreen, int popupW, int popupH,
                           int itemH, const RECT& work);
 
+// 浮层里那个列表控件（DuiListBox）的 ctrlId。浮层的宿主会把树里<u>所有</u>控件的通知
+// 都转给浮层窗口，其中包括列表内部滚动条的 DUIN_VALUECHANGED；浮层据这个 id 认出
+// 哪些通知来自列表本身。
+const UINT kPopupListCtrlId = 1;
+
+/**
+ *  浮层收到一条控件通知后该怎么处理。
+ */
+enum PopupNotifyAction
+{
+    kPopupNotifyIgnore     = 0,   // 与选择无关（如列表内部滚动条滚动、鼠标进出），浮层保持打开
+    kPopupNotifySelect     = 1,   // 列表选中了某一行：写回下拉框并关闭浮层
+    kPopupNotifyItemDelete = 2    // 点了列表某行的删除叉：通知下拉框并关闭浮层
+};
+
+/**
+ *  判断浮层收到的一条通知属于哪一种。
+ *
+ *  必须连 ctrlId 一起判：同一个通知码可能来自不同的控件（balloonui 的自定义通知码由各控件
+ *  分别从 DUIN_CUSTOM 起编号，数值相同而含义不同；通用通知码则由各控件共用），只比较通知码
+ *  就会把别的控件发来的通知误判为本分支要处理的通知。这里的具体情况是：列表内部的滚动条
+ *  滚动时同样发 DUIN_VALUECHANGED（extra 是滚动位置），只比较通知码的话，滚一下滚轮就会
+ *  被当成选中了某一行，浮层随即关闭，项数超过一屏的下拉框因而无法滚动选择。
+ *    code：  通知码（DuiNotify::code）。
+ *    ctrlId：发出通知的控件 id（DuiNotify::ctrlId）。
+ *  @return 处理方式，取值见 PopupNotifyAction。
+ */
+PopupNotifyAction ClassifyPopupNotify(UINT code, UINT ctrlId);
+
 } // namespace combopopup
 
 // =================================================================
@@ -181,6 +210,16 @@ public:
     void     SetArrowColor(COLORREF c);
     COLORREF GetArrowColor() const { return m_arrowColor; }
 
+    // 设置 / 读取 1px 边框的颜色。
+    //   normal：常态边框色；
+    //   active：鼠标悬停或下拉浮层展开时的边框色。
+    // 禁用态沿用内部 kBorderDisabled = RGB(190,190,190)；SetShowBorder(false) 时不画
+    // 边框，这两个颜色都不使用。默认 RGB(150,150,150) / RGB(80,130,200)，与引入
+    // 本接口之前写死的颜色相同，不调用本方法的地方外观不变。
+    void     SetBorderColors(COLORREF normal, COLORREF active);
+    COLORREF GetBorderNormalColor() const { return m_borderNormal; }
+    COLORREF GetBorderActiveColor() const { return m_borderActive; }
+
     // ---- 文本（editable 模式下用户面对的文本）----
 
     // 当前文本：editable 模式直接读 EDIT 内容；read-only 模式返回
@@ -219,6 +258,46 @@ public:
     //   index：[0, GetCount()) 或 -1 取消选。
     //   notify：true 时触发 DUIN_VALUECHANGED；false 抑制。
     void    SetCurSel(int index, bool notify = true);
+
+    // ---- 每项图标与副文字（2026-10-04 起，登录窗账号下拉列表「头像 - 账号 - 姓名」用）----
+    //
+    // 只影响下拉浮层里各行的绘制（转交给浮层里的 DuiListBox，见它的同名接口）；下拉框
+    // 主体只显示选中项的文字，不画图标与副文字。都不设时与以前完全相同。
+
+    // 给第 index 项设置浮层里的左侧图标。
+    //   index：项索引；越界时忽略。
+    //   hbm：32 位预乘 alpha 位图，调用方持有，本控件不复制、不释放，须在本控件销毁、
+    //        改设或删除该项之前保持有效；NULL 表示不画图标。
+    void    SetItemIcon(int index, HBITMAP hbm);
+
+    // 第 index 项的图标；越界或没有设时返回 NULL。
+    HBITMAP GetItemIcon(int index) const;
+
+    // 给第 index 项设置浮层里的副文字（画在主文字右侧、弱色）。
+    //   index：项索引；越界时忽略。
+    //   sz：副文字；NULL 或空串表示没有。
+    void    SetItemSubText(int index, LPCTSTR sz);
+
+    // 第 index 项的副文字；越界或没有设时返回空串。
+    CString GetItemSubText(int index) const;
+
+    // 浮层里图标的边长（像素），默认 16；小于 1 时按 1。行高另由 SetItemHeight 设置。
+    void    SetIconSize(int px)       { m_iconSize = (px < 1) ? 1 : px; }
+    int     GetIconSize() const       { return m_iconSize; }
+
+    // 浮层里的一行
+    struct PopupItem
+    {
+        CString m_text;      // 主文字
+        CString m_subText;   // 副文字；空串表示没有
+        HBITMAP m_icon;      // 图标；NULL 表示没有（调用方持有）
+    };
+
+    // 按过滤映射表取出要放进浮层的各行。public 是给单测用，运行时由 OpenPopup 调。
+    //   filteredIndices：过滤映射表（第 k 个命中项对应 m_items 的哪个下标，见
+    //                    MapPopupIndexWithFilter）；空表示未过滤，取全部各项。
+    //   返回：浮层各行，顺序与浮层一致；映射表里越界的下标被跳过。
+    std::vector<PopupItem> BuildPopupItems(const std::vector<int>& filteredIndices) const;
 
     // ---- popup 行为 ----
 
@@ -277,6 +356,21 @@ public:
     void    OnPaint(HDC hdc, const RECT& rcDirty) override;
     bool    OnLButtonUp(POINT pt, UINT mkFlags) override;
 
+    // 鼠标移入 / 移出：悬停时边框换成 active 色（OnPaint 里按 m_bHover 取色），要重画一次
+    // （BUG-105，2026-10-06）。写成内联，理由同 DuiButton::OnMouseEnter。
+    bool    OnMouseEnter() override
+    {
+        const bool handled = DuiControl::OnMouseEnter();
+        Invalidate();
+        return handled;
+    }
+    bool    OnMouseLeave() override
+    {
+        const bool handled = DuiControl::OnMouseLeave();
+        Invalidate();
+        return handled;
+    }
+
     // popup 选中某项时回调（popup 内部调）。
     void    OnPopupSelected(int index);
 
@@ -304,6 +398,9 @@ private:
 
 private:
     std::vector<CString>  m_items;
+    std::vector<HBITMAP>  m_itemIcons;                  // 与 m_items 一一对应：各项在浮层里的图标（调用方持有），NULL 表示没有
+    std::vector<CString>  m_itemSubTexts;               // 与 m_items 一一对应：各项在浮层里的副文字，空串表示没有
+    int                   m_iconSize     = 16;          // 浮层里图标的边长（像素）
     int                   m_curSel       = -1;
     int                   m_maxVisible   = 8;
     int                   m_itemH        = 22;
@@ -314,6 +411,8 @@ private:
     bool                  m_showArrow    = true;                // 是否画下拉箭头
     bool                  m_showItemDelete = false;             // 下拉项右侧是否画删除叉
     COLORREF              m_arrowColor   = RGB( 80, 100, 140);  // 下拉箭头 enabled 态色;默认蓝灰
+    COLORREF              m_borderNormal = RGB(150, 150, 150);  // 常态边框色;默认中灰
+    COLORREF              m_borderActive = RGB( 80, 130, 200);  // 悬停 / 浮层展开时的边框色;默认蓝
 
     DuiComboBoxPopup*     m_popup        = nullptr;
     bool                  m_popupOpen    = false;

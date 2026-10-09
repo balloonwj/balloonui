@@ -32,6 +32,7 @@
 #pragma once
 
 #include "../../BalloonUiFeatures.h"
+#include "../../DuiTextResolver.h"   // ResolveText：内置文字经宿主登记的回调转换（多语言）
 #if BUI_FEATURE_RICHTEXT
 
 #include <vector>
@@ -115,28 +116,28 @@ inline LPCTSTR DuiRichEditMenuCommandLabel(UINT nCmd)
     {
     //撤销
     case kRichEditCmdUndo:
-        return _T("撤销(&U)");
+        return ResolveText(_T("撤销(&U)"));
     //重做
     case kRichEditCmdRedo:
-        return _T("重做(&R)");
+        return ResolveText(_T("重做(&R)"));
     //剪切
     case kRichEditCmdCut:
-        return _T("剪切(&T)");
+        return ResolveText(_T("剪切(&T)"));
     //复制
     case kRichEditCmdCopy:
-        return _T("复制(&C)");
+        return ResolveText(_T("复制(&C)"));
     //粘贴（保留格式）
     case kRichEditCmdPaste:
-        return _T("粘贴(&P)");
+        return ResolveText(_T("粘贴(&P)"));
     //粘贴为纯文本（丢弃格式）
     case kRichEditCmdPastePlain:
-        return _T("粘贴为纯文本(&L)");
+        return ResolveText(_T("粘贴为纯文本(&L)"));
     //删除选区，不写剪贴板
     case kRichEditCmdDelete:
-        return _T("删除(&D)");
+        return ResolveText(_T("删除(&D)"));
     //全选
     case kRichEditCmdSelectAll:
-        return _T("全选(&A)");
+        return ResolveText(_T("全选(&A)"));
     //自定义编号、分隔条、以及占位值都没有内置文案
     default:
         return _T("");

@@ -61,7 +61,12 @@ namespace balloonwjui {
 class BUI_API DuiPopupHost : public DuiHost
 {
 public:
-    DECLARE_WND_CLASS_EX(_T("__DuiPopupHost__"), CS_DROPSHADOW | CS_SAVEBITS, COLOR_WINDOW)
+    // 浮层自己的窗口类：阴影（CS_DROPSHADOW）与 CS_SAVEBITS（浮层关闭后由系统恢复被盖住的像素，底下的窗口不必重画），
+    // 外加与基类 __DuiHost__ 相同的双击与重绘样式，保持浮层原有的鼠标与重绘行为不变。
+    // 注意：基类是 CWindowImpl<DuiHost>，继承来的 Create 只会注册 DuiHost 的窗口类，这里的声明靠 EnsureCreated
+    // 按本类的窗口类信息注册、创建才生效（bugs.md BUG-101，2026-10-05 之前这条声明从未生效，浮层没有阴影）。
+    DECLARE_WND_CLASS_EX(_T("__DuiPopupHost__"),
+                         CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS | CS_DROPSHADOW | CS_SAVEBITS, COLOR_WINDOW)
 
     // 优先放置在 anchor 哪一边（实际越界时自动翻边到对面）。
     enum Edge

@@ -68,16 +68,67 @@ static Result Test_TextClickIgnored()
     return OK(_T("TextClickIgnored"));
 }
 
-// In link mode, click inside flips visited and consumes the event.
+// 链接模式下，在链接上按下并在链接上松开，构成一次点击：两个事件都被消费，visited 置位。
 static Result Test_LinkClickInside()
 {
     DuiLabel l;
     l.SetMode(DuiLabel::ModeLink);
     l.SetRect(RECT{ 0, 0, 100, 20 });
+    bool downConsumed = l.OnLButtonDown(POINT{ 50, 10 }, 0);
     bool consumed = l.OnLButtonUp(POINT{ 50, 10 }, 0);
+    EXPECT_BOOL(downConsumed, true,    _T("LinkClick/downConsumed"));
     EXPECT_BOOL(consumed, true,        _T("LinkClick/consumed"));
     EXPECT_BOOL(l.IsVisited(), true,   _T("LinkClick/visited"));
     return OK(_T("LinkClickInside"));
+}
+
+// 只收到松开、没有先在本控件上按下，不算点击。典型场景：下拉框的列表在鼠标按下时就完成选择
+// 并关闭，随后松开的消息落到列表下方的链接上，不能因此打开链接。
+static Result Test_LinkUpWithoutDownIgnored()
+{
+    DuiLabel l;
+    l.SetMode(DuiLabel::ModeLink);
+    l.SetRect(RECT{ 0, 0, 100, 20 });
+    bool consumed = l.OnLButtonUp(POINT{ 50, 10 }, 0);
+    EXPECT_BOOL(consumed, false,       _T("LinkUpOnly/notConsumed"));
+    EXPECT_BOOL(l.IsVisited(), false,  _T("LinkUpOnly/notVisited"));
+
+    // 一次未构成点击的松开不影响之后正常的点击
+    l.OnLButtonDown(POINT{ 50, 10 }, 0);
+    l.OnLButtonUp(POINT{ 50, 10 }, 0);
+    EXPECT_BOOL(l.IsVisited(), true,   _T("LinkUpOnly/laterClickWorks"));
+    return OK(_T("LinkUpWithoutDownIgnored"));
+}
+
+// 在链接上按下、移出链接后再松开，视为取消，不算点击；之后单独的一次松开也不算点击。
+static Result Test_LinkDownUpOutsideIgnored()
+{
+    DuiLabel l;
+    l.SetMode(DuiLabel::ModeLink);
+    l.SetRect(RECT{ 0, 0, 100, 20 });
+    l.OnLButtonDown(POINT{ 50, 10 }, 0);
+    l.OnLButtonUp(POINT{ 999, 999 }, 0);
+    EXPECT_BOOL(l.IsVisited(), false,  _T("LinkDownOut/notVisited"));
+
+    // 按下状态已在上一次松开时清除，这里只收到松开，仍不算点击
+    l.OnLButtonUp(POINT{ 50, 10 }, 0);
+    EXPECT_BOOL(l.IsVisited(), false,  _T("LinkDownOut/staleUpNotVisited"));
+    return OK(_T("LinkDownUpOutsideIgnored"));
+}
+
+// 禁用的链接，按下再松开也不算点击。
+static Result Test_LinkDisabledDownUpIgnored()
+{
+    DuiLabel l;
+    l.SetMode(DuiLabel::ModeLink);
+    l.SetEnabled(false);
+    l.SetRect(RECT{ 0, 0, 100, 20 });
+    bool downConsumed = l.OnLButtonDown(POINT{ 50, 10 }, 0);
+    bool consumed = l.OnLButtonUp(POINT{ 50, 10 }, 0);
+    EXPECT_BOOL(downConsumed, false,   _T("LinkDisabledDownUp/downNotConsumed"));
+    EXPECT_BOOL(consumed, false,       _T("LinkDisabledDownUp/notConsumed"));
+    EXPECT_BOOL(l.IsVisited(), false,  _T("LinkDisabledDownUp/notVisited"));
+    return OK(_T("LinkDisabledDownUpIgnored"));
 }
 
 // Link click outside the rect doesn't flip visited or consume.
@@ -461,6 +512,9 @@ CString RunAll()
         { _T("ModeAffectsTabStop"),     &Test_ModeAffectsTabStop    },
         { _T("TextClickIgnored"),       &Test_TextClickIgnored      },
         { _T("LinkClickInside"),        &Test_LinkClickInside       },
+        { _T("LinkUpWithoutDownIgnored"),  &Test_LinkUpWithoutDownIgnored  },
+        { _T("LinkDownUpOutsideIgnored"),  &Test_LinkDownUpOutsideIgnored  },
+        { _T("LinkDisabledDownUpIgnored"), &Test_LinkDisabledDownUpIgnored },
         { _T("LinkClickOutside"),       &Test_LinkClickOutside      },
         { _T("LinkDisabledIgnored"),    &Test_LinkDisabledIgnored   },
         { _T("SetVisitedAPI"),          &Test_SetVisitedAPI         },

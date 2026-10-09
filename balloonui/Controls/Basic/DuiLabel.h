@@ -25,11 +25,12 @@ namespace balloonwjui {
 //
 // 工作机制：
 //   · ModeText 是纯绘制控件，不可聚焦，无通知。
-//   · ModeLink hover 时光标变手型（IDC_HAND），LButton-up 时发
-//     DUIN_CLICK；visited 标志跨 paint 持久（caller 想重置调
+//   · ModeLink hover 时光标变手型（IDC_HAND）；在链接上按下左键并在链接上
+//     松开时发 DUIN_CLICK（与 DuiButton 相同：只收到松开、或按下后移出再
+//     松开都不算点击）；visited 标志跨 paint 持久（caller 想重置调
 //     SetVisited(false)）。
 //   · GetMnemonicChar 解析 "&X" 助记符（与 DuiButton / DuiMenu 同约定）。
-//   · 下划线字体懒构造自 m_hFont；m_hFont 改时下划线版本一并重建；
+//   · 下划线字体懒构造自当前基础字体（BaseFont）；基础字体变化（换字体、换字号、DPI 变化）时下划线版本一并重建；
 //     析构时一并清理。
 //   · SetWordWrap(true) 让 OnPaint / MeasureHeight 走 DT_WORDBREAK，
 //     可在 m_rcItem 内换行；默认 false 单行。
@@ -55,7 +56,7 @@ namespace balloonwjui {
 //
 // 事件：
 //   · ModeText：无。
-//   · ModeLink：DUIN_CLICK — 用户在链接上 LButton-up；extra = 0。
+//   · ModeLink：DUIN_CLICK — 用户在链接上按下并在链接上松开左键；extra = 0。
 //
 // 替代关系：
 //   · CSkinStatic            → ModeText
@@ -91,10 +92,24 @@ public:
     void    SetTextColor(COLORREF c) { m_clrText = c; Invalidate(); }
     COLORREF GetTextColor() const    { return m_clrText; }
 
-    // 设置 / 读取字体（caller 持有，控件不会 DeleteObject）。
-    // 不设时用 DuiResMgr::GetDefaultFont()（微软雅黑 9pt）。
-    void    SetFont(HFONT hFont)  { m_hFont = hFont; Invalidate(); }
-    HFONT   GetFont() const       { return m_hFont; }
+    // 设置调用方自己创建的字体（caller 持有，控件不会 DeleteObject），同时撤销
+    // SetTextPointSize 设的字号。这样设的字体<u>不随 DPI 变化</u>；需要跟随窗口 DPI
+    // 缩放的字号请用 SetTextPointSize。传 nullptr 恢复默认字体（微软雅黑 9pt）。
+    void    SetFont(HFONT hFont);
+
+    // 按磅值与粗细设字体，同时撤销 SetFont 设的字体。控件只记下磅值，绘制与测量时
+    // 按所在窗口的 DPI 向 DuiResMgr 现取字体，所以窗口换到缩放比例不同的显示器后
+    // 字号会跟着变。
+    //   pt：磅值（如 9 / 11 / 14）；<= 0 时恢复默认字体。
+    //   bold：true 用 FW_BOLD，false（默认）用 FW_NORMAL。
+    void    SetTextPointSize(int pt, bool bold = false);
+    int     GetTextPointSize() const { return m_textPt; }    // 0 表示未按磅值设置
+    bool    IsTextBold() const       { return m_textBold; }  // SetTextPointSize 设的粗细
+
+    // 返回显式设定的字体：SetFont 设的字体；或按 SetTextPointSize 的磅值、在本控件
+    // 当前 DPI 下取到的字体；两者都没设时返回 nullptr（表示使用默认字体）。
+    // 按磅值得到的句柄归 DuiResMgr 所有、随 DPI 变化，不要长期保存。
+    HFONT   GetFont() const;
 
     // 设置 / 读取自动换行模式。
     //   b：true → OnPaint / MeasureHeight 走 DT_WORDBREAK（多行）；
@@ -103,7 +118,7 @@ public:
     bool    IsWordWrap() const           { return m_wordWrap; }
 
     // 计算给定 client 宽度下、把 m_text 完整呈现需要的高度（px）。
-    // 用 DrawText(DT_CALCRECT) + 当前字体（m_hFont 或 DuiResMgr 默认）
+    // 用 DrawText(DT_CALCRECT) + 当前字体（GetFont() 或本控件 DPI 下的默认字体）
     // + 当前 word-wrap 标志算。空文本返回 0。
     //   width：>= 1 才有意义；<= 0 时按"无约束自然宽度"测量，等同单行
     //          高度。
@@ -172,9 +187,31 @@ public:
     bool    OnKeyDown   (UINT vk, UINT flags) override;
     bool    OnSetCursor (POINT pt) override;
 
+    // 鼠标移入 / 移出：链接模式下悬停时换颜色（EffectiveColor），要重画一次；普通文字模式没有悬停效果，
+    // 不重画（BUG-105，2026-10-06）。写成内联，理由同 DuiButton::OnMouseEnter。
+    bool    OnMouseEnter() override
+    {
+        const bool handled = DuiControl::OnMouseEnter();
+        if (m_mode == ModeLink)
+        {
+            Invalidate();
+        }
+        return handled;
+    }
+    bool    OnMouseLeave() override
+    {
+        const bool handled = DuiControl::OnMouseLeave();
+        if (m_mode == ModeLink)
+        {
+            Invalidate();
+        }
+        return handled;
+    }
+
 private:
     COLORREF EffectiveColor() const;
-    HFONT    EffectiveFont (HDC hdc) const;     // 返回 m_hFont，或为 link 模式构建下划线版本
+    HFONT    EffectiveFont (HDC hdc) const;     // 返回 BaseFont()，或为 link 模式构建下划线版本
+    HFONT    BaseFont() const;                  // GetFont() 非空时返回它，否则返回本控件 DPI 下的默认字体
 
     // ---- 选中模式内部辅助 ----
 
@@ -193,17 +230,23 @@ private:
     CString     m_text;
     DWORD       m_dtFlags   = DT_LEFT | DT_VCENTER | DT_SINGLELINE;
     COLORREF    m_clrText   = RGB(20, 20, 20);
-    HFONT       m_hFont     = nullptr;          // 不持有所有权
+    HFONT       m_hFont     = nullptr;          // SetFont 设的字体，不持有所有权
+    int         m_textPt    = 0;                // SetTextPointSize 设的磅值；0 = 未设
+    bool        m_textBold  = false;            // SetTextPointSize 设的粗细
     bool        m_wordWrap  = false;            // true 时 OnPaint 走 DT_WORDBREAK
 
     CString     m_url;
     bool        m_autoNav   = false;
     bool        m_visited   = false;
+    // 链接模式下，鼠标左键是在本控件上按下的、尚未松开。松开时只有它为 true 才算一次点击：
+    // 下拉框的列表、菜单等浮层在按下时就完成选择并关闭，随后松开的消息会落到下方的链接上，
+    // 不能把这样的松开当成点击。按下时置位，松开时清除。
+    bool        m_linkPressed = false;
     COLORREF    m_clrLink     = RGB(  0,  64, 192);
     COLORREF    m_clrHover    = RGB(  0,  96, 224);
     COLORREF    m_clrVisited  = RGB(112,  64, 160);
 
-    // 缓存的下划线字体（持有所有权）。m_hFont 改变时重建。
+    // 缓存的下划线字体（持有所有权）。基础字体改变时重建。
     mutable HFONT m_hFontUnderline = nullptr;
     mutable HFONT m_lastBaseFont   = nullptr;   // 记录 m_hFontUnderline 是从哪个 base 构出的
 

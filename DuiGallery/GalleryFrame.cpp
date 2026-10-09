@@ -52,6 +52,7 @@
 #include "../balloonui/Tests/DuiCaretTests.h"
 #include "../balloonui/Tests/DuiTextHostTests.h"
 #include "../balloonui/Tests/DuiRichEditTests.h"
+#include "../balloonui/Tests/DuiRichEditCaretTests.h"
 #include "../balloonui/Tests/DuiScrollBarTests.h"
 #include "../balloonui/Tests/DuiSmallControlsTests.h"
 #include "../balloonui/Tests/DuiToolTipTests.h"
@@ -492,6 +493,8 @@ void GalleryFrame::RunAllTests()
     report += DuiTextHostTests::RunAll();
     report += _T("\r\n");
     report += DuiRichEditTests::RunAll();
+    report += _T("\r\n");
+    report += DuiRichEditCaretTests::RunAll();
     report += _T("\r\n");
 #endif
     report += DuiScrollBarTests::RunAll();

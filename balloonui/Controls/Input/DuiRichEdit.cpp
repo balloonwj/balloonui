@@ -41,11 +41,18 @@ const COLORREF kFillDisabled = RGB(246, 247, 249);
 // 占位文字的颜色。
 const COLORREF kPlaceholderText = RGB(160, 166, 173);
 
-// 覆盖式滚动条的粗细（像素）。
-//
-// 取 8 而不是系统滚动条那种十七八像素：覆盖式滚动条浮在内容之上，做粗了
-// 会明显遮挡文字；做成细条既够点得着，视觉上也不喧宾夺主。
-const int kOverlayScrollBarThickness = 8;
+// 按单色位图画光标时，位图里的 0 位与 1 位分别换成的颜色。单色位图拷到彩色目标
+// 上时，0 位取目标的文字色、1 位取目标的背景色；再与目标异或，黑色不改变像素，
+// 白色把像素取反。见 DuiRichEdit::PaintCaret。
+const COLORREF kCaretShapeZeroBitColor = RGB(0, 0, 0);
+const COLORREF kCaretShapeOneBitColor  = RGB(255, 255, 255);
+
+// 覆盖式滚动条命中带的宽度（像素）。2026-10-04 起与库内其它悬浮式滚动条统一取
+// DuiScrollBar::kOverlayBandPx(11)：画出来的只是其中一根 5 像素的细滑块（见
+// DuiScrollBar），命中带比滑块宽，便于鼠标抓住，又不会明显遮挡文字。
+#if BUI_FEATURE_SCROLLBAR
+const int kOverlayScrollBarThickness = DuiScrollBar::kOverlayBandPx;
+#endif
 
 // 默认内边距（像素）。沿用库内文本输入控件一贯的默认值。
 const int kDefaultMarginLeft   = 4;
@@ -264,7 +271,7 @@ DuiRichEdit::DuiRichEdit()
         return;
     }
 
-    m_pTextHost->SetDefaultFont(DuiResMgr::Inst().GetDefaultFont(), m_crText);
+    m_pTextHost->SetDefaultFont(GetDefaultFont(), m_crText);
 
     // 订阅内容变化与选区变化通知。不订阅的话引擎不会发，
     // 业务就收不到「文字改变了」的事件。
@@ -454,6 +461,49 @@ bool DuiRichEdit::IsWordWrap() const
     return (m_pTextHost->GetPropertyBits_() & TXTBIT_WORDWRAP) != 0;
 }
 
+bool DuiRichEdit::SetPlainTextMode(bool bPlain)
+{
+    // 引擎不可用时下发的消息一律返回 0，会被误当成切换成功，所以先把它排除。
+    if (m_pTextHost == nullptr || Test_GetTextServices() == nullptr)
+    {
+        return false;
+    }
+    if (IsPlainTextMode() == bPlain)
+    {
+        return true;
+    }
+
+    // 先让引擎切换，成功后再同步宿主记录的属性位，顺序不能反过来。经属性位
+    // 通知引擎时，宿主的通知函数不向调用方返回引擎的处理结果（见
+    // DuiTextHost::NotifyPropertyChange），引擎拒绝了也无从得知，宿主与引擎
+    // 的记录就会不一致；这条消息则明确返回成败，文档非空时返回非 0。
+    //
+    // 只给出文本模式这一组标志。撤销级数、代码页这两组不给，引擎保持当前的
+    // 设置不变（2026-09-30 用同一引擎实测：模式值由 0x2A 变为 0x29，只有
+    // 纯文本 / 富文本这两位发生变化；用例 PlainTextModeSwitch 钉住了这一点）。
+    const LRESULT lResult = SendMessageToEngine(EM_SETTEXTMODE,
+                                                bPlain ? TM_PLAINTEXT : TM_RICHTEXT, 0);
+    if (lResult != 0)
+    {
+        return false;
+    }
+
+    // 引擎已经切换完成，这里只是让宿主的属性位与之一致。引擎之后再询问属性位
+    // 时拿到的是与自身状态相符的值，通知下去也不会引起任何变化。
+    m_pTextHost->SetPropertyBits(TXTBIT_RICHTEXT, bPlain ? 0 : TXTBIT_RICHTEXT);
+    Invalidate();
+    return true;
+}
+
+bool DuiRichEdit::IsPlainTextMode() const
+{
+    if (m_pTextHost == nullptr)
+    {
+        return false;
+    }
+    return (m_pTextHost->GetPropertyBits_() & TXTBIT_RICHTEXT) == 0;
+}
+
 void DuiRichEdit::SetFocusable(bool b)
 {
     m_bFocusable = b;
@@ -508,7 +558,7 @@ void DuiRichEdit::SetTextColor(COLORREF cr)
     {
         HFONT hFont = (m_hDefaultFont != nullptr)
                     ? m_hDefaultFont
-                    : DuiResMgr::Inst().GetDefaultFont();
+                    : GetDefaultFont();
         m_pTextHost->SetDefaultFont(hFont, m_crText);
     }
     Invalidate();
@@ -541,8 +591,17 @@ void DuiRichEdit::SetDefaultFontFromHFONT(HFONT font)
     m_hDefaultFont = font;
     if (m_pTextHost != nullptr)
     {
-        HFONT hUse = (font != nullptr) ? font : DuiResMgr::Inst().GetDefaultFont();
+        HFONT hUse = (font != nullptr) ? font : GetDefaultFont();
         m_pTextHost->SetDefaultFont(hUse, m_crText);
+    }
+    Invalidate();
+}
+
+void DuiRichEdit::OnDpiChanged(int /*dpi*/)
+{
+    if (m_pTextHost != nullptr && m_hDefaultFont == nullptr)
+    {
+        m_pTextHost->SetDefaultFont(GetDefaultFont(), m_crText);
     }
     Invalidate();
 }
@@ -814,6 +873,9 @@ void DuiRichEdit::OnPaint(HDC hdc, const RECT& rcDirty)
         rcBounds.right  = m_rcText.right;
         rcBounds.bottom = m_rcText.bottom;
 
+        // 引擎在 TxDraw 里会隐藏再显示一次光标、重设一次位置，这些请求只需
+        // 记录、不能触发重绘，否则每次绘制都会引发下一次绘制。见 BeginDraw 的注释。
+        m_pTextHost->BeginDraw();
         pSvc->TxDraw(
             DVASPECT_CONTENT,   // 绘制方式：正常内容
             0,                  // 保留参数
@@ -827,6 +889,10 @@ void DuiRichEdit::OnPaint(HDC hdc, const RECT& rcDirty)
             nullptr,            // 中断回调，不用
             0,                  // 中断回调参数
             TXTVIEW_ACTIVE);    // 活动视图
+        m_pTextHost->EndDraw();
+
+        // 光标画在文字之上，并且仍在上面设好的文字区裁剪之内。
+        PaintCaret(hdc, rcDirty);
 
         if (nOldGraphicsMode != 0)
         {
@@ -840,7 +906,7 @@ void DuiRichEdit::OnPaint(HDC hdc, const RECT& rcDirty)
     {
         HFONT hFont = (m_hDefaultFont != nullptr)
                     ? m_hDefaultFont
-                    : DuiResMgr::Inst().GetDefaultFont();
+                    : GetDefaultFont();
         HFONT hOldFont = (hFont != nullptr) ? (HFONT)::SelectObject(hdc, hFont) : nullptr;
         int nOldBkMode = ::SetBkMode(hdc, TRANSPARENT);
         COLORREF crOld = ::SetTextColor(hdc, kPlaceholderText);
@@ -874,6 +940,68 @@ void DuiRichEdit::OnPaint(HDC hdc, const RECT& rcDirty)
         m_pScrollH->OnPaint(hdc, rcDirty);
     }
 #endif
+}
+
+void DuiRichEdit::PaintCaret(HDC hdc, const RECT& rcDirty)
+{
+    if (m_pTextHost == nullptr)
+    {
+        return;
+    }
+
+    // 此刻不该画（没有焦点、引擎要求隐藏、关闭了光标显示、或闪烁正处于灭的相位）。
+    RECT rcCaret;
+    if (!m_pTextHost->GetCaretPaintRect(rcCaret))
+    {
+        return;
+    }
+
+    // 裁剪到文字区与本次重画区域之内。只画重画区域内的那一部分不会让光标只亮
+    // 一段：光标的每次亮灭切换与移动都会整块失效光标矩形，重画区域之外的像素
+    // 与本次的亮灭状态必然一致。
+    RECT rcDraw;
+    if (!::IntersectRect(&rcDraw, &rcCaret, &m_rcText))
+    {
+        return;
+    }
+    if (!::IntersectRect(&rcDraw, &rcDraw, &rcDirty))
+    {
+        return;
+    }
+
+    const int drawWidth  = rcDraw.right - rcDraw.left;
+    const int drawHeight = rcDraw.bottom - rcDraw.top;
+
+    // 实心竖线光标：用白色画刷做异或，每个像素的 RGB 三个通道全部取反，效果与
+    // 系统光标相同。不用 DSTINVERT，是因为它连 32 位后台缓冲里的保留字节也一起
+    // 取反；画刷的保留字节为 0，异或之后保持原值，不会影响后续按透明度合成的绘制。
+    HBITMAP hShape = m_pTextHost->GetCaretPaintBitmap();
+    if (hShape == nullptr)
+    {
+        HBRUSH hOldBrush = (HBRUSH)::SelectObject(hdc, ::GetStockObject(WHITE_BRUSH));
+        ::PatBlt(hdc, rcDraw.left, rcDraw.top, drawWidth, drawHeight, PATINVERT);
+        ::SelectObject(hdc, hOldBrush);
+        return;
+    }
+
+    // 位图光标：把位图异或到缓冲上，与系统画位图光标的方式一致。单色位图拷到
+    // 彩色目标上时，0 位换成目标的文字色、1 位换成目标的背景色；这里把两者设为
+    // 黑与白，于是 0 位异或黑色（不变）、1 位异或白色（取反）。引擎有选区时给的
+    // 是全零的位图，画下去没有任何变化，光标也就看不见 —— 这正是引擎要的效果。
+    HDC hdcShape = ::CreateCompatibleDC(hdc);
+    if (hdcShape == nullptr)
+    {
+        return;
+    }
+    HBITMAP hOldShape = (HBITMAP)::SelectObject(hdcShape, hShape);
+    const COLORREF crOldText = ::SetTextColor(hdc, kCaretShapeZeroBitColor);
+    const COLORREF crOldBk   = ::SetBkColor(hdc, kCaretShapeOneBitColor);
+    ::BitBlt(hdc, rcDraw.left, rcDraw.top, drawWidth, drawHeight,
+             hdcShape, rcDraw.left - rcCaret.left, rcDraw.top - rcCaret.top, SRCINVERT);
+    ::SetBkColor(hdc, crOldBk);
+    ::SetTextColor(hdc, crOldText);
+    ::SelectObject(hdcShape, hOldShape);
+    ::DeleteDC(hdcShape);
 }
 
 // =================================================================
@@ -1517,7 +1645,7 @@ int DuiRichEdit::GetLineHeight() const
 
     HFONT hFont = (m_hDefaultFont != nullptr)
                 ? m_hDefaultFont
-                : DuiResMgr::Inst().GetDefaultFont();
+                : GetDefaultFont();
     if (hFont == nullptr)
     {
         return kFallbackLineHeight;
@@ -2614,11 +2742,8 @@ bool DuiRichEdit::MeasureContentHeight(int& outHeight) const
     //   · 控件已经按内容排到某个高度之后，量出来永远等于当前高度，内容再多
     //     也不会更大 —— 自动增高长到第一次那个高度就再也不动了。
     //
-    // **不能改成只把「范围」参数调大**（一个很容易踩的坑，2026-08-14 实测）：
-    // 引擎拿「范围」与「客户区矩形」的比值当缩放系数用，单独把范围放大等于
-    // 让它把文字整体缩小，量出来的高度会小得离谱（实测三行文字只量出 9 像素）。
-    // 两者必须成比例地一起变，而 SetClientRect 内部正好会把范围一并重算，
-    // 所以这里只动客户区矩形。
+    // 范围参数随客户区一起变：SetClientRect 内部会按新矩形重算范围，所以这里只动
+    // 客户区矩形，范围在撑高之后从 TxGetExtent 取。
     //
     // 代价是每次测量会让引擎多排一次版（撑高一次、还原一次）。自动增高的
     // 编辑器内容都很少，这点开销可以接受。
@@ -2637,9 +2762,15 @@ bool DuiRichEdit::MeasureContentHeight(int& outHeight) const
     szExtent.cy = 0;
     m_pTextHost->TxGetExtent(&szExtent);
 
-    // 宽度是入参（按这个宽度排版），高度是出参（排完有多高）。
+    // 宽度、高度都既是入参又是出参：入参宽度决定按多宽排版；**入参高度必须与范围
+    // 参数的高度对应同一个矩形**。引擎把「入参高度 ÷ 范围高度」当作缩放比例，两者
+    // 对应同一个矩形时比例为 1。2026-10-01 之前这里传 0，比例失真，量出的高度与宽度
+    // 整体偏小：引擎实际行距 17 像素时，单行只量出 3～6 像素、三行只量出 9～18 像素。
+    // 同日的对照实验（同一段文字，逐一改变两者）：两者对应同一矩形时四种测量模式都与
+    // 引擎行距一致；范围高度改为入参的 2 倍，结果正好减半；范围宽度改变不影响结果。
+    // 出参是排完之后的内容宽高，不受入参高度限制（入参 40 像素时三行照样量出 51 像素）。
     LONG lWidth  = rcSaved.right - rcSaved.left;
-    LONG lHeight = 0;
+    LONG lHeight = rcTall.bottom - rcTall.top;
     HRESULT hr = pSvc->TxGetNaturalSize(DVASPECT_CONTENT, hdc, nullptr, nullptr,
                                         TXTNS_FITTOCONTENT, &szExtent,
                                         &lWidth, &lHeight);

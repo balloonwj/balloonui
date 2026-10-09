@@ -165,6 +165,24 @@ public:
     void    SetWordWrap(bool b);
     bool    IsWordWrap() const;
 
+    // 切换纯文本 / 富文本模式。本类默认富文本；DuiEdit 在构造时切为纯文本。
+    //
+    // 两种模式的差别：纯文本模式下全文只有一套格式，选区也不能越过文本末尾；
+    // 富文本模式下文档末尾那个看不见的段落结束符可以被选中（光标在末尾时按
+    // Shift+→，或拖选越过末尾），界面上表现为文字后面多出一小块高亮，像是
+    // 末尾有个空格。不需要分段格式的输入框应当用纯文本模式。
+    //
+    // **只能在文档为空时切换**，这是排版引擎的限制：文档里有内容时引擎拒绝
+    // 切换。因此应当在构造之后、写入任何文字之前调用。
+    //   bPlain：true 切为纯文本模式，false 切回富文本模式。
+    //   返回：true 表示已处于目标模式（本来就是，或本次切换成功）；false 表示
+    //         引擎拒绝了切换（通常是文档非空），模式保持不变。
+    bool    SetPlainTextMode(bool bPlain);
+
+    // 当前是否为纯文本模式。
+    //   返回：true 表示纯文本模式，false 表示富文本模式。
+    bool    IsPlainTextMode() const;
+
     // 是否接受键盘焦点。默认 true。
     //   b：false 表示点击本控件不会获得焦点、也不显示光标。适用于「只读
     //      展示但仍希望能选中复制」之外的纯展示场景 —— 例如更新说明区，
@@ -621,6 +639,12 @@ public:
     bool    OnRButtonDown(POINT pt, UINT mkFlags) override;
     bool    OnRawMessage(UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT& lResult) override;
 
+    // 宿主窗口 DPI 变化时调用。用的是库内默认字体时，按新 DPI 重新取一份交给引擎
+    // 作默认字符格式；经 SetDefaultFontFromHFONT 设的字体由调用方负责，不替换。
+    // 已经单独设过字号的文字保持原格式。
+    //   dpi：新的 DPI（本实现经 GetDefaultFont 间接使用，不直接读取）。
+    void    OnDpiChanged(int dpi) override;
+
     // ---- IDuiTextHostSite 实现（引擎反过来操作本控件的入口）----
     void    TxSiteInvalidate(const RECT* prc) override;
     void    TxSiteSetCapture(bool bCapture) override;
@@ -761,6 +785,16 @@ private:
 
     // 把控件矩形换算成文本区矩形（去掉边框与内边距）并推给引擎。
     void    UpdateTextRect();
+
+    // 把文本插入光标画进后台缓冲。在绘制完文字之后调用。
+    //
+    // 光标由本控件自己画、闪烁相位由 DuiTextHost 控制，系统光标只用来报告位置，
+    // 原因见 DuiTextHost.h「光标绘制」一节。画法是把光标矩形内的像素反色，
+    // 与系统光标的观感一致，在任何背景色上都看得清。每次绘制都是在新画的
+    // 文字上反色一次，反复重绘不会累积。
+    //   hdc：绘制目标（宿主的后台缓冲）。
+    //   rcDirty：本次需要重画的区域，宿主客户区坐标；光标只画在其中的部分。
+    void    PaintCaret(HDC hdc, const RECT& rcDirty);
 
     // 把一次鼠标事件转发给引擎。
     //   uMsg：对应的窗口消息号。

@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "DuiControl.h"
 #include "DuiHost.h"
+#include "DuiResMgr.h"
+#include "DuiDpi.h"
 #include "BalloonUiFeatures.h"
 #if BUI_FEATURE_TOOLTIP
 #  include "Controls/Feedback/DuiToolTip.h"
@@ -73,6 +75,52 @@ void DuiControl::AttachToHost(DuiHost* host)
     for (auto& c : m_children)
     {
         c->AttachToHost(host);
+    }
+}
+
+int DuiControl::GetDpi() const
+{
+    // 宿主窗口创建之前它的 DPI 还是构造时的默认值，不能代表窗口将来所在的显示器，
+    // 此时与未挂宿主一样按全局 DPI 处理。
+    if (m_pHost != nullptr && m_pHost->HasWindowDpi())
+    {
+        return m_pHost->GetDpi();
+    }
+    const int globalDpi = DuiResMgr::Inst().GetDpi();
+    return (globalDpi > 0) ? globalDpi : DuiDpi::GetSystemDpi();
+}
+
+HFONT DuiControl::GetDefaultFont() const
+{
+    return DuiResMgr::Inst().GetDefaultFontForDpi(GetDpi());
+}
+
+HFONT DuiControl::GetFontByPointSize(int pt, bool bold) const
+{
+    return DuiResMgr::Inst().GetFontByPointSizeForDpi(pt, bold, GetDpi());
+}
+
+HFONT DuiControl::GetAntiAliasedFontByPointSize(int pt, bool bold) const
+{
+    return DuiResMgr::Inst().GetAntiAliasedFontByPointSizeForDpi(pt, bold, GetDpi());
+}
+
+void DuiControl::DispatchDpiChanged_(int dpi)
+{
+    OnDpiChanged(dpi);
+    for (size_t i = 0; i < m_children.size(); ++i)
+    {
+        m_children[i]->DispatchDpiChanged_(dpi);
+    }
+}
+
+void DuiControl::RelayoutDescendants_()
+{
+    for (size_t i = 0; i < m_children.size(); ++i)
+    {
+        DuiControl* child = m_children[i].get();
+        child->Layout(child->m_rcItem);
+        child->RelayoutDescendants_();
     }
 }
 
@@ -304,10 +352,29 @@ bool DuiControl::OnRawMessage(UINT, WPARAM, LPARAM, LRESULT&)
 
 void DuiControl::Invalidate()
 {
-    if (m_pHost)
+    if (!m_pHost)
     {
-        m_pHost->InvalidateDuiRect(m_rcItem);
+        return;
     }
+
+    // 与祖先链上每个把子控件裁剪在自己矩形内绘制的容器依次求交（理由见头文件）。
+    // 普通容器的 GetChildClipRect 返回 false，不参与求交。
+    RECT rc = m_rcItem;
+    for (const DuiControl* p = m_pParent; p != nullptr; p = p->m_pParent)
+    {
+        RECT clip;
+        if (!p->GetChildClipRect(clip))
+        {
+            continue;
+        }
+        RECT visible;
+        if (!::IntersectRect(&visible, &rc, &clip))
+        {
+            return;   // 本控件此刻完全落在可见区之外，没有需要重画的地方
+        }
+        rc = visible;
+    }
+    m_pHost->InvalidateDuiRect(rc);
 }
 
 void DuiControl::Capture()

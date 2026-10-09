@@ -3,6 +3,10 @@
 
 #if BUI_FEATURE_COMBOBOX
 
+#include "../Controls/List/DuiListBox.h"        // DUITN_ITEMDELETE（浮层通知分类用例）
+#include "../Controls/Window/DuiScrollBar.h"    // 列表内部滚动条（浮层通知分类用例）
+#include "../DuiNotify.h"
+
 
 namespace balloonwjui {
 
@@ -266,6 +270,84 @@ static Result Test_ArrowColorWithDataModel()
     return OK(_T("ArrowColorWithDataModel"));
 }
 
+// ---- 边框颜色（可配；默认值与历史常量一致）-------------------------------
+
+// 默认边框色：常态 RGB(150,150,150)，悬停 / 展开 RGB(80,130,200)。与引入这组接口
+// 之前写死的常量相同，不调用 SetBorderColors 的地方外观不变。
+static Result Test_BorderColorDefault()
+{
+    DuiComboBox c;
+    EXPECT_INT((int)c.GetBorderNormalColor(), (int)RGB(150, 150, 150), _T("Brd/defNormal"));
+    EXPECT_INT((int)c.GetBorderActiveColor(), (int)RGB( 80, 130, 200), _T("Brd/defActive"));
+    return OK(_T("BorderColorDefault"));
+}
+
+// SetBorderColors / Get*BorderColor 往返。
+static Result Test_BorderColorRoundTrip()
+{
+    DuiComboBox c;
+    c.SetBorderColors(RGB(237, 237, 237), RGB(255, 122, 69));
+    EXPECT_INT((int)c.GetBorderNormalColor(), (int)RGB(237, 237, 237), _T("Brd/normal"));
+    EXPECT_INT((int)c.GetBorderActiveColor(), (int)RGB(255, 122, 69),  _T("Brd/active"));
+
+    c.SetBorderColors(RGB(150, 150, 150), RGB(80, 130, 200));   // 回默认
+    EXPECT_INT((int)c.GetBorderNormalColor(), (int)RGB(150, 150, 150), _T("Brd/backNormal"));
+    EXPECT_INT((int)c.GetBorderActiveColor(), (int)RGB( 80, 130, 200), _T("Brd/backActive"));
+    return OK(_T("BorderColorRoundTrip"));
+}
+
+// 与 ShowBorder / ArrowColor / BgColor 互不影响。
+static Result Test_BorderColorOrthogonal()
+{
+    DuiComboBox c;
+    c.SetArrowColor(RGB(102, 102, 102));
+    c.SetBgColor(RGB(245, 246, 248));
+    c.SetBorderColors(RGB(237, 237, 237), RGB(255, 122, 69));
+
+    EXPECT_INT((int)c.GetArrowColor(), (int)RGB(102, 102, 102), _T("BrdOrth/arrow"));
+    EXPECT_INT((int)c.GetBgColor(),    (int)RGB(245, 246, 248), _T("BrdOrth/bg"));
+
+    // 隐藏边框不应清掉已设置的边框色。
+    c.SetShowBorder(false);
+    EXPECT_INT((int)c.GetBorderNormalColor(), (int)RGB(237, 237, 237), _T("BrdOrth/normalAfterHide"));
+    EXPECT_INT((int)c.GetBorderActiveColor(), (int)RGB(255, 122, 69),  _T("BrdOrth/activeAfterHide"));
+    return OK(_T("BorderColorOrthogonal"));
+}
+
+// 画出来的边框确实用了设置的常态色：边框用 GDI RoundRect + 1px 画笔绘制、不抗锯齿，
+// 上边框正中那个像素就是画笔颜色本身。
+static Result Test_BorderColorPainted()
+{
+    const int      kW      = 120;
+    const int      kH      = 30;
+    const COLORREF kNormal = RGB(10, 200, 30);   // 与底色、箭头色都不同的醒目色
+
+    DuiComboBox c;
+    c.SetBgColor(RGB(255, 255, 255));
+    c.SetBorderColors(kNormal, RGB(255, 122, 69));
+    RECT rc = { 0, 0, kW, kH };
+    c.SetRect(rc);
+
+    HDC screen = ::GetDC(NULL);
+    HDC mem    = ::CreateCompatibleDC(screen);
+    HBITMAP bmp = ::CreateCompatibleBitmap(screen, kW, kH);
+    ::ReleaseDC(NULL, screen);
+    HGDIOBJ old = ::SelectObject(mem, bmp);
+    HBRUSH white = ::CreateSolidBrush(RGB(255, 255, 255));
+    ::FillRect(mem, &rc, white);
+    ::DeleteObject(white);
+
+    c.OnPaint(mem, rc);
+    const COLORREF top = ::GetPixel(mem, kW / 2, 0);
+
+    ::SelectObject(mem, old);
+    ::DeleteObject(bmp);
+    ::DeleteDC(mem);
+
+    EXPECT_INT((int)top, (int)kNormal, _T("BrdPaint/topEdge"));
+    return OK(_T("BorderColorPainted"));
+}
+
 // =====================================================================
 // 下拉浮层落点（combopopup::ClampPopupToWorkArea）
 //
@@ -447,6 +529,133 @@ static Result Test_MapPopupIndexOutOfRange()
     return OK(_T("MapPopupIndexOutOfRange"));
 }
 
+// ---- 浮层对控件通知的分类 ----
+//
+// 浮层的宿主会把树里所有控件的通知都转给浮层窗口。列表内部的滚动条滚动时同样发
+// DUIN_VALUECHANGED（extra 是滚动位置）；只比较通知码的话，滚一下滚轮就被当成选中，
+// 浮层随即关闭（2026-10-01 在客户端「清理聊天记录」对话框的时 / 分下拉框上发现）。
+
+// 列表本身发来的选中与删除叉通知照常处理。
+static Result Test_PopupNotifyFromList()
+{
+    EXPECT_INT(combopopup::ClassifyPopupNotify(DUIN_VALUECHANGED, combopopup::kPopupListCtrlId),
+               combopopup::kPopupNotifySelect, _T("Notify/listSelect"));
+    EXPECT_INT(combopopup::ClassifyPopupNotify((UINT)DuiListBox::DUITN_ITEMDELETE,
+                                               combopopup::kPopupListCtrlId),
+               combopopup::kPopupNotifyItemDelete, _T("Notify/listDelete"));
+    return OK(_T("PopupNotifyFromList"));
+}
+
+// 列表内部滚动条（未设 ctrlId，即 0）发来的值变化不算选中，浮层保持打开。
+static Result Test_PopupNotifyFromScrollBarIgnored()
+{
+    DuiScrollBar sb;
+    EXPECT_BOOL(sb.GetCtrlId() != combopopup::kPopupListCtrlId, true, _T("Notify/sbIdDiffers"));
+    EXPECT_INT(combopopup::ClassifyPopupNotify(DUIN_VALUECHANGED, sb.GetCtrlId()),
+               combopopup::kPopupNotifyIgnore, _T("Notify/sbValueChanged"));
+    EXPECT_INT(combopopup::ClassifyPopupNotify((UINT)DuiListBox::DUITN_ITEMDELETE, sb.GetCtrlId()),
+               combopopup::kPopupNotifyIgnore, _T("Notify/sbItemDelete"));
+    return OK(_T("PopupNotifyFromScrollBarIgnored"));
+}
+
+// 与选择无关的通知（鼠标进出、点击）一律忽略，即使来自列表本身。
+static Result Test_PopupNotifyOtherCodesIgnored()
+{
+    EXPECT_INT(combopopup::ClassifyPopupNotify(DUIN_MOUSEENTER, combopopup::kPopupListCtrlId),
+               combopopup::kPopupNotifyIgnore, _T("Notify/enter"));
+    EXPECT_INT(combopopup::ClassifyPopupNotify(DUIN_MOUSELEAVE, combopopup::kPopupListCtrlId),
+               combopopup::kPopupNotifyIgnore, _T("Notify/leave"));
+    EXPECT_INT(combopopup::ClassifyPopupNotify(DUIN_CLICK, combopopup::kPopupListCtrlId),
+               combopopup::kPopupNotifyIgnore, _T("Notify/click"));
+    return OK(_T("PopupNotifyOtherCodesIgnored"));
+}
+
+
+// ----- 每项图标与副文字（2026-10-04 起，登录窗账号下拉列表用）-----
+
+// 下拉框每项的图标与副文字跟着条目走：删除、清空、追加都不会错位，越界读写安全
+static Result Test_ItemIconSubText()
+{
+    const int kDefaultIconPx = 16;   // 图标边长的默认值
+    const int kIconPx = 28;          // 改过的图标边长
+    const int kFarIndex = 99;        // 越界的下标
+    HBITMAP icon0 = ::CreateBitmap(1, 1, 1, 32, NULL);
+    HBITMAP icon1 = ::CreateBitmap(1, 1, 1, 32, NULL);
+    DuiComboBox c;
+    c.AddString(_T("Alpha"));
+    c.AddString(_T("alligator"));
+    c.AddString(_T("Bravo"));
+    EXPECT_INT(c.GetIconSize(), kDefaultIconPx, _T("CBIcon/defaultSize"));
+    c.SetIconSize(kIconPx);
+    EXPECT_INT(c.GetIconSize(), kIconPx, _T("CBIcon/size"));
+    EXPECT_BOOL(c.GetItemIcon(0) == NULL, true, _T("CBIcon/defaultNone"));
+    EXPECT_BOOL(c.GetItemSubText(0).IsEmpty(), true, _T("CBIcon/defaultSub"));
+
+    c.SetItemIcon(0, icon0);
+    c.SetItemSubText(0, _T("A0"));
+    c.SetItemIcon(1, icon1);
+    c.SetItemSubText(2, _T("B2"));
+    // 改主文字不动图标与副文字
+    c.SetItemText(0, _T("Alpha2"));
+    EXPECT_BOOL(c.GetItemIcon(0) == icon0, true, _T("CBIcon/keepOnSetText"));
+
+    // 删掉第一项：后面的项连同图标与副文字前移
+    c.DeleteString(0);
+    EXPECT_BOOL(c.GetItemIcon(0) == icon1, true, _T("CBIcon/deleteShift"));
+    EXPECT_BOOL(c.GetItemSubText(1) == _T("B2"), true, _T("CBIcon/deleteShiftSub"));
+
+    // 越界读写安全
+    c.SetItemIcon(kFarIndex, icon0);
+    c.SetItemSubText(-1, _T("x"));
+    EXPECT_BOOL(c.GetItemIcon(kFarIndex) == NULL, true, _T("CBIcon/oobIcon"));
+    EXPECT_BOOL(c.GetItemSubText(-1).IsEmpty(), true, _T("CBIcon/oobSub"));
+
+    // 清空后再追加：新项没有图标与副文字
+    c.ResetContent();
+    c.AddString(_T("x"));
+    EXPECT_BOOL(c.GetItemIcon(0) == NULL, true, _T("CBIcon/afterReset"));
+    EXPECT_BOOL(c.GetItemSubText(0).IsEmpty(), true, _T("CBIcon/afterResetSub"));
+    ::DeleteObject(icon0);
+    ::DeleteObject(icon1);
+    return OK(_T("ItemIconSubText"));
+}
+
+// 浮层各行带上对应项的文字、图标与副文字；增量搜索过滤时按过滤结果取，不错位
+static Result Test_PopupItemsCarryIconSubText()
+{
+    HBITMAP icon0 = ::CreateBitmap(1, 1, 1, 32, NULL);
+    HBITMAP icon1 = ::CreateBitmap(1, 1, 1, 32, NULL);
+    DuiComboBox c;
+    c.AddString(_T("Alpha"));
+    c.AddString(_T("Bravo"));
+    c.AddString(_T("alligator"));
+    c.SetItemIcon(0, icon0);
+    c.SetItemSubText(0, _T("A0"));
+    c.SetItemIcon(2, icon1);
+    c.SetItemSubText(2, _T("L2"));
+
+    // 没有过滤：全部各项按原顺序
+    std::vector<int> none;
+    std::vector<DuiComboBox::PopupItem> all = c.BuildPopupItems(none);
+    EXPECT_SIZE(all.size(), 3, _T("CBPopup/allSize"));
+    EXPECT_BOOL(all[0].m_text == _T("Alpha"), true, _T("CBPopup/text0"));
+    EXPECT_BOOL(all[0].m_subText == _T("A0"), true, _T("CBPopup/sub0"));
+    EXPECT_BOOL(all[0].m_icon == icon0, true, _T("CBPopup/icon0"));
+    EXPECT_BOOL(all[1].m_icon == NULL, true, _T("CBPopup/icon1None"));
+    EXPECT_BOOL(all[1].m_subText.IsEmpty(), true, _T("CBPopup/sub1None"));
+
+    // 过滤「al」命中第 0、2 项：浮层第 2 行是第 2 项，带它自己的图标与副文字
+    std::vector<int> filtered = c.ComputeFilteredIndices(_T("al"));
+    std::vector<DuiComboBox::PopupItem> part = c.BuildPopupItems(filtered);
+    EXPECT_SIZE(part.size(), 2, _T("CBPopup/filteredSize"));
+    EXPECT_BOOL(part[1].m_text == _T("alligator"), true, _T("CBPopup/filteredText"));
+    EXPECT_BOOL(part[1].m_icon == icon1, true, _T("CBPopup/filteredIcon"));
+    EXPECT_BOOL(part[1].m_subText == _T("L2"), true, _T("CBPopup/filteredSub"));
+    ::DeleteObject(icon0);
+    ::DeleteObject(icon1);
+    return OK(_T("PopupItemsCarryIconSubText"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_BOOL
 #undef EXPECT_SIZE
@@ -472,6 +681,11 @@ CString RunAll()
         { _T("ArrowColorRoundTrip"),       &Test_ArrowColorRoundTrip       },
         { _T("ArrowColorOrthogonal"),      &Test_ArrowColorOrthogonal      },
         { _T("ArrowColorWithDataModel"),   &Test_ArrowColorWithDataModel   },
+        // ---- 边框颜色 ----
+        { _T("BorderColorDefault"),        &Test_BorderColorDefault        },
+        { _T("BorderColorRoundTrip"),      &Test_BorderColorRoundTrip      },
+        { _T("BorderColorOrthogonal"),     &Test_BorderColorOrthogonal     },
+        { _T("BorderColorPainted"),        &Test_BorderColorPainted        },
         // ---- 下拉浮层落点夹取 ----
         { _T("PopupFitsBelow"),            &Test_PopupFitsBelow            },
         { _T("PopupFlipsAbove"),           &Test_PopupFlipsAbove           },
@@ -482,7 +696,13 @@ CString RunAll()
         // ---- 浮层项下标映射 ----
         { _T("MapPopupIndexNoFilter"),     &Test_MapPopupIndexNoFilter     },
         { _T("MapPopupIndexWithFilter"),   &Test_MapPopupIndexWithFilter   },
-        { _T("MapPopupIndexOutOfRange"),   &Test_MapPopupIndexOutOfRange   }
+        { _T("MapPopupIndexOutOfRange"),   &Test_MapPopupIndexOutOfRange   },
+        // ---- 浮层对控件通知的分类 ----
+        { _T("PopupNotifyFromList"),       &Test_PopupNotifyFromList       },
+        { _T("PopupNotifyFromScrollBarIgnored"), &Test_PopupNotifyFromScrollBarIgnored },
+        { _T("PopupNotifyOtherCodesIgnored"),    &Test_PopupNotifyOtherCodesIgnored    },
+        { _T("ItemIconSubText"),                 &Test_ItemIconSubText                 },
+        { _T("PopupItemsCarryIconSubText"),      &Test_PopupItemsCarryIconSubText      }
     };
 
     CString out;

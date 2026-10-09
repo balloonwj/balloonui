@@ -232,7 +232,7 @@ void DuiBadge::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
     int textW = 0;
     int fontH = 0;
 
-    HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+    HFONT useFont = GetDefaultFont();
     HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
     if (!displayText.IsEmpty())
     {

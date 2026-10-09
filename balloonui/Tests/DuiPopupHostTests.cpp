@@ -174,6 +174,35 @@ static Result Test_SetContentBeforeShow()
     return OK(_T("SetContentBeforeShow"));
 }
 
+// 浮层窗口用的是本类声明的窗口类（bugs.md BUG-101，2026-10-05）：类名为 __DuiPopupHost__，
+// 带阴影（CS_DROPSHADOW）与 CS_SAVEBITS，同时保留原先从 __DuiHost__ 继承来的双击与重绘样式。
+// 修复之前浮层实际注册的是基类的 __DuiHost__，声明的阴影样式从未生效。
+static Result Test_WindowClassHasDropShadow()
+{
+    //弹出位置放在屏幕左上角附近、尺寸取最小，测完立即销毁
+    const int kProbeSize = 40;
+    const RECT anchor = { 0, 0, kProbeSize, kProbeSize };
+    DuiPopupHost p;
+    p.SetContent(std::unique_ptr<DuiControl>(new DuiControl()));
+    p.SetSize(kProbeSize, kProbeSize);
+    p.Show(anchor, nullptr);
+    EXPECT_TRUE(p.m_hWnd != nullptr, _T("WC/created"));
+    TCHAR cls[64] = { 0 };
+    ::GetClassName(p.m_hWnd, cls, 64);
+    const DWORD style = static_cast<DWORD>(::GetClassLongPtr(p.m_hWnd, GCL_STYLE));
+    p.Hide();
+    p.DestroyWindow();
+    if (_tcscmp(cls, _T("__DuiPopupHost__")) != 0)
+    {
+        return Fail(_T("WindowClassHasDropShadow"), CString(_T("class=")) + cls);
+    }
+    EXPECT_TRUE((style & CS_DROPSHADOW) != 0, _T("WC/dropShadow"));
+    EXPECT_TRUE((style & CS_SAVEBITS) != 0, _T("WC/saveBits"));
+    EXPECT_TRUE((style & CS_DBLCLKS) != 0, _T("WC/dblClks"));
+    EXPECT_TRUE((style & CS_HREDRAW) != 0 && (style & CS_VREDRAW) != 0, _T("WC/redraw"));
+    return OK(_T("WindowClassHasDropShadow"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_TRUE
 #undef EXPECT_RECT
@@ -195,6 +224,7 @@ CString RunAll()
         { _T("PlaceLeftFits"),          &Test_PlaceLeftFits          },
         { _T("DismissCallbackStores"),  &Test_DismissCallbackStores  },
         { _T("SetContentBeforeShow"),   &Test_SetContentBeforeShow   },
+        { _T("WindowClassHasDropShadow"), &Test_WindowClassHasDropShadow },
     };
 
     CString out;

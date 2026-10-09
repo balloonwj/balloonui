@@ -233,7 +233,7 @@ void DuiProgressBar::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
     }
     if (!label.IsEmpty())
     {
-        HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+        HFONT useFont = GetDefaultFont();
         HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
         int oldBk = ::SetBkMode(hdc, TRANSPARENT);
         COLORREF oldClr = ::SetTextColor(hdc, m_clrText);

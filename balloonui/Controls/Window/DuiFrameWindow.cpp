@@ -673,7 +673,7 @@ public:
         // Title text.
         if (!m_title.IsEmpty())
         {
-            HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+            HFONT useFont = GetDefaultFont();
             HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
             int oldBk = ::SetBkMode(hdc, TRANSPARENT);
             COLORREF oldClr = ::SetTextColor(hdc, m_titleTextColor);
@@ -1061,6 +1061,31 @@ void DuiFrameWindow::SetMaxSize(int w, int h)
     //   < 0 视为 0（不限），避免拼写错误传 -1 等导致拖动锁死在 0 像素。
     m_maxW = w < 0 ? 0 : w;
     m_maxH = h < 0 ? 0 : h;
+}
+
+BOOL DuiFrameWindow::ResizeClient(int nWidth, int nHeight, BOOL bRedraw)
+{
+    if (!::IsWindow(m_hWnd))
+    {
+        return FALSE;
+    }
+    //—— 客户区就是整个窗口（见 OnNcCalcSize），整窗尺寸直接取目标值，不再叠加系统
+    //   非客户区。-1 表示该方向沿用当前窗口尺寸：取整窗矩形而不是客户区，最大化时客户区
+    //   会内缩，整窗矩形才是"当前尺寸"。
+    RECT rcWnd;
+    if (!GetWindowRect(&rcWnd))
+    {
+        return FALSE;
+    }
+    const int width  = (nWidth  != -1) ? nWidth  : (rcWnd.right - rcWnd.left);
+    const int height = (nHeight != -1) ? nHeight : (rcWnd.bottom - rcWnd.top);
+
+    UINT flags = SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE;
+    if (!bRedraw)
+    {
+        flags |= SWP_NOREDRAW;
+    }
+    return SetWindowPos(NULL, 0, 0, width, height, flags);
 }
 
 int DuiFrameWindow::AddCaptionIcon(HBITMAP icon, LPCTSTR tooltip)

@@ -160,13 +160,21 @@ public:
     // 注意:由于 toast 走 PARGB + AlphaBlend 合成, ClearType 字体会出现
     // 子像素错位"重影", 推荐 caller 传 lfQuality=ANTIALIASED_QUALITY 的字体;
     // 或直接走 SetTextPointSize wrapper, 内部自动用 AA 字体。
+    // SetFont 设的字体不随 DPI 变化, 并撤销 SetTextPointSize 设的字号。
     void    SetFont(HFONT hFont);
-    HFONT   GetFont() const { return m_font; }
 
-    // 便捷 setter:按磅值 + 粗细从 DuiResMgr 拿 AA 缓存字体并 SetFont。
+    // 返回显式设定的字体:SetFont 设的字体;或按 SetTextPointSize 的磅值、在本
+    // 控件当前 DPI 下取到的 AA 字体;都没设时返回 nullptr(表示使用默认字体)。
+    // 按磅值得到的句柄归 DuiResMgr 所有、随 DPI 变化, 不要长期保存。
+    HFONT   GetFont() const;
+
+    // 按磅值 + 粗细设字体, 同时撤销 SetFont 设的字体。控件只记下磅值, 绘制时按
+    // 所在窗口的 DPI 向 DuiResMgr 现取 AA 字体, 字号随 DPI 变化。
     //   pt:磅值(如 9 / 11 / 14)。pt <= 0 退化为默认(等同 SetFont(nullptr))。
     //   bold:true=FW_BOLD;false(默认)=FW_NORMAL。
     void    SetTextPointSize(int pt, bool bold = false);
+    int     GetTextPointSize() const { return m_textPt; }    // 0 表示未按磅值设置
+    bool    IsTextBold() const       { return m_textBold; }  // SetTextPointSize 设的粗细
 
     // ---- 位置 + 尺寸 ----
 
@@ -209,6 +217,10 @@ private:
     void StartFadeOut(int gen);
     void FinishHide();
 
+    // 量算与绘制文字实际使用的字体:GetFont() 非空时用它, 否则用本控件 DPI 下的
+    // 默认 9pt AA 字体。所有权在 caller(SetFont)或 DuiResMgr, 本控件不释放。
+    HFONT ResolveFont() const;
+
 private:
     CString  m_text;
     int      m_durationMs   = 3000;          // 显示时长(ms)
@@ -228,7 +240,9 @@ private:
     int      m_iconGap      = 8;             // 图标与文字间距(px)
     int      m_topOffset    = 40;            // 距 host 客户区顶(px)
     int      m_maxWidth     = 0;             // 最大宽度(px);0 = 不限
-    HFONT    m_font         = nullptr;       // caller-owned;nullptr = 走 toast 内部 AA 默认字体
+    HFONT    m_font         = nullptr;       // SetFont 设的字体(caller-owned);nullptr = 未设
+    int      m_textPt       = 0;             // SetTextPointSize 设的磅值;0 = 未设
+    bool     m_textBold     = false;         // SetTextPointSize 设的粗细
 
     double   m_alpha        = 0.0;           // 当前不透明度 [0,1], 0 = 全透明
     int      m_animGen      = 0;             // 动画代际号:Show / HideNow 自增, 老 callback 据此自废

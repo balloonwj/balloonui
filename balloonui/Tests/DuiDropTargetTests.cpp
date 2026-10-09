@@ -638,6 +638,194 @@ static Result Test_SetDragCallbacksBeforeRegister()
     return OK(_T("SetDragCallbacksBeforeRegister"));
 }
 
+// ----- 位图拖入（CF_BITMAP）-------------------------------------------------
+//
+// 位图回调拿到的句柄只在回调执行期间有效：回调返回后，库会释放系统交来的这块数据。
+// 要保留就得在回调里自己复制一份（约定见 DuiDropTarget.h 的 BitmapCallback）。
+// 库内曾用 CopyImage 加 LR_COPYRETURNORG 复制后交给回调，副本不会被释放，每次拖放
+// 泄漏一个 GDI 对象；BitmapDropLeavesNoGdiObjects 即为此而设。
+
+// 测试位图的尺寸（像素），断言里据此确认回调拿到的就是这张图。
+static const int kFakeBitmapWidth  = 13;
+static const int kFakeBitmapHeight = 7;
+
+// 只提供 CF_BITMAP 的最小 IDataObject。每次 GetData 都新建一张位图，pUnkForRelease 为空，
+// 由取数据的一方 ReleaseStgMedium 负责释放 —— 与真实拖放源交来位图的方式相同。
+class FakeBitmapDataObject : public IDataObject
+{
+public:
+    FakeBitmapDataObject()
+        : m_ref(1)
+    {
+    }
+    virtual ~FakeBitmapDataObject() = default;
+
+    // ---- IUnknown ----
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override
+    {
+        if (!ppv)
+        {
+            return E_POINTER;
+        }
+        if (riid == IID_IUnknown || riid == IID_IDataObject)
+        {
+            *ppv = static_cast<IDataObject*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override
+    {
+        return (ULONG)InterlockedIncrement(&m_ref);
+    }
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        LONG r = InterlockedDecrement(&m_ref);
+        if (r == 0)
+        {
+            delete this;
+        }
+        return (ULONG)r;
+    }
+
+    // ---- IDataObject：只实现 QueryGetData / GetData，其余一律不支持 ----
+    HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* pFmt) override
+    {
+        if (!pFmt)
+        {
+            return E_POINTER;
+        }
+        if (pFmt->cfFormat == CF_BITMAP && (pFmt->tymed & TYMED_GDI))
+        {
+            return S_OK;
+        }
+        return DV_E_FORMATETC;
+    }
+    HRESULT STDMETHODCALLTYPE GetData(FORMATETC* pFmt, STGMEDIUM* pMed) override
+    {
+        if (!pFmt || !pMed)
+        {
+            return E_POINTER;
+        }
+        if (pFmt->cfFormat != CF_BITMAP || !(pFmt->tymed & TYMED_GDI))
+        {
+            return DV_E_FORMATETC;
+        }
+        HDC screen = ::GetDC(nullptr);
+        HBITMAP hbm = ::CreateCompatibleBitmap(screen, kFakeBitmapWidth, kFakeBitmapHeight);
+        ::ReleaseDC(nullptr, screen);
+        if (!hbm)
+        {
+            return E_OUTOFMEMORY;
+        }
+        ZeroMemory(pMed, sizeof(*pMed));
+        pMed->tymed          = TYMED_GDI;
+        pMed->hBitmap        = hbm;
+        pMed->pUnkForRelease = nullptr;   // 由调用方 ReleaseStgMedium 负责释放
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC*, STGMEDIUM*) override
+    {
+        return E_NOTIMPL;
+    }
+    HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*, FORMATETC*) override
+    {
+        return E_NOTIMPL;
+    }
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*, STGMEDIUM*, BOOL) override
+    {
+        return E_NOTIMPL;
+    }
+    HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD, IEnumFORMATETC**) override
+    {
+        return E_NOTIMPL;
+    }
+    HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override
+    {
+        return OLE_E_ADVISENOTSUPPORTED;
+    }
+    HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override
+    {
+        return OLE_E_ADVISENOTSUPPORTED;
+    }
+    HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override
+    {
+        return OLE_E_ADVISENOTSUPPORTED;
+    }
+
+private:
+    LONG m_ref;   // 引用计数
+};
+
+// 位图回调探针：在回调<u>执行期间</u>检查句柄，记下结果。
+struct BitmapProbe
+{
+    int  calls;        // 位图回调被调用的次数
+    bool validInCb;    // 回调期间 GetObject 能否取到位图信息
+    int  width;        // 回调期间取到的位图宽（像素）
+    int  height;       // 回调期间取到的位图高（像素）
+};
+
+static BitmapProbe g_bmpProbe;
+
+static void OnBitmapProbe(HBITMAP hbm)
+{
+    ++g_bmpProbe.calls;
+    BITMAP bm;
+    ZeroMemory(&bm, sizeof(bm));
+    g_bmpProbe.validInCb = (hbm != nullptr) && (::GetObject(hbm, sizeof(bm), &bm) == (int)sizeof(bm));
+    g_bmpProbe.width  = bm.bmWidth;
+    g_bmpProbe.height = bm.bmHeight;
+}
+
+// 把一次完整的位图拖放（拖入、落手）喂给 helper。
+static void DropFakeBitmap(DuiDropTargetHelper& h)
+{
+    IDropTarget* dt = h.GetDropTarget();
+    FakeBitmapDataObject* pDO = new FakeBitmapDataObject();
+    DWORD effect = DROPEFFECT_NONE;
+    dt->DragEnter(pDO, MK_LBUTTON, MakeScreenPt(1, 1), &effect);
+    dt->Drop(pDO, MK_LBUTTON, MakeScreenPt(2, 2), &effect);
+    pDO->Release();
+}
+
+// DTB1：拖入位图时回调恰好被调用一次，回调期间拿到的是一张尺寸正确的有效位图。
+static Result Test_BitmapDropCallbackGetsValidBitmap()
+{
+    ZeroMemory(&g_bmpProbe, sizeof(g_bmpProbe));
+    DuiDropTargetHelper h;
+    h.SetCallbacks(DuiDropTargetHelper::FilesCallback(), &OnBitmapProbe);
+    EXPECT_TRUE(h.GetDropTarget() != nullptr, _T("DTB1/dt"));
+
+    DropFakeBitmap(h);
+
+    EXPECT_INT(g_bmpProbe.calls, 1, _T("DTB1/calls"));
+    EXPECT_TRUE(g_bmpProbe.validInCb, _T("DTB1/validInCallback"));
+    EXPECT_INT(g_bmpProbe.width, kFakeBitmapWidth, _T("DTB1/width"));
+    EXPECT_INT(g_bmpProbe.height, kFakeBitmapHeight, _T("DTB1/height"));
+    return OK(_T("BitmapDropCallbackGetsValidBitmap"));
+}
+
+// DTB2：位图拖放结束后进程里不多出 GDI 对象 —— 库既不能把系统交来的位图漏掉不释放，
+// 也不能自己另外复制一份却没人释放。
+static Result Test_BitmapDropLeavesNoGdiObjects()
+{
+    ZeroMemory(&g_bmpProbe, sizeof(g_bmpProbe));
+    DuiDropTargetHelper h;
+    h.SetCallbacks(DuiDropTargetHelper::FilesCallback(), &OnBitmapProbe);
+    EXPECT_TRUE(h.GetDropTarget() != nullptr, _T("DTB2/dt"));
+
+    const DWORD before = ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS);
+    DropFakeBitmap(h);
+    const DWORD after = ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS);
+
+    EXPECT_INT(g_bmpProbe.calls, 1, _T("DTB2/calls"));
+    EXPECT_INT((int)after, (int)before, _T("DTB2/gdiObjects"));
+    return OK(_T("BitmapDropLeavesNoGdiObjects"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_TRUE
 #undef EXPECT_STR
@@ -669,6 +857,8 @@ CString RunAll()
         { _T("ClientPointFromScreenNullHwnd"), &Test_ClientPointFromScreenNullHwnd },
         { _T("ClientPointFromScreenRealHwnd"), &Test_ClientPointFromScreenRealHwnd },
         { _T("SetDragCallbacksBeforeRegister"),&Test_SetDragCallbacksBeforeRegister},
+        { _T("BitmapDropCallbackGetsValidBitmap"), &Test_BitmapDropCallbackGetsValidBitmap },
+        { _T("BitmapDropLeavesNoGdiObjects"),      &Test_BitmapDropLeavesNoGdiObjects      },
     };
 
     CString out;

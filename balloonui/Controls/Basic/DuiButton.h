@@ -200,20 +200,29 @@ public:
 
     // ---- 文字字体 ----
     //
-    // 默认 nullptr —— OnPaint 自动走 DuiResMgr::GetDefaultFont()
-    // (Microsoft YaHei 9pt)。业务需要不同字号 / 粗细时:
-    //   · 直传 HFONT(caller-owned, 控件不 copy 不 DeleteObject);
-    //   · 或调便捷 SetTextPointSize(pt, bold) —— 内部走
-    //     DuiResMgr::GetFontByPointSize 拿缓存字体, 句柄由 manager 管。
+    // 默认用本控件所在窗口 DPI 下的默认字体(Microsoft YaHei 9pt)。业务需要
+    // 不同字号 / 粗细时:
+    //   · 调 SetTextPointSize(pt, bold) —— 控件只记下磅值, 绘制时按窗口 DPI
+    //     向 DuiResMgr 现取字体, 窗口换到缩放比例不同的显示器后字号跟着变;
+    //   · 或直传 HFONT(caller-owned, 控件不 copy 不 DeleteObject), 这样设的
+    //     字体不随 DPI 变化。
+    // 两种方式互斥, 后设的撤销先设的。
 
-    // 设置 / 读取自定义字体。HFONT 为 caller-owned;传 nullptr 恢复默认。
+    // 设置自定义字体。HFONT 为 caller-owned;传 nullptr 恢复默认。同时撤销
+    // SetTextPointSize 设的字号。
     void    SetFont(HFONT hFont);
-    HFONT   GetFont() const { return m_font; }
 
-    // 便捷 setter:按磅值 + 粗细从 DuiResMgr 拿字体并 SetFont。
-    //   pt:磅值(如 9 / 11 / 14)。pt <= 0 时退化为默认字体(等同 SetFont(nullptr))。
+    // 返回显式设定的字体:SetFont 设的字体;或按 SetTextPointSize 的磅值、在本
+    // 控件当前 DPI 下取到的字体;都没设时返回 nullptr(表示使用默认字体)。
+    // 按磅值得到的句柄归 DuiResMgr 所有、随 DPI 变化, 不要长期保存。
+    HFONT   GetFont() const;
+
+    // 按磅值 + 粗细设字体, 同时撤销 SetFont 设的字体。
+    //   pt:磅值(如 9 / 11 / 14)。pt <= 0 时恢复默认字体(等同 SetFont(nullptr))。
     //   bold:true=FW_BOLD;false(默认)=FW_NORMAL。
     void    SetTextPointSize(int pt, bool bold = false);
+    int     GetTextPointSize() const { return m_textPt; }    // 0 表示未按磅值设置
+    bool    IsTextBold() const       { return m_textBold; }  // SetTextPointSize 设的粗细
 
     // ---- 左侧图标(LeadingIcon)----
     //
@@ -254,6 +263,37 @@ public:
     bool    OnLButtonUp  (POINT pt, UINT mkFlags) override;
     bool    OnSetCursor  (POINT pt) override;
 
+    // 双击（2026-10-06，bugs.md BUG-103）：框架窗口的窗口类带 CS_DBLCLKS，系统双击时限内的第二次按下以
+    // WM_LBUTTONDBLCLK 送达、不再有 WM_LBUTTONDOWN。基类只上报 DUIN_DBLCLK，按钮没有进入按下态，抬起时也就不发
+    // DUIN_CLICK —— 快速连点两下只算一次点击。这里先按一次按下处理（抬起时照常发 DUIN_CLICK，与 Windows 标准
+    // 按钮一致：快速连点两下即两次点击），再照基类上报 DUIN_DBLCLK（列表项、缩略图等子类靠它实现「双击打开」）。
+    // 次序不能反：上报双击时宿主可能关窗并销毁本控件，之后不能再访问成员。
+    // 写成内联：不给静态库新增外部符号，按新头文件编的程序链接旧库时不会缺符号。但这是虚函数覆写：直接构造的
+    // DuiButton 用的是静态库里 DuiButton.cpp 生成的虚函数表，要等 balloonui_static 重编后才生效；客户端自己的
+    // DuiButton 子类在客户端代码里生成虚函数表，按新头文件编译后即生效（2026-10-06 用例实测）。
+    bool    OnLButtonDblClk(POINT pt, UINT mkFlags) override
+    {
+        OnLButtonDown(pt, mkFlags);
+        NotifyParent(DUIN_DBLCLK);
+        return true;
+    }
+
+    // 鼠标移入 / 移出：基类只改悬停标志、发通知，不重画；按钮的悬停配色与各子类按 IsHover() 画的
+    // 悬停底都要靠这里重画一次，否则要等别的原因重画这块区域才出现或消失（BUG-105，2026-10-06）。
+    // 写成内联：不给静态库新增外部符号，按新头文件编的程序链接旧库时不会缺符号。
+    bool    OnMouseEnter() override
+    {
+        const bool handled = DuiControl::OnMouseEnter();
+        Invalidate();
+        return handled;
+    }
+    bool    OnMouseLeave() override
+    {
+        const bool handled = DuiControl::OnMouseLeave();
+        Invalidate();
+        return handled;
+    }
+
     // Debug / 截图用：强制 m_pressed = b 让 DuiGallery 抓到按下态。
     // 与 DuiControl::DebugSetHover / DebugSetFocused 配套。下次真鼠标
     // down/up 会覆盖此设置。
@@ -293,8 +333,10 @@ private:
     HBITMAP     m_hBgDisabled = nullptr;
     DuiNinePatch::Insets m_bgInsets;
 
-    // ---- 文字字体(caller-owned, 控件不释放)----
-    HFONT       m_font            = nullptr;  // nullptr = 走 DuiResMgr::GetDefaultFont()
+    // ---- 文字字体 ----
+    HFONT       m_font            = nullptr;  // SetFont 设的字体(caller-owned, 控件不释放);nullptr = 未设
+    int         m_textPt          = 0;        // SetTextPointSize 设的磅值;0 = 未设
+    bool        m_textBold        = false;    // SetTextPointSize 设的粗细
 
     // ---- 左侧图标(仅 PushButton 生效, caller-owned 不释放)----
     HBITMAP     m_leadingIcon     = nullptr;  // nullptr = 无图标

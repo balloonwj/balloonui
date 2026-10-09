@@ -14,6 +14,7 @@
 
 #include "../../DuiPaintAA.h"
 #include "../../DuiResMgr.h"
+#include "../../DuiTheme.h"   // GetDefaultFontFace：没给字体名时的默认字体
 
 namespace balloonwjui {
 
@@ -61,11 +62,10 @@ const COLORREF kEyeColorNormal = RGB(110, 110, 110);
 
 // ---- 字体 ----
 
-// SetCtlFont 的两个兜底值：调用方没给字号时用的像素高，以及没给字体名时用的
-// 字体。两者都与无窗口化之前那份实现一致，不能改 —— 客户端有代码按同一套取值
-// 构造 LOGFONT，改了会让输入框里的字与实际渲染出来的字对不上。
+// SetCtlFont 的兜底字号：调用方没给字号时用的像素高。与无窗口化之前那份实现一致，不能改 —— 客户端有代码
+// 按同一套取值构造 LOGFONT，改了会让输入框里的字与实际渲染出来的字对不上。没给字体名时用 DuiTheme 的
+// 默认字体（缺省为微软雅黑，与原先写死的值相同；宿主按界面语言改换时一并跟随）。
 const int     kFontSizeFallbackPx = 14;
-const LPCTSTR kDefaultFontFace    = _T("Microsoft YaHei");
 
 // ---- 鼠标按下落点的分区标识 ----
 //
@@ -123,6 +123,15 @@ DuiEdit::DuiEdit()
     // 自动换行），这里必须显式改过来。
     SetMultiLine(false);
     SetWordWrap(false);
+
+    // 切为纯文本模式。普通输入框的字体与颜色都是整体设置的，用不到分段格式；
+    // 而富文本模式下文档末尾那个看不见的段落结束符可以被选中（光标在末尾时
+    // 按 Shift+→、或拖选越过末尾），文字后面会多出一小块高亮，看起来像是末尾
+    // 有空格（2026-09-30 登录窗账号框即如此）。纯文本模式下选区不能越过文本
+    // 末尾。
+    //
+    // 必须在写入任何文字之前切换：文档非空时排版引擎拒绝切换。
+    SetPlainTextMode(true);
 
     // 粘贴一律按纯文本处理。普通输入框不接受外来格式 —— 从网页上复制一段
     // 带样式的文字过来，不该把字体与颜色一起带进来。
@@ -538,7 +547,8 @@ void DuiEdit::SetCtlFont(LPCTSTR family, int sizePx,
     {
         sizePx = kFontSizeFallbackPx;
     }
-    LPCTSTR face = (family != NULL && family[0] != _T('\0')) ? family : kDefaultFontFace;
+    const CString defaultFace = DuiTheme::Inst().GetDefaultFontFace();
+    LPCTSTR face = (family != NULL && family[0] != _T('\0')) ? family : (LPCTSTR)defaultFace;
 
     HFONT hNew = ::CreateFont(
         -sizePx, 0, 0, 0,
@@ -642,7 +652,7 @@ void DuiEdit::PaintIcon(HDC hdc, IconSlot slot)
 
     if (!st.m_strGlyph.IsEmpty())
     {
-        HFONT hFont = DuiResMgr::Inst().GetDefaultFont();
+        HFONT hFont = GetDefaultFont();
         HFONT hOldFont = (hFont != NULL) ? (HFONT)::SelectObject(hdc, hFont) : NULL;
         const int nOldMode = ::SetBkMode(hdc, TRANSPARENT);
         const COLORREF crOld = ::SetTextColor(hdc, st.m_crGlyph);

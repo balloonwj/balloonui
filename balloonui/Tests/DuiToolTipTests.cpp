@@ -4,6 +4,7 @@
 #if BUI_FEATURE_TOOLTIP
 
 #include "../DuiControl.h"
+#include "../DuiResMgr.h"
 
 namespace balloonwjui {
 
@@ -142,6 +143,60 @@ static Result Test_LeaveBeforeHover()
     return OK(_T("LeaveBeforeHover"));
 }
 
+// Text with a '\n' is laid out as multiple lines; text without one keeps
+// the original single-line flags.
+static Result Test_DrawFlagsSingleVsMulti()
+{
+    const UINT single = DuiToolTipMgr::TextDrawFlags(_T("one line"));
+    const UINT multi  = DuiToolTipMgr::TextDrawFlags(_T("line one\nline two"));
+    EXPECT_BOOL((single & DT_SINGLELINE) != 0, true, _T("DrawFlags/single"));
+    EXPECT_BOOL((multi & DT_SINGLELINE) != 0, false, _T("DrawFlags/multi"));
+    EXPECT_BOOL((multi & DT_LEFT) == DT_LEFT && (multi & DT_TOP) == DT_TOP, true, _T("DrawFlags/align"));
+    return OK(_T("DrawFlagsSingleVsMulti"));
+}
+
+// A two-line tip is as wide as its longest line and twice as tall as one
+// line; a single-line tip measures the same as GetTextExtentPoint32.
+static Result Test_MeasureMultiLine()
+{
+    HDC hdc = ::GetDC(nullptr);
+    HFONT font = DuiResMgr::Inst().GetDefaultFont();
+    HFONT oldFont = font ? (HFONT)::SelectObject(hdc, font) : nullptr;
+
+    const CString shortLine = _T("ab");
+    const CString longLine  = _T("a much longer second line");
+    SIZE expectShort = { 0, 0 };
+    SIZE expectLong  = { 0, 0 };
+    ::GetTextExtentPoint32(hdc, shortLine, shortLine.GetLength(), &expectShort);
+    ::GetTextExtentPoint32(hdc, longLine, longLine.GetLength(), &expectLong);
+    const SIZE single = DuiToolTipMgr::MeasureTextExtent(hdc, shortLine);
+    const SIZE multi  = DuiToolTipMgr::MeasureTextExtent(hdc, shortLine + _T("\n") + longLine);
+    const SIZE empty  = DuiToolTipMgr::MeasureTextExtent(hdc, CString());
+
+    if (oldFont)
+    {
+        ::SelectObject(hdc, oldFont);
+    }
+    ::ReleaseDC(nullptr, hdc);
+
+    CString d;
+    if (single.cx != expectShort.cx || single.cy != expectShort.cy)
+    {
+        d.Format(_T("single got %dx%d expected %dx%d"), single.cx, single.cy, expectShort.cx, expectShort.cy);
+        return Fail(_T("MeasureMultiLine"), d);
+    }
+    if (multi.cx != expectLong.cx || multi.cy != expectShort.cy * 2)
+    {
+        d.Format(_T("multi got %dx%d expected %dx%d"), multi.cx, multi.cy, expectLong.cx, expectShort.cy * 2);
+        return Fail(_T("MeasureMultiLine"), d);
+    }
+    if (empty.cx != 0 || empty.cy != 0)
+    {
+        return Fail(_T("MeasureMultiLine"), _T("empty text should measure 0x0"));
+    }
+    return OK(_T("MeasureMultiLine"));
+}
+
 #undef EXPECT_STR
 #undef EXPECT_BOOL
 
@@ -159,7 +214,9 @@ CString RunAll()
         { _T("UnregisterNoop"),         &Test_UnregisterNoop        },
         { _T("NullSafe"),               &Test_NullSafe              },
         { _T("DelayRoundTrip"),         &Test_DelayRoundTrip        },
-        { _T("LeaveBeforeHover"),       &Test_LeaveBeforeHover      }
+        { _T("LeaveBeforeHover"),       &Test_LeaveBeforeHover      },
+        { _T("DrawFlagsSingleVsMulti"), &Test_DrawFlagsSingleVsMulti },
+        { _T("MeasureMultiLine"),       &Test_MeasureMultiLine      }
     };
 
     CString out;

@@ -30,6 +30,7 @@
 #pragma once
 
 #include "../../BalloonUiFeatures.h"
+#include "../../DuiTextResolver.h"   // ResolveText：内置文字经宿主登记的回调转换（多语言）
 // 只随 EDIT 一起裁剪。富文本控件 DuiRichEdit 用的是另一份菜单模型
 // RichEditContextMenu.h，与本文件无关。
 #if defined(BUI_FEATURE_EDIT)
@@ -134,13 +135,13 @@ inline LPCTSTR EditContextCommandLabel(EditContextCommand cmd)
     switch (cmd)
     {
     case EditCtxCmd_Cut:
-        return _T("剪切(&T)");
+        return ResolveText(_T("剪切(&T)"));
     case EditCtxCmd_Copy:
-        return _T("复制(&C)");
+        return ResolveText(_T("复制(&C)"));
     case EditCtxCmd_Paste:
-        return _T("粘贴(&P)");
+        return ResolveText(_T("粘贴(&P)"));
     case EditCtxCmd_SelectAll:
-        return _T("全选(&A)");
+        return ResolveText(_T("全选(&A)"));
     default:
         return _T("");
     }

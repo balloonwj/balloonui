@@ -238,6 +238,7 @@
     <ClCompile Include="..\balloonui\Tests\DuiCaretTests.cpp" />
     <ClCompile Include="..\balloonui\Tests\DuiTextHostTests.cpp" />
     <ClCompile Include="..\balloonui\Tests\DuiRichEditTests.cpp" />
+    <ClCompile Include="..\balloonui\Tests\DuiRichEditCaretTests.cpp" />
     <ClCompile Include="..\balloonui\Tests\DuiImageOleTests.cpp" />
     <ClCompile Include="..\balloonui\Tests\DuiDockTests.cpp" />
     <ClCompile Include="..\balloonui\Tests\DuiAnimationTests.cpp" />

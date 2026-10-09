@@ -16,31 +16,26 @@ namespace balloonwjui {
 // =====================================================================
 
 namespace {
-    // Minimum thumb size (px) along the main axis. 18 keeps the thumb
-    // grabbable even on very long content (otherwise the proportional sizing
-    // formula can produce a 1-px thumb that's impossible to click).
-    const int MIN_THUMB_PX = 18;
+    // 滑块沿主轴的最短长度（像素）。按比例算出来的滑块在内容很长时可能只有一两个
+    // 像素、根本抓不住，故设下限；取值见 DuiScrollBar::kMinThumbPx。
+    const int MIN_THUMB_PX = DuiScrollBar::kMinThumbPx;
 
-    // ---- Track / chrome colors ----------------------------------------------
-    // Track background fill - light gray, common Windows scrollbar look.
-    const COLORREF kTrackFill        = RGB(230, 230, 230);
-    // Track border - one step darker than the fill for a subtle 1px frame.
-    const COLORREF kTrackBorder      = RGB(190, 190, 190);
-
-    // ---- Thumb colors (3 interaction states) --------------------------------
-    // Thumb fill while user is actively dragging - deepest blue, "active grip".
-    const COLORREF kThumbFillDragging = RGB(110, 150, 210);
-    // Thumb fill while hovered - one step lighter than dragging.
-    const COLORREF kThumbFillHover    = RGB(150, 180, 220);
-    // Thumb fill at rest - lightest blue, visible but unobtrusive.
-    const COLORREF kThumbFillIdle     = RGB(170, 190, 215);
-    // Thumb border - mid-blue across all states; the fill carries the state.
-    const COLORREF kThumbBorder       = RGB(120, 140, 170);
+    // ---- 悬浮式细滑块的颜色（2026-10-04 起，与 Flamingo 聊天窗的滚动条一致）----
+    // 滑块是半透明灰：灰度 0x5A，最大不透明度 120/255，再乘以淡入淡出的 alpha。
+    // 不画轨道，也不随悬停 / 拖动换色。
+    const BYTE kThumbGray     = 0x5A;
+    const BYTE kThumbMaxAlpha = 120;
+    // 浮点不透明度换算成整数分量时四舍五入用的半个单位
+    const float kRoundHalf    = 0.5f;
 
     // ---- Scroll behavior ----------------------------------------------------
     // Mouse-wheel scroll multiplier. Each wheel notch advances 3 line-sizes
     // by Windows convention; matches the standard EM_SETSCROLLPOS step.
     const int kWheelLinesPerNotch = 3;
+
+    // 滚一行所需的滚轮增量（zDelta 单位）：一整格 WHEEL_DELTA(120) 滚 kWheelLinesPerNotch
+    // 行，即每 40 滚一行。精确式触摸板与高精度滚轮按这个量累积，凑满一行才滚一行。
+    const int kWheelDeltaPerLine = WHEEL_DELTA / kWheelLinesPerNotch;
 
     // ---- DuiScrollView constants --------------------------------------------
     // Line size (px) used by DuiScrollView for keyboard/wheel scrolling.
@@ -218,56 +213,79 @@ RECT DuiScrollBar::ComputeThumbRect() const
     }
 }
 
+RECT DuiScrollBar::ComputePaintThumbRect() const
+{
+    RECT rc = ComputeThumbRect();
+    if (m_horizontal)
+    {
+        // 水平滚动条：沿副轴（纵向）只有 kOverlayThumbPx 高，贴下缘往上 kOverlayThumbMarginPx
+        rc.bottom = m_rcItem.bottom - kOverlayThumbMarginPx;
+        rc.top = rc.bottom - kOverlayThumbPx;
+        if (rc.top < m_rcItem.top)
+        {
+            rc.top = m_rcItem.top;
+            rc.bottom = rc.top + kOverlayThumbPx;
+        }
+    }
+    else
+    {
+        // 竖直滚动条：沿副轴（横向）只有 kOverlayThumbPx 宽，贴右缘往左 kOverlayThumbMarginPx
+        rc.right = m_rcItem.right - kOverlayThumbMarginPx;
+        rc.left = rc.right - kOverlayThumbPx;
+        if (rc.left < m_rcItem.left)
+        {
+            rc.left = m_rcItem.left;
+            rc.right = rc.left + kOverlayThumbPx;
+        }
+    }
+    return rc;
+}
+
 void DuiScrollBar::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
 {
     if (!m_bVisible)
     {
         return;
     }
-    // m_alpha = 0 时整体不可见（auto-hide 隐藏态）—— 直接跳过 paint，
-    // 不画 track / 不画 thumb。
-    if (m_alpha <= 0.0f)
+    // m_alpha = 0 时整体不可见（auto-hide 隐藏态），没有可滚范围时也没有滑块可画
+    if (m_alpha <= 0.0f || m_max <= m_min)
     {
         return;
     }
 
-    // 走 GDI+ 路径以支持 alpha 通道。把 4 个 RGB 颜色映射成 GDI+ Color
-    // (alpha * 255, r, g, b)，整体颜色随 fade 一起变浅 / 变透明。
+    // 只画一根两端为半圆的细滑块，不画轨道：命中带其余部分透出底下的内容。
+    // 走 GDI+ 以支持半透明与抗锯齿；不透明度 = 滑块最大不透明度 × 淡入淡出的 alpha。
+    const RECT rc = ComputePaintThumbRect();
+    const Gdiplus::REAL w = (Gdiplus::REAL)(rc.right - rc.left);
+    const Gdiplus::REAL h = (Gdiplus::REAL)(rc.bottom - rc.top);
+    if (w <= 0 || h <= 0)
+    {
+        return;
+    }
     Gdiplus::Graphics g(hdc);
-    g.SetSmoothingMode(Gdiplus::SmoothingModeNone);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
     g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
 
-    BYTE a = (BYTE)(m_alpha * 255.0f);
-    auto toGp = [a](COLORREF c) {
-        return Gdiplus::Color(a, GetRValue(c), GetGValue(c), GetBValue(c));
-    };
+    const BYTE a = (BYTE)((float)kThumbMaxAlpha * m_alpha + kRoundHalf);
+    Gdiplus::SolidBrush brush(Gdiplus::Color(a, kThumbGray, kThumbGray, kThumbGray));
 
-    Gdiplus::RectF rcGp((Gdiplus::REAL)m_rcItem.left,
-                        (Gdiplus::REAL)m_rcItem.top,
-                        (Gdiplus::REAL)(m_rcItem.right - m_rcItem.left),
-                        (Gdiplus::REAL)(m_rcItem.bottom - m_rcItem.top));
-
-    // Track
-    Gdiplus::SolidBrush brTrack(toGp(kTrackFill));
-    g.FillRectangle(&brTrack, rcGp);
-    Gdiplus::Pen penTrack(toGp(kTrackBorder), 1.0f);
-    g.DrawRectangle(&penTrack, rcGp.X, rcGp.Y, rcGp.Width - 1, rcGp.Height - 1);
-
-    // Thumb
-    if (m_max <= m_min) { return; }
-    RECT rcThumb = ComputeThumbRect();
-    COLORREF clr = m_dragging ? kThumbFillDragging
-                              : (m_bHover ? kThumbFillHover : kThumbFillIdle);
-    Gdiplus::RectF rcThumbGp((Gdiplus::REAL)rcThumb.left,
-                             (Gdiplus::REAL)rcThumb.top,
-                             (Gdiplus::REAL)(rcThumb.right - rcThumb.left),
-                             (Gdiplus::REAL)(rcThumb.bottom - rcThumb.top));
-    Gdiplus::SolidBrush brThumb(toGp(clr));
-    g.FillRectangle(&brThumb, rcThumbGp);
-    Gdiplus::Pen penThumb(toGp(kThumbBorder), 1.0f);
-    g.DrawRectangle(&penThumb,
-                    rcThumbGp.X, rcThumbGp.Y,
-                    rcThumbGp.Width - 1, rcThumbGp.Height - 1);
+    // 圆角半径取粗细的一半，两端成半圆
+    const Gdiplus::REAL d = (w < h) ? w : h;
+    const Gdiplus::REAL x = (Gdiplus::REAL)rc.left;
+    const Gdiplus::REAL y = (Gdiplus::REAL)rc.top;
+    Gdiplus::GraphicsPath path;
+    if (m_horizontal)
+    {
+        path.AddArc(x, y, d, d, 90.0f, 180.0f);
+        path.AddArc(x + w - d, y, d, d, 270.0f, 180.0f);
+    }
+    else
+    {
+        path.AddArc(x, y, d, d, 180.0f, 180.0f);
+        path.AddArc(x, y + h - d, d, d, 0.0f, 180.0f);
+    }
+    path.CloseFigure();
+    g.FillPath(&brush, &path);
 }
 
 // =====================================================================
@@ -306,15 +324,34 @@ void DuiScrollBar::TriggerShow()
     if (!m_autoHide) { return; }
     // 取消任何 in-flight 的 fade-out / idle-timer，重置 token。
     CancelFadeAnims_();
-    StartFadeAnim_(1.0f, 200);
-    StartIdleTimer_(800);
+    StartFadeAnim_(1.0f, kFadeInMs);
+    StartIdleTimer_(kIdleHideMs);
 }
 
 void DuiScrollBar::StartFadeOut()
 {
     if (!m_autoHide) { return; }
+    // 正在拖动时保持可见：拖动中鼠标离开容器（典型是拖出了窗口）不应让滑块消失，
+    // 松开后 OnLButtonUp 会重新开始空闲计时
+    if (m_dragging) { return; }
     CancelFadeAnims_();
-    StartFadeAnim_(0.0f, 300);
+    StartFadeAnim_(0.0f, kFadeOutMs);
+}
+
+bool DuiScrollBar::OnMouseEnter()
+{
+    DuiControl::OnMouseEnter();
+    // 鼠标移进命中带：隐藏着的滚动条淡入，用户由此知道这里可以拖
+    TriggerShow();
+    return false;
+}
+
+bool DuiScrollBar::OnMouseLeave()
+{
+    DuiControl::OnMouseLeave();
+    // 离开后重新计时，kIdleHideMs 后淡出；拖动中（capture 在本控件）不会走到这里
+    TriggerShow();
+    return false;
 }
 
 void DuiScrollBar::CancelFadeAnims_()
@@ -367,11 +404,19 @@ void DuiScrollBar::StartIdleTimer_(int delayMs)
     auto a = std::unique_ptr<DuiDoubleAnim>(new DuiDoubleAnim(
         delayMs, 0.0, 1.0,
         [](double) { /* no-op：仅占用时间线 */ }));
-    a->SetOnComplete([token]()
+    a->SetOnComplete([token, delayMs]()
     {
         if (token->alive && token->owner)
         {
-            token->owner->StartFadeOut();
+            // 鼠标还悬停在滚动条上、或正在拖动：保持可见，再等一轮；否则开始淡出
+            if (token->owner->IsHover() || token->owner->IsDragging())
+            {
+                token->owner->StartIdleTimer_(delayMs);
+            }
+            else
+            {
+                token->owner->StartFadeOut();
+            }
         }
     });
     DuiAnimMgr::Inst().Add(std::move(a));
@@ -383,28 +428,49 @@ bool DuiScrollBar::OnLButtonDown(POINT pt, UINT /*mkFlags*/)
     {
         return true;
     }
+    // 按下即显现（滚动条可能还在隐藏态：鼠标刚移进命中带、淡入还没走完）
+    TriggerShow();
     RECT rcThumb = ComputeThumbRect();
     if (::PtInRect(&rcThumb, pt))
     {
-        m_dragging = true;
+        // 按在滑块上：记住抓点相对滑块起点的偏移，拖动时滑块不跳
         m_dragOffsetPx = m_horizontal ? (pt.x - rcThumb.left) : (pt.y - rcThumb.top);
-        m_dragStartPos = m_pos;
-        Capture();
-        Invalidate();
-        return true;
-    }
-    // Click on track outside thumb -> page up / page down based on side.
-    int main = m_horizontal ? pt.x : pt.y;
-    int thumbOrigin = m_horizontal ? rcThumb.left : rcThumb.top;
-    if (main < thumbOrigin)
-    {
-        PageUp();
     }
     else
     {
-        PageDown();
+        // 按在轨道空白处（2026-10-04 起与聊天窗的滚动条一致，此前是按整页翻）：滑块中心先跳到点击处，
+        // 接着按住可以继续拖
+        m_dragOffsetPx = ThumbPixels() / 2;
+        DragThumbTo(m_horizontal ? pt.x : pt.y);
     }
+    m_dragging = true;
+    m_dragStartPos = m_pos;
+    Capture();
+    Invalidate();
     return true;
+}
+
+void DuiScrollBar::DragThumbTo(int mainAxisPx)
+{
+    int track = TrackPixels();
+    int thumb = ThumbPixels();
+    int trackUsable = track - thumb;
+    if (trackUsable <= 0)
+    {
+        return;
+    }
+    int origin = PixelOriginAlongMain();
+    int newThumbStart = mainAxisPx - origin - m_dragOffsetPx;
+    if (newThumbStart < 0)
+    {
+        newThumbStart = 0;
+    }
+    if (newThumbStart > trackUsable)
+    {
+        newThumbStart = trackUsable;
+    }
+    int range = m_max - m_min;
+    SetPos(m_min + (range * newThumbStart) / trackUsable);
 }
 
 bool DuiScrollBar::OnLButtonUp(POINT /*pt*/, UINT /*mkFlags*/)
@@ -414,6 +480,8 @@ bool DuiScrollBar::OnLButtonUp(POINT /*pt*/, UINT /*mkFlags*/)
         m_dragging = false;
         ReleaseCapture();
         Invalidate();
+        // 松开后重新开始空闲计时；鼠标仍在滚动条上时到期也不会淡出
+        TriggerShow();
     }
     return true;
 }
@@ -426,27 +494,7 @@ bool DuiScrollBar::OnMouseMove(POINT pt, UINT /*mkFlags*/)
     {
         return false;
     }
-    int track = TrackPixels();
-    int thumb = ThumbPixels();
-    int trackUsable = track - thumb;
-    if (trackUsable <= 0)
-    {
-        return true;
-    }
-    int main = m_horizontal ? pt.x : pt.y;
-    int origin = PixelOriginAlongMain();
-    int newThumbStart = main - origin - m_dragOffsetPx;
-    if (newThumbStart < 0)
-    {
-        newThumbStart = 0;
-    }
-    if (newThumbStart > trackUsable)
-    {
-        newThumbStart = trackUsable;
-    }
-    int range = m_max - m_min;
-    int newPos = m_min + (range * newThumbStart) / trackUsable;
-    SetPos(newPos);
+    DragThumbTo(m_horizontal ? pt.x : pt.y);
     return true;
 }
 
@@ -465,8 +513,23 @@ bool DuiScrollBar::OnMouseWheel(POINT /*pt*/, short zDelta, UINT /*mkFlags*/)
         return false;
     }
     TriggerShow();
-    int delta = (zDelta > 0) ? -m_lineSize * kWheelLinesPerNotch : m_lineSize * kWheelLinesPerNotch;
-    SetPos(m_pos + delta);
+
+    // 滚动量随 zDelta 成比例：普通鼠标一格 120 滚 kWheelLinesPerNotch 行，与原先一致；
+    // 精确式触摸板、高精度滚轮一次只发很小的 zDelta，原先每条消息都按整格滚，手势稍
+    // 一动列表就飞出去很远。不足一行的余量累积到下一次；方向反转时丢弃上一方向的余量，
+    // 免得反向的头一下被它抵消掉、手感发涩。
+    if ((m_wheelRemainder > 0 && zDelta < 0) || (m_wheelRemainder < 0 && zDelta > 0))
+    {
+        m_wheelRemainder = 0;
+    }
+    m_wheelRemainder += zDelta;
+    const int lines = m_wheelRemainder / kWheelDeltaPerLine;   // 向零取整，余量保留同号
+    m_wheelRemainder -= lines * kWheelDeltaPerLine;
+    if (lines != 0)
+    {
+        // zDelta 为正表示向上滚，对应滚动位置减小
+        SetPos(m_pos - lines * m_lineSize);
+    }
     return true;
 }
 
@@ -603,12 +666,10 @@ void DuiScrollView::DoLayout()
         return;
     }
 
+    // 悬浮式：内容始终按视口全宽排版，滚动条浮在右缘之上（2026-10-04 起；此前内容宽要扣掉
+    // 滚动条那一列）
     bool sbVisible = m_sbWidth > 0 && m_contentH > viewH;
-    int contentW = sbVisible ? (viewW - m_sbWidth) : viewW;
-    if (contentW < 0)
-    {
-        contentW = 0;
-    }
+    int contentW = viewW;
 
     if (m_content)
     {
@@ -624,10 +685,13 @@ void DuiScrollView::DoLayout()
         m_sb->SetVisible(sbVisible);
         if (sbVisible)
         {
-            RECT rcSb = { m_rcItem.left + contentW,
-                          m_rcItem.top,
-                          m_rcItem.right,
-                          m_rcItem.bottom };
+            // 命中带贴右缘；视口比命中带还窄时占满视口
+            int sbLeft = m_rcItem.right - m_sbWidth;
+            if (sbLeft < m_rcItem.left)
+            {
+                sbLeft = m_rcItem.left;
+            }
+            RECT rcSb = { sbLeft, m_rcItem.top, m_rcItem.right, m_rcItem.bottom };
             m_sb->SetRect(rcSb);
         }
     }
@@ -694,16 +758,13 @@ void DuiScrollView::OnPaint(HDC hdc, const RECT& rcDirty)
     ::FillRect(hdc, &m_rcItem, hbr);
     ::DeleteObject(hbr);
 
-    // 把 content 的绘制裁到 view rect(不含滚动条那一列)。这里必须用
+    // 把 content 的绘制裁到整个视口(悬浮式滚动条之下的内容照常画出)。这里必须用
     // IntersectClipRect 而不是 SelectClipRgn —— SelectClipRgn 是「替换」
     // 语义,嵌套 ScrollView 时内层一旦 SelectClipRgn 自己的 rect, 外层
     // ScrollView 设的 clip 就被覆盖,内层内容能画到外层 m_rcItem 之外。
     // SaveDC + IntersectClipRect + RestoreDC 才是相交语义且能完整还原
     // dc 状态(clip、坐标变换、SelectObject 都一起存档)。
-    int contentW = m_sb && m_sb->IsVisible() ? (m_rcItem.right - m_rcItem.left - m_sbWidth)
-                                             : (m_rcItem.right - m_rcItem.left);
-    RECT rcClip = { m_rcItem.left, m_rcItem.top,
-                    m_rcItem.left + contentW, m_rcItem.bottom };
+    RECT rcClip = m_rcItem;
 
     int dcSaved = ::SaveDC(hdc);
     ::IntersectClipRect(hdc, rcClip.left, rcClip.top, rcClip.right, rcClip.bottom);
@@ -719,7 +780,7 @@ void DuiScrollView::OnPaint(HDC hdc, const RECT& rcDirty)
 
     ::RestoreDC(hdc, dcSaved);
 
-    // 滚动条本身不裁(它在 m_rcItem 内的右侧固定列,本来就在外层 clip 之内)。
+    // 滚动条最后画、盖在内容之上(悬浮式);它在 m_rcItem 内的右缘,本来就在外层 clip 之内。
     if (m_sb && m_sb->IsVisible())
     {
         RECT inter;
@@ -737,6 +798,34 @@ bool DuiScrollView::OnMouseWheel(POINT pt, short zDelta, UINT mkFlags)
         return m_sb->OnMouseWheel(pt, zDelta, mkFlags);
     }
     return false;
+}
+
+DuiControl* DuiScrollView::HitTest(POINT pt)
+{
+    if (!m_bVisible || !::PtInRect(&m_rcItem, pt))
+    {
+        return nullptr;
+    }
+    // 滚动条浮在内容之上：出现时命中带归它（即使正处于自动隐藏的透明态，鼠标移进来
+    // 才能把它唤出）。默认实现按子控件加入顺序倒着找，会先命中后加入的内容。
+    if (m_sb && m_sb->IsVisible() && ::PtInRect(&m_sb->GetRect(), pt))
+    {
+        DuiControl* hit = m_sb->HitTest(pt);
+        if (hit)
+        {
+            return hit;
+        }
+    }
+    return DuiControl::HitTest(pt);
+}
+
+
+bool DuiScrollView::GetChildClipRect(RECT& outClip) const
+{
+    // 取整个视口矩形（含右侧滚动条那一列）而不是只取内容区：滚动条也是本控件的
+    // 子控件，若只给内容区，滚动条自己的失效会被整个裁掉、再也不会重画。
+    outClip = m_rcItem;
+    return true;
 }
 
 } // namespace balloonwjui

@@ -4,6 +4,7 @@
 #if BUI_FEATURE_MENU
 
 #include "../../DuiResMgr.h"
+#include "../../DuiDpi.h"
 #include "../../DuiPaintAA.h"
 #include "../../ImageEx.h"
 #include "DuiMenuPlacement.h"
@@ -20,9 +21,20 @@ namespace {
     const int kPadR        = 0;
     const int kTextPadL    = 12;     // text left padding past icon column
     const int kTextPadR    = 14;
-    const int kSepRowH     = 12;     // separator row height (was 8)
+    // 分隔条一行的高度（像素）：1px 线上下各留 2px。原为 12，与上下两行各自约 8px 的
+    // 文字上下留白叠加后，分隔条两侧出现明显的空白，2026-10-04 按用户要求收窄。
+    const int kSepRowH     = 5;
+    // 分组标题行（2026-10-05 起）：行高（像素）比普通行矮，文字用小一号的字、靠下对齐，
+    // 让标题贴近它下面的那一组；文字左边距小于普通项的文字起点（kIconColW + kTextPadL），
+    // 与普通项错开，不像一项被禁用的功能
+    const int kHeaderRowH      = 24;
+    const int kHeaderFontPt    = 8;      // 标题文字的磅值，普通项是默认字体的 9 磅
+    const int kHeaderTextPadL  = 10;     // 标题文字左边距（像素）
+    const int kHeaderTextPadB  = 3;      // 标题文字到行底的距离（像素）
     const int kMinTextW    = 80;
     const int kMaxTextW    = 320;
+    const int kShortcutGap = 24;     // 文字列与快捷键列之间的最小间距（像素，2026-10-07 起）
+    const COLORREF kClrShortcut = RGB(120, 120, 120);   // 快捷键文字：灰色，比项文字淡
     const int kIconSize    = 16;     // 16x16 px
 
     // Colors (screenshots/menu.png style).
@@ -37,9 +49,101 @@ namespace {
     // 强对比。
     const COLORREF kClrHoverBg     = RGB(229, 241, 251);   // Win 标准 menu hover 浅蓝
     const COLORREF kClrSeparator   = RGB(220, 220, 222);
+    const COLORREF kClrHeaderText  = RGB(128, 128, 134);   // 分组标题文字：中灰，比禁用项的字深一些
     const COLORREF kClrBorder      = RGB(200, 200, 204);
     const COLORREF kClrCheckTick   = RGB( 40, 120,  40);
     const COLORREF kClrArrow       = RGB(110, 110, 110);
+
+    // 一行菜单项的高度（像素）：分隔条 kSepRowH，分组标题 kHeaderRowH，其余 kRowH
+    int RowHeightOf(const DuiMenu::Item& it)
+    {
+        if (it.kind == DuiMenu::ItemSeparator)
+        {
+            return kSepRowH;
+        }
+        if (it.kind == DuiMenu::ItemHeader)
+        {
+            return kHeaderRowH;
+        }
+        return kRowH;
+    }
+
+    /**
+     *  测量一组菜单项里最宽的文字（像素），不做上下限处理。分隔条不计；分组标题用标题字体测量，
+     *  其余项用普通字体测量。普通项写成「文字\t快捷键」时，左段计入返回值，快捷键另计入 widestShortcut。
+     *    hdc：测量用的 DC，调用前后选入的字体保持不变。
+     *    itemFont / headerFont：普通项与分组标题的字体，为空时用 DC 当前的字体。
+     *    widestShortcut：[出参，可为 nullptr] 最宽的快捷键文字（像素）；没有快捷键时为 0。
+     */
+    int MeasureWidestText(HDC hdc, const std::vector<DuiMenu::Item>& items, HFONT itemFont, HFONT headerFont,
+                          int* widestShortcut)
+    {
+        HFONT oldFont = (HFONT)::GetCurrentObject(hdc, OBJ_FONT);
+        int widest = 0;
+        int shortcutWidest = 0;
+        for (size_t i = 0; i < items.size(); ++i)
+        {
+            const DuiMenu::Item& it = items[i];
+            if (it.kind == DuiMenu::ItemSeparator)
+            {
+                continue;
+            }
+            HFONT useFont = (it.kind == DuiMenu::ItemHeader) ? headerFont : itemFont;
+            ::SelectObject(hdc, useFont ? useFont : oldFont);
+            //分组标题原样显示，不拆快捷键
+            CString label = it.text;
+            CString shortcut;
+            if (it.kind != DuiMenu::ItemHeader)
+            {
+                DuiMenu::SplitShortcut(it.text, label, shortcut);
+            }
+            SIZE sz = { 0, 0 };
+            ::GetTextExtentPoint32(hdc, label, label.GetLength(), &sz);
+            if (sz.cx > widest)
+            {
+                widest = sz.cx;
+            }
+            if (!shortcut.IsEmpty())
+            {
+                SIZE keySz = { 0, 0 };
+                ::GetTextExtentPoint32(hdc, shortcut, shortcut.GetLength(), &keySz);
+                if (keySz.cx > shortcutWidest)
+                {
+                    shortcutWidest = keySz.cx;
+                }
+            }
+        }
+        ::SelectObject(hdc, oldFont);
+        if (widestShortcut)
+        {
+            *widestShortcut = shortcutWidest;
+        }
+        return widest;
+    }
+
+    /**
+     *  菜单的宽度：图标列、文字列（左段宽度限制在 [kMinTextW, kMaxTextW]）、有快捷键时的间距与快捷键列、
+     *  右边距、子菜单箭头列。没有快捷键时与引入快捷键列之前相同。
+     *    textMax：最宽的左段（像素）。
+     *    shortcutMax：最宽的快捷键文字（像素），0 表示没有快捷键。
+     */
+    int MenuBodyWidth(int textMax, int shortcutMax)
+    {
+        if (textMax < kMinTextW)
+        {
+            textMax = kMinTextW;
+        }
+        if (textMax > kMaxTextW)
+        {
+            textMax = kMaxTextW;
+        }
+        int width = kIconColW + kTextPadL + textMax + kTextPadR + kArrowColW;
+        if (shortcutMax > 0)
+        {
+            width += kShortcutGap + shortcutMax;
+        }
+        return width;
+    }
 }
 
 // Forward decl — DuiMenu uses CImageEx* but the icon paint helper is below.
@@ -81,6 +185,12 @@ public:
     {
         m_menu   = menu;
         m_parent = parent;
+        // 菜单窗口尚未创建，按弹出位置所在显示器的 DPI 取字体；测量与绘制都用
+        // 这一个 DPI，保证窗口尺寸与文字一致。
+        POINT anchor;
+        anchor.x = screenX;
+        anchor.y = screenY;
+        m_dpi = DuiDpi::GetDpiForPoint(anchor);
 
         SIZE sz = MeasureBody();
         Create(NULL, NULL, NULL,
@@ -183,12 +293,45 @@ private:
 
     void    OnPaint(CDCHandle)
     {
-        CPaintDC dc(m_hWnd);
+        CPaintDC paintDc(m_hWnd);
         if (!m_menu)
         {
             return;
         }
+        // 双缓冲（2026-10-06）：整张菜单先画在与客户区同样大小的内存位图上，再一次贴到屏幕。
+        // 原先直接画在屏幕上：每次悬停行变化都先把整个客户区刷成底色、再逐行画图标与文字，
+        // 两步之间的空档在鼠标来回移动时反复出现，表现为菜单闪烁。
+        CRect rcClient;
+        GetClientRect(&rcClient);
+        const int width = rcClient.Width();
+        const int height = rcClient.Height();
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+        HDC memDc = ::CreateCompatibleDC(paintDc);
+        HBITMAP memBmp = (memDc != nullptr) ? ::CreateCompatibleBitmap(paintDc, width, height) : nullptr;
+        if (memBmp == nullptr)
+        {
+            // 建不出内存位图（GDI 资源不足）：退回直接画在屏幕上，只是会闪
+            if (memDc != nullptr)
+            {
+                ::DeleteDC(memDc);
+            }
+            PaintContent(paintDc);
+            return;
+        }
+        HGDIOBJ oldBmp = ::SelectObject(memDc, memBmp);
+        PaintContent(memDc);
+        ::BitBlt(paintDc, 0, 0, width, height, memDc, 0, 0, SRCCOPY);
+        ::SelectObject(memDc, oldBmp);
+        ::DeleteObject(memBmp);
+        ::DeleteDC(memDc);
+    }
 
+    // 画整张菜单（底色、各行、外框）。dc 为内存 DC（双缓冲）或屏幕 DC（内存位图建不出来时）。
+    void    PaintContent(HDC dc)
+    {
         // 先用菜单底色铺满整个客户区，再画各行内容。OnPaint 不能依赖
         // OnEraseBkgnd 铺底：hover 变化是用 Invalidate(FALSE) 触发的（不发
         // WM_ERASEBKGND），若这里不自铺底，上一次 hover 行的背景与文字会残留，
@@ -201,7 +344,7 @@ private:
 
         const auto& items = m_menu->GetItems();
 
-        HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+        HFONT useFont = DuiResMgr::Inst().GetDefaultFontForDpi(m_dpi);
         HFONT oldFont = useFont ? (HFONT)::SelectObject(dc, useFont) : nullptr;
         int oldBk = ::SetBkMode(dc, TRANSPARENT);
 
@@ -209,7 +352,7 @@ private:
         for (int i = 0; i < (int)items.size(); ++i)
         {
             const auto& it = items[i];
-            int rowH = (it.kind == DuiMenu::ItemSeparator) ? kSepRowH : kRowH;
+            int rowH = RowHeightOf(it);
             CRect rcRow(0, y, m_bodyW, y + rowH);
 
             if (it.kind == DuiMenu::ItemSeparator)
@@ -222,6 +365,21 @@ private:
                 ::LineTo  (dc, m_bodyW,  my);
                 ::SelectObject(dc, op);
                 ::DeleteObject(pen);
+            }
+            else if (it.kind == DuiMenu::ItemHeader)
+            {
+                //分组标题：小一号的灰字靠下对齐，没有图标列、悬停高亮与子菜单箭头；'&' 原样显示
+                HFONT headerFont = DuiResMgr::Inst().GetFontByPointSizeForDpi(kHeaderFontPt, false, m_dpi);
+                HFONT prevFont = headerFont ? (HFONT)::SelectObject(dc, headerFont) : nullptr;
+                COLORREF oldClr = ::SetTextColor(dc, kClrHeaderText);
+                CRect rcText(kHeaderTextPadL, y, m_bodyW - kTextPadR, y + rowH - kHeaderTextPadB);
+                ::DrawText(dc, it.text, -1, &rcText,
+                           DT_LEFT | DT_BOTTOM | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                ::SetTextColor(dc, oldClr);
+                if (prevFont)
+                {
+                    ::SelectObject(dc, prevFont);
+                }
             }
             else
             {
@@ -252,10 +410,23 @@ private:
                 COLORREF textClr = !it.enabled ? kClrTextDisabled
                                  : (hover ? kClrTextHover : kClrText);
                 COLORREF oldClr = ::SetTextColor(dc, textClr);
-                CRect rcText(kIconColW + kTextPadL, y,
-                             m_bodyW - kArrowColW - kTextPadR, y + rowH);
-                ::DrawText(dc, it.text, -1, &rcText,
+                //「文字\t快捷键」：左段画在文字列，快捷键以灰色靠右画在快捷键列（没有快捷键的菜单 m_shortcutW 为 0，
+                //文字列与改动前相同）
+                CString label;
+                CString shortcut;
+                DuiMenu::SplitShortcut(it.text, label, shortcut);
+                const int keyRight = m_bodyW - kArrowColW - kTextPadR;
+                const int textRight = (m_shortcutW > 0) ? keyRight - m_shortcutW - kShortcutGap : keyRight;
+                CRect rcText(kIconColW + kTextPadL, y, textRight, y + rowH);
+                ::DrawText(dc, label, -1, &rcText,
                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                if (!shortcut.IsEmpty())
+                {
+                    ::SetTextColor(dc, it.enabled ? kClrShortcut : kClrTextDisabled);
+                    CRect rcKey(keyRight - m_shortcutW, y, keyRight, y + rowH);
+                    ::DrawText(dc, shortcut, -1, &rcKey,
+                               DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                }
                 ::SetTextColor(dc, oldClr);
 
                 // Sub-menu arrow.
@@ -576,39 +747,20 @@ private:
             return SIZE{0, 0};
         }
         const auto& items = m_menu->GetItems();
-        // Measure widest text using default font.
+        // 取最宽一项文字：普通项用默认字体，分组标题用标题字体，都按弹出位置的 DPI
         HDC hdc = ::GetDC(nullptr);
-        HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
-        HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
-        int textMax = kMinTextW;
-        for (const auto& it : items)
-        {
-            if (it.kind == DuiMenu::ItemSeparator)
-            {
-                continue;
-            }
-            SIZE sz = { 0, 0 };
-            ::GetTextExtentPoint32(hdc, it.text, it.text.GetLength(), &sz);
-            if (sz.cx > textMax)
-            {
-                textMax = sz.cx;
-            }
-        }
-        if (oldFont)
-        {
-            ::SelectObject(hdc, oldFont);
-        }
+        int shortcutMax = 0;
+        int textMax = MeasureWidestText(hdc, items, DuiResMgr::Inst().GetDefaultFontForDpi(m_dpi),
+                                        DuiResMgr::Inst().GetFontByPointSizeForDpi(kHeaderFontPt, false, m_dpi),
+                                        &shortcutMax);
         ::ReleaseDC(nullptr, hdc);
-        if (textMax > kMaxTextW)
-        {
-            textMax = kMaxTextW;
-        }
 
-        m_bodyW = kIconColW + kTextPadL + textMax + kTextPadR + kArrowColW;
+        m_shortcutW = shortcutMax;
+        m_bodyW = MenuBodyWidth(textMax, shortcutMax);
         int totalH = 0;
         for (const auto& it : items)
         {
-            totalH += (it.kind == DuiMenu::ItemSeparator) ? kSepRowH : kRowH;
+            totalH += RowHeightOf(it);
         }
         m_bodyH = totalH;
         return SIZE{ m_bodyW, m_bodyH };
@@ -628,7 +780,7 @@ private:
         int y = 0;
         for (int i = 0; i < (int)items.size(); ++i)
         {
-            int rowH = (items[i].kind == DuiMenu::ItemSeparator) ? kSepRowH : kRowH;
+            int rowH = RowHeightOf(items[i]);
             if (pt.y >= y && pt.y < y + rowH)
             {
                 return i;
@@ -670,7 +822,7 @@ private:
         int y = 0;
         for (int i = 0; i < idx; ++i)
         {
-            y += (items[i].kind == DuiMenu::ItemSeparator) ? kSepRowH : kRowH;
+            y += RowHeightOf(items[i]);
         }
         int sx = rcWnd.right - 1;
         int sy = rcWnd.top + y;
@@ -741,8 +893,10 @@ private:
 
     DuiMenu*       m_menu     = nullptr;
     DuiMenuPopup*  m_parent   = nullptr;
+    int            m_dpi      = 0;        // Open 时按弹出位置所在显示器取的 DPI；0 = 尚未 Open，按全局 DPI 处理
     DuiMenuPopup*  m_child    = nullptr;
     int            m_bodyW    = 0;
+    int            m_shortcutW = 0;   // 快捷键列的宽度（像素）：MeasureBody 时取最宽的快捷键文字；没有快捷键时为 0
     int            m_bodyH    = 0;
     int            m_hoverIdx = -1;
     int            m_pendingSubmenuIdx = -1;
@@ -830,6 +984,21 @@ int DuiMenu::AppendSeparator()
     return (int)m_items.size() - 1;
 }
 
+int DuiMenu::AppendHeader(LPCTSTR text)
+{
+    //分组标题不可选中：置为不可用后，悬停高亮、点击、回车与助记符各路径都会跳过它
+    Item it;
+    it.id = 0;
+    it.kind = ItemHeader;
+    it.enabled = false;
+    it.checked = false;
+    it.text = text ? text : _T("");
+    it.subMenu = nullptr;
+    it.icon = nullptr;
+    m_items.push_back(it);
+    return (int)m_items.size() - 1;
+}
+
 int DuiMenu::AppendSubMenu(UINT nID, LPCTSTR text, DuiMenu* subMenu, CImageEx* icon)
 {
     Item it;
@@ -848,7 +1017,8 @@ int DuiMenu::FindIndexById(UINT nID) const
 {
     for (size_t i = 0; i < m_items.size(); ++i)
     {
-        if (m_items[i].id == nID && m_items[i].kind != ItemSeparator)
+        //分隔条与分组标题的 id 都是 0，不参与按 id 查找，SetEnabled(0, ...) 之类不会改到它们
+        if (m_items[i].id == nID && m_items[i].kind != ItemSeparator && m_items[i].kind != ItemHeader)
         {
             return (int)i;
         }
@@ -858,20 +1028,39 @@ int DuiMenu::FindIndexById(UINT nID) const
 
 // ---- pure helpers --------------------------------------------------
 
+void DuiMenu::SplitShortcut(LPCTSTR text, CString& label, CString& shortcut)
+{
+    label.Empty();
+    shortcut.Empty();
+    if (!text)
+    {
+        return;
+    }
+    LPCTSTR tab = _tcschr(text, _T('\t'));
+    if (!tab)
+    {
+        label = text;
+        return;
+    }
+    label.SetString(text, (int)(tab - text));
+    shortcut = tab + 1;
+}
+
 TCHAR DuiMenu::FindAcceleratorChar(LPCTSTR text)
 {
     if (!text)
     {
         return 0;
     }
-    for (LPCTSTR p = text; *p; ++p)
+    //'\t' 之后是快捷键文字，不参与助记符
+    for (LPCTSTR p = text; *p && *p != _T('\t'); ++p)
     {
         if (*p != _T('&'))
         {
             continue;
         }
         TCHAR next = *(p + 1);
-        if (next == 0)
+        if (next == 0 || next == _T('\t'))
         {
             return 0;
         }
@@ -896,7 +1085,7 @@ int DuiMenu::FindAcceleratorMatch(const std::vector<Item>& items, TCHAR ch)
     for (int i = 0; i < (int)items.size(); ++i)
     {
         const Item& it = items[i];
-        if (it.kind == ItemSeparator || !it.enabled)
+        if (it.kind == ItemSeparator || it.kind == ItemHeader || !it.enabled)
         {
             continue;
         }
@@ -928,7 +1117,7 @@ int DuiMenu::KeyboardNavNext(const std::vector<Item>& items, int fromIdx, int di
             return false;
         }
         const Item& it = items[i];
-        if (it.kind == ItemSeparator)
+        if (it.kind == ItemSeparator || it.kind == ItemHeader)
         {
             return false;
         }
@@ -1022,39 +1211,21 @@ SIZE DuiMenu::MeasureSize() const
     }
 
     // ---- 宽：取最宽一项文字（用默认菜单字体测量），限制在 [kMinTextW, kMaxTextW] 之间 ----
+    // 本函数在弹出之前调用，还不知道菜单最终落在哪块显示器，这里按全局 DPI 估算；
+    // 实际的窗口尺寸以 DuiMenuPopup::MeasureBody 按弹出位置的 DPI 算出的为准。
+    //分组标题用标题字体测量
     HDC   hdc     = ::GetDC(nullptr);
-    HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
-    HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
-    int   textMax = kMinTextW;
-    for (size_t i = 0; i < m_items.size(); ++i)
-    {
-        if (m_items[i].kind == ItemSeparator)
-        {
-            continue;
-        }
-        SIZE ts = { 0, 0 };
-        ::GetTextExtentPoint32(hdc, m_items[i].text, m_items[i].text.GetLength(), &ts);
-        if (ts.cx > textMax)
-        {
-            textMax = ts.cx;
-        }
-    }
-    if (oldFont)
-    {
-        ::SelectObject(hdc, oldFont);
-    }
+    int   shortcutMax = 0;
+    int   textMax = MeasureWidestText(hdc, m_items, DuiResMgr::Inst().GetDefaultFont(),
+                                      DuiResMgr::Inst().GetFontByPointSize(kHeaderFontPt), &shortcutMax);
     ::ReleaseDC(nullptr, hdc);
-    if (textMax > kMaxTextW)
-    {
-        textMax = kMaxTextW;
-    }
-    sz.cx = kIconColW + kTextPadL + textMax + kTextPadR + kArrowColW;
+    sz.cx = MenuBodyWidth(textMax, shortcutMax);
 
-    // ---- 高：各行高度之和（分隔条 kSepRowH，其余 kRowH）----
+    // ---- 高：各行高度之和（分隔条 kSepRowH，分组标题 kHeaderRowH，其余 kRowH）----
     int totalH = 0;
     for (size_t i = 0; i < m_items.size(); ++i)
     {
-        totalH += (m_items[i].kind == ItemSeparator) ? kSepRowH : kRowH;
+        totalH += RowHeightOf(m_items[i]);
     }
     sz.cy = totalH;
     return sz;

@@ -196,6 +196,11 @@ public:
     // their paint / layout paths.
     int         GetDpi() const { return m_dpi; }
 
+    // GetDpi 的值是否已经取自本窗口（窗口创建或收到 WM_DPICHANGED 之后为 true）。
+    // 为 false 时 GetDpi 返回的只是构造时的默认值 96，DuiControl::GetDpi 据此改用
+    // DuiResMgr 的全局 DPI。
+    bool        HasWindowDpi() const { return m_hasWindowDpi; }
+
     // 9-grid background image. When set, OnPaint replaces the default
     // COLOR_BTNFACE clear with a DuiNinePatch::Draw of `hbm` filling the
     // entire client area. The 4 inset values define the corners that
@@ -269,10 +274,17 @@ public:
 
     // ---- 双击合成（默认关闭）----
     //
-    // balloonui 的窗口类（__DuiHost__ / __DuiFrameWindow__）未注册
-    // CS_DBLCLKS，系统不会投递 WM_LBUTTONDBLCLK —— 因此 DuiControl 的
-    // OnLButtonDblClk 在默认情况下永不触发。本接口让业务在<u>运行期、
-    // 按需</u>打开"双击合成"。
+    // 何时需要：窗口类不带 CS_DBLCLKS 时，系统不会投递 WM_LBUTTONDBLCLK，
+    // DuiControl 的 OnLButtonDblClk 永不触发，此时可在<u>运行期、按需</u>
+    // 打开"双击合成"。
+    //
+    // 注意（2026-10-06 更正，bugs.md BUG-103）：此前这里写的是"balloonui 的
+    // 窗口类（__DuiHost__ / __DuiFrameWindow__）未注册 CS_DBLCLKS"，与实际
+    // 不符 —— __DuiHost__ 由 DECLARE_WND_CLASS 声明，默认样式含 CS_DBLCLKS；
+    // __DuiFrameWindow__ 现在也明确带 CS_DBLCLKS。这两类窗口里系统本就会投递
+    // WM_LBUTTONDBLCLK（由 OnLButtonDblClk 转给控件），第二次按下不会经过
+    // OnLButtonDown，所以对它们开启本接口实际不起作用。本接口只对窗口类不带
+    // CS_DBLCLKS 的宿主（如经 SubclassWindow 挂到别的窗口类上）才有意义。
     //
     // 开启后，DuiHost 在 OnLButtonDown 里按系统双击时限（GetDoubleClick
     // Time）+ 位移容差（SM_CXDOUBLECLK / SM_CYDOUBLECLK）自行判定双击；
@@ -431,6 +443,7 @@ private:
 
     // Cached per-monitor DPI; 96 until OnCreate / WM_DPICHANGED.
     int     m_dpi      = 96;
+    bool    m_hasWindowDpi = false;   // m_dpi 是否已取自本窗口（OnCreate / WM_DPICHANGED 后置 true）
 
     // 9-grid background image (caller-owned). nullptr → no bg image,
     // OnPaint clears with COLOR_BTNFACE.

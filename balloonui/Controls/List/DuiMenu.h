@@ -33,6 +33,8 @@ class DuiMenuPopup;
 // 项类型（与 CSkinMenu 冻结契约一致）：
 //   · 文本项：可带勾选标记或 icon（互斥）。
 //   · 分隔条：横线，不可选中。
+//   · 分组标题（2026-10-05 起）：一行灰色小字，标出其下各项所属的分组；不可选中，
+//     没有悬停高亮，键盘导航与助记符都跳过它。
 //   · 子菜单项：hover / 点击时打开嵌套 DuiMenu。
 //   · 禁用项：灰字 + icon 自动变灰，点击 no-op。
 //
@@ -85,7 +87,9 @@ public:
 
     // 追加普通文本项。
     //   nID：项 id（点击时 TrackPopup 返此值）。
-    //   text：显示文本（"&X" 助记符 → Alt+X 激活）。
+    //   text：显示文本（"&X" 助记符 → Alt+X 激活）。可以写成「文字\t快捷键」（2026-10-07 起）：'\t' 之后的
+    //         部分以灰色靠右画在单独的快捷键列里，菜单宽度随之加宽；助记符只认 '\t' 之前的部分。
+    //         例：menu.AppendItem(ID_H1, _T("一级标题\tCtrl+1"));
     //   icon：可选 icon。caller 持有所有权。
     int     AppendItem    (UINT nID, LPCTSTR text, CImageEx* icon = nullptr);
 
@@ -98,6 +102,12 @@ public:
 
     // 追加分隔条。
     int     AppendSeparator();
+
+    // 追加分组标题行（2026-10-05 起）：灰色小字、行高比普通项矮，不可选中、没有悬停高亮，
+    // 键盘上下键与助记符都跳过它；id 恒为 0，SetEnabled / SetCheck 等按 id 的修改不作用于它。
+    //   text：标题文字；其中的 '&' 不作为助记符。
+    //   返回：新项的 index。
+    int     AppendHeader  (LPCTSTR text);
 
     // 追加子菜单项。
     //   subMenu：caller 持有 lifetime；必须在 TrackPopup 期间保活。
@@ -168,7 +178,15 @@ public:
     void    HideNow();
 
     // ---- 内省（popup 窗口和测试用）----
-    enum ItemKind { ItemText, ItemCheckable, ItemSeparator, ItemSubMenu };
+    // 菜单项类型
+    enum ItemKind
+    {
+        ItemText,        // 普通文字项（可带 icon），AppendItem / AppendDisabled 追加
+        ItemCheckable,   // 可勾选项，AppendChecked 追加
+        ItemSeparator,   // 分隔条，AppendSeparator 追加
+        ItemSubMenu,     // 子菜单项，AppendSubMenu 追加
+        ItemHeader       // 分组标题行（不可选中），AppendHeader 追加
+    };
 
     struct Item
     {
@@ -190,7 +208,14 @@ public:
     //   "&Save"     -> 's'
     //   "Save &As"  -> 'a'
     //   "Save && Quit" -> 0
+    // 只看第一个 '\t' 之前的部分（之后是快捷键文字，见 SplitShortcut）。
     static TCHAR FindAcceleratorChar(LPCTSTR text);
+
+    // 把菜单项文字在第一个 '\t' 处分成左段（文字列）与快捷键（靠右的快捷键列，2026-10-07 起）。
+    //   text：菜单项文字，可为 nullptr。
+    //   label：[出参] 左段；没有 '\t' 时为整段文字，text 为 nullptr 时为空。
+    //   shortcut：[出参] 第一个 '\t' 之后的全部文字；没有 '\t' 时为空。
+    static void  SplitShortcut(LPCTSTR text, CString& label, CString& shortcut);
 
     // 在 items 里找第一个 enabled / 非分隔条 / 助记符匹配 ch 的项。
     //   返回：匹配项 index；不匹配返 -1。

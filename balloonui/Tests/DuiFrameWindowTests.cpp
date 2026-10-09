@@ -227,6 +227,123 @@ static Result Test_MaxInsets_ZeroBorder()
 }
 
 
+// ----- ResizeClient：客户区就是整个窗口，按要求的尺寸精确设置 ------------
+
+// 测试窗口创建时的初始尺寸（像素），随后由 ResizeClient 改掉，取值无特殊含义
+static const int kRcInitW = 300;
+static const int kRcInitH = 200;
+// ResizeClient 的目标尺寸（像素），取单聊窗的设计尺寸 640×620
+static const int kRcTargetW = 640;
+static const int kRcTargetH = 620;
+// 只改高度时的新高度（像素），取值无特殊含义
+static const int kRcKeepH = 300;
+// 最小尺寸（像素），取关闭提示框的整窗尺寸 380×280
+static const int kRcMinW = 380;
+static const int kRcMinH = 280;
+// 低于最小尺寸的请求（像素）
+static const int kRcBelowMinW = 300;
+static const int kRcBelowMinH = 200;
+
+// 建一个与业务窗口同样式（WS_OVERLAPPEDWINDOW）但不显示的 DuiFrameWindow。
+// 不加 WS_VISIBLE，跑测试时屏幕上不会闪过窗口。
+//   f：[出参] 尚未创建的窗口对象。
+//   返回：创建成功返回 true。
+static bool CreateHiddenFrame(DuiFrameWindow& f)
+{
+    RECT rc = { 0, 0, kRcInitW, kRcInitH };
+    return f.Create(nullptr, rc, _T("DuiFrameWindowTests"), WS_OVERLAPPEDWINDOW, 0) != nullptr;
+}
+
+// 读一个窗口的整窗尺寸（像素）。
+static SIZE WindowSizeOf(HWND hWnd)
+{
+    RECT rc = { 0, 0, 0, 0 };
+    ::GetWindowRect(hWnd, &rc);
+    SIZE s = { rc.right - rc.left, rc.bottom - rc.top };
+    return s;
+}
+
+// 读一个窗口的客户区尺寸（像素）。
+static SIZE ClientSizeOf(HWND hWnd)
+{
+    RECT rc = { 0, 0, 0, 0 };
+    ::GetClientRect(hWnd, &rc);
+    SIZE s = { rc.right, rc.bottom };
+    return s;
+}
+
+// ResizeClient(宽, 高) 之后整窗与客户区都正好是宽×高。继承自 ATL 的版本会按
+// WS_OVERLAPPEDWINDOW 再叠加一圈系统标题栏与边框（120 DPI 下得到 658×667）。
+// 各个尺寸先读出来、销毁窗口之后再断言：断言失败会提前返回，窗口须先销毁。
+static Result Test_ResizeClientExact()
+{
+    DuiFrameWindow f;
+    EXPECT_TRUE(CreateHiddenFrame(f), _T("RcExact/create"));
+    f.ResizeClient(kRcTargetW, kRcTargetH);
+    const SIZE w = WindowSizeOf(f.m_hWnd);
+    const SIZE c = ClientSizeOf(f.m_hWnd);
+    f.DestroyWindow();
+    EXPECT_INT(w.cx, kRcTargetW, _T("RcExact/windowW"));
+    EXPECT_INT(w.cy, kRcTargetH, _T("RcExact/windowH"));
+    EXPECT_INT(c.cx, kRcTargetW, _T("RcExact/clientW"));
+    EXPECT_INT(c.cy, kRcTargetH, _T("RcExact/clientH"));
+    return OK(_T("ResizeClientExact"));
+}
+
+// 宽或高传 -1 时该方向保持当前尺寸（与 ATL 版本的约定一致）。
+static Result Test_ResizeClientKeepsDimension()
+{
+    DuiFrameWindow f;
+    EXPECT_TRUE(CreateHiddenFrame(f), _T("RcKeep/create"));
+    f.ResizeClient(kRcTargetW, kRcTargetH);
+    f.ResizeClient(-1, kRcKeepH);
+    const SIZE onlyH = WindowSizeOf(f.m_hWnd);
+    f.ResizeClient(kRcInitW, -1);
+    const SIZE onlyW = WindowSizeOf(f.m_hWnd);
+    f.DestroyWindow();
+    EXPECT_INT(onlyH.cx, kRcTargetW, _T("RcKeep/onlyH/W"));
+    EXPECT_INT(onlyH.cy, kRcKeepH,   _T("RcKeep/onlyH/H"));
+    EXPECT_INT(onlyW.cx, kRcInitW,   _T("RcKeep/onlyW/W"));
+    EXPECT_INT(onlyW.cy, kRcKeepH,   _T("RcKeep/onlyW/H"));
+    return OK(_T("ResizeClientKeepsDimension"));
+}
+
+// 请求的尺寸低于 SetMinSize 设定的下限时，系统把窗口抬到下限（WS_THICKFRAME 窗口在
+// WM_WINDOWPOSCHANGING 里按 WM_GETMINMAXINFO 限制尺寸）。调用方设置尺寸时要连带把下限改对。
+static Result Test_ResizeClientHonorsMinSize()
+{
+    DuiFrameWindow f;
+    EXPECT_TRUE(CreateHiddenFrame(f), _T("RcMin/create"));
+    f.SetMinSize(kRcMinW, kRcMinH);
+    f.ResizeClient(kRcBelowMinW, kRcBelowMinH);
+    const SIZE w = WindowSizeOf(f.m_hWnd);
+    f.DestroyWindow();
+    EXPECT_INT(w.cx, kRcMinW, _T("RcMin/W"));
+    EXPECT_INT(w.cy, kRcMinH, _T("RcMin/H"));
+    return OK(_T("ResizeClientHonorsMinSize"));
+}
+
+
+// 框架窗口按本类声明的窗口类注册（BUG-103，2026-10-06）：类名为 __DuiFrameWindow__，样式与修复前实际生效的
+// __DuiHost__ 相同（改大小整窗重绘、带双击），窗口行为不变。修复前这里取到的类名是 __DuiHost__。
+static Result Test_WindowClassIsOwn()
+{
+    DuiFrameWindow f;
+    if (!CreateHiddenFrame(f))
+    {
+        return Fail(_T("WindowClassIsOwn"), _T("create failed"));
+    }
+    TCHAR cls[64] = { 0 };
+    ::GetClassName(f.m_hWnd, cls, 64);
+    const ULONG_PTR style = ::GetClassLongPtr(f.m_hWnd, GCL_STYLE);
+    f.DestroyWindow();
+    EXPECT_STR(CString(cls), _T("__DuiFrameWindow__"), _T("WindowClassIsOwn/name"));
+    EXPECT_TRUE((style & CS_DBLCLKS) != 0, _T("WindowClassIsOwn/dblclks"));
+    EXPECT_TRUE((style & CS_HREDRAW) != 0, _T("WindowClassIsOwn/hredraw"));
+    EXPECT_TRUE((style & CS_VREDRAW) != 0, _T("WindowClassIsOwn/vredraw"));
+    return OK(_T("WindowClassIsOwn"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_TRUE
 #undef EXPECT_STR
@@ -251,6 +368,10 @@ CString RunAll()
         { _T("MaxInsetsNotMaximized"),&Test_MaxInsets_NotMaximized},
         { _T("MaxInsetsMaximized"),   &Test_MaxInsets_Maximized   },
         { _T("MaxInsetsZeroBorder"),  &Test_MaxInsets_ZeroBorder  },
+        { _T("ResizeClientExact"),          &Test_ResizeClientExact          },
+        { _T("ResizeClientKeepsDimension"), &Test_ResizeClientKeepsDimension },
+        { _T("ResizeClientHonorsMinSize"),  &Test_ResizeClientHonorsMinSize  },
+        { _T("WindowClassIsOwn"),           &Test_WindowClassIsOwn           },
     };
 
     CString out;

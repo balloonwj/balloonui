@@ -4,7 +4,9 @@
 #if BUI_FEATURE_AVATAR
 
 #include "../../DuiResMgr.h"
+#include "../../DuiTheme.h"   // GetDefaultFontFace：缩写字母的字体名
 #include <gdiplus.h>
+#include <vector>
 
 namespace balloonwjui {
 
@@ -42,10 +44,10 @@ inline Gdiplus::Color ToGdiColor(COLORREF c)
     return Gdiplus::Color(255, GetRValue(c), GetGValue(c), GetBValue(c));
 }
 
-// Build a Gdiplus::Bitmap directly from a 32bpp DIBSection's bits to
-// avoid FromHBITMAP's top-down/bottom-up confusion (see DuiNinePatch).
-// Returns nullptr if hbm is not a 32bpp DIBSection; caller may fall back
-// to FromHBITMAP for DDBs / other depths.
+// 由一张 32 位 DIBSection 构造 Gdiplus::Bitmap，并保留透明度。像素用 GetDIBits() 按自上而下
+// 的行序复制，源图实际的行序由 GDI 自己处理。行序不能从 GetObject() 推测：它对自上而下存储的
+// DIBSection 同样返回正的 dsBmih.biHeight，原先按它判断，把所有自上而下存储的位图都画颠倒了。
+// 返回的位图自己持有像素，由调用方 delete。设备相关位图与其它位深退回 FromHBITMAP。
 Gdiplus::Bitmap* MakeGdipBitmapFromHbm(HBITMAP hbm, bool hasAlpha)
 {
     if (!hbm)
@@ -62,17 +64,61 @@ Gdiplus::Bitmap* MakeGdipBitmapFromHbm(HBITMAP hbm, bool hasAlpha)
         return Gdiplus::Bitmap::FromHBITMAP(hbm, nullptr);
     }
 
-    int stride = ds.dsBm.bmWidthBytes;
-    BYTE* bits = (BYTE*)ds.dsBm.bmBits;
-    if (ds.dsBmih.biHeight > 0)
+    const int w = ds.dsBm.bmWidth;
+    const int h = ds.dsBm.bmHeight;
+    if (w <= 0 || h <= 0)
     {
-        bits   = bits + (LONG_PTR)stride * (ds.dsBmih.biHeight - 1);
-        stride = -stride;
+        return nullptr;
     }
+
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth       = w;
+    bi.bmiHeader.biHeight      = -h;        // 负高：要求按自上而下的行序读出
+    bi.bmiHeader.biPlanes      = 1;
+    bi.bmiHeader.biBitCount    = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
     Gdiplus::PixelFormat fmt = hasAlpha ? PixelFormat32bppPARGB
                                         : PixelFormat32bppRGB;
-    return new Gdiplus::Bitmap(ds.dsBm.bmWidth, ds.dsBm.bmHeight,
-                               stride, fmt, bits);
+    Gdiplus::Bitmap* bmp = new Gdiplus::Bitmap(w, h, fmt);
+    Gdiplus::Rect rc(0, 0, w, h);
+    Gdiplus::BitmapData data = {};
+    if (bmp->GetLastStatus() != Gdiplus::Ok
+        || bmp->LockBits(&rc, Gdiplus::ImageLockModeWrite, fmt, &data) != Gdiplus::Ok)
+    {
+        delete bmp;
+        return Gdiplus::Bitmap::FromHBITMAP(hbm, nullptr);
+    }
+
+    // GetDIBits 写出的 32 位像素行是紧密排列的（天然按 DWORD 对齐）。锁定区的行跨度与之相同时
+    // 直接写进锁定区，否则先写进临时缓冲区，再逐行复制过去。
+    const int rowBytes = w * 4;
+    int lines = 0;
+    HDC hdc = ::GetDC(nullptr);
+    if (data.Stride == rowBytes)
+    {
+        lines = ::GetDIBits(hdc, hbm, 0, (UINT)h, data.Scan0, &bi, DIB_RGB_COLORS);
+    }
+    else
+    {
+        std::vector<BYTE> buf((size_t)rowBytes * (size_t)h);
+        lines = ::GetDIBits(hdc, hbm, 0, (UINT)h, buf.data(), &bi, DIB_RGB_COLORS);
+        for (int y = 0; y < h; ++y)
+        {
+            memcpy((BYTE*)data.Scan0 + (LONG_PTR)data.Stride * y,
+                   buf.data() + (size_t)rowBytes * (size_t)y, (size_t)rowBytes);
+        }
+    }
+    ::ReleaseDC(nullptr, hdc);
+    bmp->UnlockBits(&data);
+
+    if (lines != h)
+    {
+        delete bmp;
+        return Gdiplus::Bitmap::FromHBITMAP(hbm, nullptr);
+    }
+    return bmp;
 }
 
 } // namespace
@@ -288,14 +334,28 @@ void DuiAvatar::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
 
     if (pImg)
     {
-        // Set clip to the path, then DrawImage stretched into the rect.
-        // Cheaper than constructing a TextureBrush with a transform.
-        g.SetClip(&path);
-        Gdiplus::Rect dst((INT)X, (INT)Y, (INT)W, (INT)H);
-        g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBilinear);
-        g.DrawImage(pImg, dst, 0, 0, pImg->GetWidth(), pImg->GetHeight(),
-                    Gdiplus::UnitPixel);
-        g.ResetClip();
+        // 先把位图缩放到头像尺寸、画进一张中间位图，再拿它作纹理画刷按抗锯齿填充头像形状。
+        // 不用「SetClip 到形状再 DrawImage」：GDI+ 的裁剪区按整像素划分，抗锯齿设置对它不起作用，
+        // 圆形与圆角的边缘是台阶状的锯齿（2026-10-04 实测）。中间位图带透明通道，源图透明的部分
+        // （如系统图标的四角）填充后仍透出底下的内容。
+        const INT iw = (INT)W;
+        const INT ih = (INT)H;
+        Gdiplus::Bitmap scaled(iw, ih, PixelFormat32bppPARGB);
+        {
+            Gdiplus::Graphics gs(&scaled);
+            gs.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBilinear);
+            gs.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+            // 镜像平铺取样：插值取到位图边界之外时用边缘像素的镜像而不是透明，位图四边不会变淡
+            Gdiplus::ImageAttributes attrs;
+            attrs.SetWrapMode(Gdiplus::WrapModeTileFlipXY);
+            gs.DrawImage(pImg, Gdiplus::Rect(0, 0, iw, ih),
+                         0, 0, (INT)pImg->GetWidth(), (INT)pImg->GetHeight(),
+                         Gdiplus::UnitPixel, &attrs);
+        }
+        // 纹理只做平移：中间位图与头像同尺寸，左上角对齐到头像左上角，像素一一对应
+        Gdiplus::TextureBrush brush(&scaled);
+        brush.TranslateTransform(X, Y);
+        g.FillPath(&brush, &path);
         delete pImg;
     }
     else
@@ -331,7 +391,8 @@ void DuiAvatar::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
             lf.lfHeight = -::MulDiv(ptSize, dpiY, 72);
             lf.lfWeight = FW_SEMIBOLD;
             lf.lfCharSet = DEFAULT_CHARSET;
-            _tcsncpy_s(lf.lfFaceName, _T("Microsoft YaHei"), _TRUNCATE);
+            //字体名取 DuiTheme 的默认字体（缺省为微软雅黑，宿主可按界面语言改换）
+            _tcsncpy_s(lf.lfFaceName, DuiTheme::Inst().GetDefaultFontFace(), _TRUNCATE);
             HFONT hFont = ::CreateFontIndirect(&lf);
             HFONT oldFont = (HFONT)::SelectObject(hdc, hFont);
 

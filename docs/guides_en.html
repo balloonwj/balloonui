@@ -1076,7 +1076,7 @@ auto root = balloonwjui::DuiXmlBuilder::FromString(xml.c_str(), fac);</code></pr
 
 <table>
   <tr><th>Level</th><th>API</th><th>Affects</th></tr>
-  <tr><td>Global font</td><td><code>DuiResMgr::Inst().GetDefaultFont()</code></td><td>Default UI font for every control</td></tr>
+  <tr><td>Global font</td><td><code>DuiControl::GetDefaultFont()</code> (inside a control) / <code>DuiResMgr::Inst().GetDefaultFontForDpi(dpi)</code></td><td>Default UI font for every control, scaled to the DPI of the window the control lives in</td></tr>
   <tr><td>Theme colors</td><td>Constants in the <code>DuiTheme</code> namespace</td><td>Brand color, status colors (online / away / red)</td></tr>
   <tr><td>Per-control</td><td>Each Set* method (see per-control sections)</td><td>This instance only</td></tr>
 </table>
@@ -1844,6 +1844,8 @@ host.SetRoot(std::move(root));
     <tr><td><code>SetText(LPCTSTR)</code> / <code>GetText()</code></td><td>Text content.</td></tr>
     <tr><td><code>SetMode(ModeText|ModeLink)</code></td><td>Switch between text / link mode.</td></tr>
     <tr><td><code>SetTextColor(COLORREF)</code></td><td>Non-link text color.</td></tr>
+    <tr><td><code>SetTextPointSize(pt, bold)</code> / <code>GetTextPointSize()</code> / <code>IsTextBold()</code></td><td>Set the size in points (recommended): the control only records the point size and fetches the font for its window's DPI when painting and measuring, so the size follows the window to a monitor with a different scale factor. <code>pt &lt;= 0</code> restores the default font.</td></tr>
+    <tr><td><code>SetFont(HFONT)</code> / <code>GetFont()</code></td><td>Use a font created by the caller (caller-owned, never deleted by the control, <b>does not follow DPI changes</b>); mutually exclusive with <code>SetTextPointSize</code> &mdash; the later call cancels the earlier one. <code>GetFont()</code> returns the explicitly set font (for a point size, the instance for the current DPI), or <code>nullptr</code> when neither is set.</td></tr>
     <tr><td><code>SetLinkColor / SetHoverColor / SetVisitedColor</code></td><td>Link palette.</td></tr>
     <tr><td><code>SetWordWrap(bool)</code></td><td>Enable DT_WORDBREAK auto-wrap.</td></tr>
     <tr><td><code>MeasureHeight(width)</code></td><td>Return the height needed to render at the given width (DT_CALCRECT).</td></tr>
@@ -1950,8 +1952,8 @@ host.SetRoot(std::move(root));
     <tr><td><code>SetVariant(Variant) / GetVariant()</code></td><td>Visual variant: Primary / Default / Outlined / Ghost / Danger / Text. On <code>StylePushButton</code> all 6 Variants are effective; on <code>StyleCheckbox</code> / <code>StyleRadio</code> only the three transparent Variants (Ghost / Outlined / Text) take over the outer palette — the rest fall back to kLight; <code>StyleIcon</code> ignores Variant. If <code>SetBgBitmap</code> is also set, the bitmap takes precedence.</td></tr>
     <tr><td><code>PaletteFor(Variant, ButtonState)</code> [static]</td><td>Pure helper that returns <code>ButtonPalette{ bg, text, border }</code>. <code>bg</code> / <code>border</code> set to <code>CLR_INVALID</code> mean "transparent / no border".</td></tr>
     <tr><td><code>SetAntiAlias(bool) / IsAntiAlias()</code></td><td>Whether the outer frame and the Checkbox box glyph render anti-aliased (default <code>true</code>). When off, falls back to GDI <code>::RoundRect</code> (8px corners show stair-stepping); when on, uses <code>DuiAA::FillRoundRect</code>. The Radio circle glyph is always AA, independent of this toggle.</td></tr>
-    <tr><td><code>SetFont(HFONT) / GetFont()</code></td><td>Custom text font. HFONT is caller-owned; the control never deletes it. <code>nullptr</code> (default) falls back to <code>DuiResMgr::GetDefaultFont()</code> (YaHei 9pt).</td></tr>
-    <tr><td><code>SetTextPointSize(int pt, bool bold = false)</code></td><td>Convenience setter: pulls a cached HFONT from <code>DuiResMgr::GetFontByPointSize</code> by (pt, bold) and calls <code>SetFont</code>. <code>pt &lt;= 0</code> degenerates to the default font.</td></tr>
+    <tr><td><code>SetFont(HFONT) / GetFont()</code></td><td>Custom text font created by the caller. HFONT is caller-owned; the control never deletes it, it <b>does not follow DPI changes</b>, and setting it cancels <code>SetTextPointSize</code>. <code>nullptr</code> (default) falls back to the default font for the control's DPI (YaHei 9pt). <code>GetFont()</code> returns the explicitly set font (for a point size, the instance for the current DPI), or <code>nullptr</code> when neither is set.</td></tr>
+    <tr><td><code>SetTextPointSize(int pt, bool bold = false)</code></td><td>Set the size by (pt, bold) and cancel any <code>SetFont</code>. The control only records the point size and fetches a cached font from <code>DuiResMgr</code> for its window's DPI when painting, so the size follows DPI changes. <code>pt &lt;= 0</code> restores the default font; read back with <code>GetTextPointSize()</code> / <code>IsTextBold()</code>.</td></tr>
     <tr><td><code>SetLeadingIcon(HBITMAP) / GetLeadingIcon()</code></td><td>Bitmap drawn to the left of the text. <b>Effective only on <code>StylePushButton</code></b>; other styles ignore it. HBITMAP is caller-owned. Drawn via <code>::AlphaBlend</code>, supporting 32bpp premultiplied alpha. The icon + gap + text group is aligned by <code>m_dtFlags</code> (default horizontally centered).</td></tr>
     <tr><td><code>SetLeadingIconSize(int px)</code> / <code>SetLeadingIconGap(int px)</code></td><td>Icon edge length (default <code>16</code>; <code>&lt;= 0</code> clamped to 1) / gap between icon and text (default <code>6</code>; <code>&lt; 0</code> clamped to 0).</td></tr>
   </table>
@@ -2109,7 +2111,7 @@ m_toast-&gt;Show(_T("Please pick an agent on the left first"));
     <tr><td><code>SetIconSize(int) / GetIconSize()</code></td><td>Icon edge length (square px), default 16; <= 0 clamps to 1.</td></tr>
     <tr><td><code>SetIconGap(int) / GetIconGap()</code></td><td>Gap between icon and text (px), default 8; < 0 clamps to 0.</td></tr>
     <tr><td><code>SetFont(HFONT) / GetFont()</code></td><td>Custom font. HFONT is caller-owned; nullptr (default) uses the toast's internal default font (YaHei 9pt + ANTIALIASED_QUALITY). <u>Note</u>: because toast composites through PARGB + AlphaBlend, ClearType fonts cause sub-pixel "ghosting"; callers should pass an HFONT with <code>lfQuality=ANTIALIASED_QUALITY</code>, or just use SetTextPointSize (which picks an AA-cached font internally).</td></tr>
-    <tr><td><code>SetTextPointSize(int pt, bool bold=false)</code></td><td>Convenience setter: pulls an AA-cached font from <code>DuiResMgr::GetAntiAliasedFontByPointSize</code> by (pt, bold) and calls SetFont. pt <= 0 degenerates to the default font.</td></tr>
+    <tr><td><code>SetTextPointSize(int pt, bool bold=false)</code></td><td>Set the size by (pt, bold) and cancel any SetFont. The control only records the point size and fetches an AA-cached font from <code>DuiResMgr</code> for its window's DPI when painting, so the size follows DPI changes. pt <= 0 degenerates to the default font. A font passed to <code>SetFont</code> does not follow DPI changes.</td></tr>
     <tr><td><code>SetTopOffset(int) / GetTopOffset()</code></td><td>Offset from the top of the parent client area (px), default 40.</td></tr>
     <tr><td><code>SetMaxWidth(int) / GetMaxWidth()</code></td><td>Max width (px), default 0 = unlimited; > 0 truncates text exceeding (maxWidth - icon - gap - 2×padding) with "…".</td></tr>
     <tr><td><code>MeasureWidth(textPx, hasIcon, iconSize, iconGap)</code> [static]</td><td>Pure helper: total toast width.</td></tr>
@@ -3170,6 +3172,23 @@ tv-&gt;AddChild(gMobile, _T("Project Comet"));
 </code></pre>
   <p>Live demo: DuiGallery → TreeView tab → <b>"Multi-level nesting (arbitrary depth)"</b> section (a 5-level org chart with Expand-all / Collapse-all buttons).</p>
 
+  <h4>Large data sets and reordering</h4>
+  <p>Behaviour with thousands of nodes (since 2026-10-01):</p>
+  <ul>
+    <li><b>Access by id is constant time</b>: id-based methods such as <code>SetItemLabel</code> / <code>SetItemIcon</code> / <code>GetItemLabel</code> go through an internal id table instead of scanning, so they don't slow down as the tree grows. Node ids only ever increase and are never reused, not even after <code>Clear</code>.</li>
+    <li><b>Visible rows are rebuilt on demand</b>: structural changes (<code>AddRoot</code> / <code>AddChild</code> / <code>Remove</code> / expand / collapse ...) only mark the visible-row list stale; it is rebuilt once, the next time something reads it (painting, hit testing, <code>GetVisibleCount</code> ...). Adding thousands of nodes in a row needs no batch API.</li>
+    <li><b>Depth-first building is fastest</b>: when the parent's subtree already extends to the end (e.g. finish one department before starting the next), the new child is appended without scanning the subtree.</li>
+    <li><b>Reorder with <code>MoveRoot</code></b>: moves a root node together with its whole subtree before another root (<code>beforeId</code> = -1 means "to the end"). Ids, selection and expand state are kept. Cost is proportional to the distance moved. Insert-at-position is "<code>AddRoot</code> to append, then <code>MoveRoot</code>".</li>
+  </ul>
+<pre><code>// A conversation list receives a new message: update the row, then move it before the first unpinned one
+tv-&gt;SetItemSubLabel(convNode, _T("[Image]"));
+tv-&gt;MoveRoot(convNode, firstUnpinnedNode);   // false means an argument is not a root node
+
+// Insert at a position = append + move
+int fav = tv-&gt;AddRoot(_T("Favorites"));
+tv-&gt;MoveRoot(fav, firstRootNode);            // move it to the very top
+</code></pre>
+
   <h4>Per-node icons</h4>
   <p>Each node can carry its own HBITMAP, painted in the 18×18 slot (<code>kIconSizePx</code>) between the ▶ glyph and the label. Ownership stays with the caller (the control only stores a raw pointer), so the same bitmap can be shared across many nodes.</p>
 <pre><code>// Pre-load or generate the small icons; the control does NOT copy pixel data.
@@ -4031,9 +4050,10 @@ int idBell     = frame.AddCaptionIcon(hBell,     _T("Notifications"));
   <h3>DuiScrollBar / DuiScrollView</h3>
   <figure class="ctl-fig">
     <img src="images/ctl-scrollbar-states.png" alt="DuiScrollBar vertical + horizontal">
-    <figcaption>Left: vertical scrollbar. Right: horizontal scrollbar. The thumb position follows SetPos.</figcaption>
+    <figcaption>Left: vertical scrollbar. Right: horizontal scrollbar. The thumb position follows SetPos. (The screenshot shows the style used before the switch to the thin overlay thumb on 2026-10-04.)</figcaption>
   </figure>
   <p>Standalone scrollbar + built-in scroll container. <code>DuiScrollView::SetContent(child)</code> installs the content; <code>SetContentHeight(h)</code> (or <code>SetAutoContentHeight(true)</code> to auto-measure) declares the scroll range.</p>
+  <p><b>Appearance (thin overlay thumb):</b> only a 5 px wide, semi-transparent gray thumb with semicircular ends is painted (gray <code>0x5A</code>, opacity 120/255, multiplied by the fade alpha), 2 px in from the right edge of the control rectangle (the bottom edge for a horizontal scrollbar); no track is painted, and the thumb is at least 36 px long along the main axis. The control rectangle itself is a wider "hit band": <code>DuiScrollView</code> / <code>DuiListBox</code> / <code>DuiTreeView</code> float it over the content along the right edge, <code>DuiScrollBar::kOverlayBandPx</code> (11 px) wide by default, and <u>lay the content out at full width</u>; while the scrollbar is shown, mouse events inside the hit band go to the scrollbar even if it is currently faded out. Press the thumb to drag it; pressing on an empty part of the track first moves the thumb's center to the click point, after which you can keep dragging.</p>
 
   <p><b>Typical parent:</b> <code>DuiScrollBar</code> is usually <u>not used directly</u> — <code>DuiScrollView</code> creates and manages one internally. If you really need to use it standalone (a custom view that manages its own scrollbar, or a built-in scrollbar that can't be wrapped by DuiScrollView), the typical parent is any layout container.<br>
   <code>DuiScrollView</code>'s typical parent: any layout container (VBox / HBox / Grid / GroupBox content area / Splitter pane / Dock child area).</p>
@@ -4042,7 +4062,7 @@ int idBell     = frame.AddCaptionIcon(hBell,     _T("Notifications"));
 <pre><code>auto sv = std::make_unique&lt;balloonwjui::DuiScrollView&gt;();
 sv-&gt;SetContent(BuildLongVBox());
 sv-&gt;SetContentHeight(2400);   // Total content height
-sv-&gt;SetScrollBarWidth(12);
+// The default 11 px hit band is usually right; SetScrollBarWidth(0) means no scrollbar
 vbox-&gt;AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 </code></pre>
   <h4>Events</h4>
@@ -4053,11 +4073,11 @@ vbox-&gt;AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
   <p class="note">When embedded inside <code>DuiScrollView</code>, you usually don't need to subscribe — the scrollbar and content offset are already linked. Listen only when using <code>DuiScrollBar</code> standalone (not through ScrollView) and you need to handle the offset yourself.</p>
 
   <h4>auto-hide / fade-out</h4>
-  <p><code>DuiScrollBar</code> has a built-in auto-hide state machine: by default alpha=0 (invisible but still occupies its slot); after the caller triggers <code>TriggerShow()</code> it fades in to alpha=1, and if no new event arrives within 800 ms it auto-fades back to 0. Common usage: in a list control, call <code>TriggerShow()</code> on OnMouseMove / OnMouseWheel and <code>StartFadeOut()</code> on OnMouseLeave — the scrollbar is visible while the mouse is over the list and hides after a short delay when it leaves. The scrollbars embedded inside <code>DuiListBox</code> / <code>DuiVirtualList</code> already enable auto-hide by default; callers don't need extra configuration.</p>
+  <p><code>DuiScrollBar</code> has a built-in auto-hide state machine, <u>on by default</u>: a new scrollbar has alpha=0 (invisible, but it still occupies its slot and can still be hit); scrolling (wheel, drag, track click) or the mouse entering the scrollbar fades it in to alpha=1 (200 ms), and if nothing else happens within 800 ms it fades back to 0 (300 ms). While the mouse hovers over the scrollbar or the thumb is being dragged, the idle timeout does not fade it out; leaving or releasing restarts the timer. Containers call <code>TriggerShow()</code> from their own OnMouseWheel / keyboard paging and <code>StartFadeOut()</code> from OnMouseLeave. The scrollbars embedded in <code>DuiScrollView</code> / <code>DuiListBox</code> / <code>DuiTreeView</code> / <code>DuiRichEdit</code> already do this; callers don't need extra configuration. Merely moving the mouse over list rows without scrolling does not show the scrollbar.</p>
 
   <table>
     <tr><th>Method</th><th>Meaning</th></tr>
-    <tr><td><code>SetAutoHide(bool)</code></td><td>Turn auto-hide on / off. Enabling drops alpha to 0 immediately; disabling raises it to 1 (always fully visible).</td></tr>
+    <tr><td><code>SetAutoHide(bool)</code></td><td>Turn auto-hide on / off (on by default). Enabling drops alpha to 0 immediately; disabling raises it to 1 (always fully visible). Turning it off and on again hides the scrollbar at once and cancels any fade in progress.</td></tr>
     <tr><td><code>IsAutoHide()</code></td><td>Query whether auto-hide mode is currently active.</td></tr>
     <tr><td><code>TriggerShow()</code></td><td>Immediately start the fade-in (200 ms in to 1.0) + reset the 800 ms idle timer. Call this on hover / wheel events. No-op when auto-hide is off.</td></tr>
     <tr><td><code>StartFadeOut()</code></td><td>Cancel the idle timer and start the fade-out (300 ms out to 0). Call this on OnMouseLeave. No-op when auto-hide is off.</td></tr>
@@ -4066,14 +4086,19 @@ vbox-&gt;AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 
   <p class="note"><b>No host pulse needed</b>: auto-hide's fade is driven by <code>DuiAnimMgr</code>, which owns a shared 16 ms pulse timer — installed while something is animating, dropped once it finishes. The caller's frame <u>does not</u> need a <code>SetTimer</code> and should no longer call <code>TickAll</code>; as long as that thread pumps messages, the fade in and out run on their own. <code>TickAll</code> is still public, but only for manual driving from unit tests.</p>
 
-<pre><code>// Enable auto-hide in a custom list control:
+  <h4>Wheel step</h4>
+  <p>The scroll distance is proportional to the wheel message's <code>zDelta</code>: one notch of an ordinary mouse (<code>WHEEL_DELTA</code> = 120) scrolls 3 lines, with the line height set by <code>SetLineSize</code> (<code>DuiScrollView</code> uses 16 px). Precision touchpads and high-resolution wheels send much smaller <code>zDelta</code> values; they are accumulated at 40 per line, a line is scrolled only once a full line's worth has built up, and the remainder carries over to the next message. Reversing direction discards the remainder.</p>
+
+  <h4>Invalidation outside the viewport does not repaint</h4>
+  <p><code>DuiScrollView</code> clips its content to the viewport when painting, so it overrides <code>DuiControl::GetChildClipRect</code>: when any descendant calls <code>Invalidate</code>, the dirty rectangle is intersected with the viewport before it reaches the host, and a child lying entirely outside the viewport invalidates nothing. After scrolling, the content control's rectangle reaches far beyond the viewport; without the intersection every wheel notch would also repaint whatever sits above and below the viewport.</p>
+  <p class="note">A custom container that likewise clips its children to its own rectangle while painting can override <code>GetChildClipRect</code> to return that rectangle and get the same effect. Containers that do <u>not</u> clip must not override it: a child may legitimately paint outside its parent, and that part would stop being repainted.</p>
+
+<pre><code>// Embed a scrollbar in a custom list control (auto-hide is on by default; it fades itself in when the mouse enters it):
 ctor() {
     auto sb = std::make_unique&lt;balloonwjui::DuiScrollBar&gt;(/*horizontal=*/false);
-    sb-&gt;SetAutoHide(true);
     m_sb = sb.get();
-    AddChild(std::move(sb));
+    AddChild(std::move(sb));   // in Layout, place it at the right edge, DuiScrollBar::kOverlayBandPx wide; content stays full width
 }
-bool OnMouseMove(POINT, UINT) override { if (m_sb) m_sb-&gt;TriggerShow(); ... }
 bool OnMouseLeave()           override { if (m_sb) m_sb-&gt;StartFadeOut(); ... }
 bool OnMouseWheel(POINT pt, short z, UINT mk) override {
     if (m_sb) {
@@ -4098,6 +4123,7 @@ bool OnMouseWheel(POINT pt, short z, UINT mk) override {
     <tr><td><code>OnMouseEnter/Leave/Move/Down/Up/DblClk</code></td><td>Mouse events; return true to consume.</td></tr>
     <tr><td><code>OnChar / OnKeyDown</code></td><td>Keyboard events.</td></tr>
     <tr><td><code>OnSetCursor(POINT)</code></td><td>Return true to indicate SetCursor has been called.</td></tr>
+    <tr><td><code>OnDpiChanged(int dpi)</code></td><td>Called parent-first when the host window's DPI changes (<code>WM_DPICHANGED</code>); the whole tree is then laid out again and repainted. Controls that cache DPI-dependent fonts or sizes refresh them here. Does nothing by default.</td></tr>
   </table>
   <h4>Common calls</h4>
   <table>
@@ -4107,16 +4133,26 @@ bool OnMouseWheel(POINT pt, short z, UINT mk) override {
     <tr><td><code>Invalidate()</code></td><td>Request a repaint of this control's rect.</td></tr>
     <tr><td><code>Capture / ReleaseCapture / SetFocus</code></td><td>DUI-internal capture / focus (not Win32).</td></tr>
     <tr><td><code>NotifyParent(code, extra=0)</code></td><td>Send WM_DUI_NOTIFY to the HWND parent.</td></tr>
+    <tr><td><code>GetDpi()</code></td><td>DPI of the window this control lives in; the global <code>DuiResMgr</code> DPI while the control is not yet attached to a created window.</td></tr>
+    <tr><td><code>GetDefaultFont() / GetFontByPointSize(pt, bold) / GetAntiAliasedFontByPointSize(pt, bold)</code></td><td>Shared fonts for this control's DPI (owned by <code>DuiResMgr</code>). Fetch them when painting and measuring; don't keep the handle &mdash; after a DPI change the same call returns a different font.</td></tr>
   </table>
 </div>
 
 <div class="control" id="DuiResMgr">
   <h3>DuiResMgr — resource manager</h3>
-  <p>Singleton. Wraps <code>CSkinManager</code> (images) + the process-level default UI font (Microsoft YaHei 9 pt GB2312, lazily created and re-created on DPI change).</p>
-<pre><code>HFONT f = balloonwjui::DuiResMgr::Inst().GetDefaultFont();
+  <p>Singleton. Wraps <code>CSkinManager</code> (images) + the process-level shared UI fonts (Microsoft YaHei GB2312, cached separately per (DPI, point size, bold) and created lazily). <code>SetDpi</code> only switches the global DPI and <b>never destroys</b> a font it has handed out &mdash; controls may still hold the handle; switching back to a DPI used before reuses its fonts, and every font is released at process exit.</p>
+<pre><code>// Inside a control: fetch for the DPI of the control's window (recommended)
+HFONT f = GetDefaultFont();   // DuiControl member
 ::SelectObject(hdc, f);
 
-// Called automatically by DuiHost on WM_DPICHANGED:
+// Outside a control, with a known DPI:
+HFONT g = balloonwjui::DuiResMgr::Inst().GetFontByPointSizeForDpi(12, true, dpi);
+
+// Code that belongs to no window: fetch for the global DPI
+HFONT h = balloonwjui::DuiResMgr::Inst().GetDefaultFont();
+
+// Called automatically by DuiHost on window creation and WM_DPICHANGED
+// (switches the global DPI only, destroys no font):
 balloonwjui::DuiResMgr::Inst().SetDpi(newDpi);
 
 CImageEx* img = balloonwjui::DuiResMgr::Inst().AcquireImage(_T("button_normal.png"));
@@ -4125,11 +4161,12 @@ CImageEx* img = balloonwjui::DuiResMgr::Inst().AcquireImage(_T("button_normal.pn
 
 <div class="control" id="DuiDpi">
   <h3>DuiDpi — high-DPI support</h3>
-  <p>A namespace with three (plus two) functions:</p>
+  <p>A namespace with the following functions:</p>
   <table>
     <tr><td><code>OptInPerMonitorV2()</code></td><td>Call once early in WinMain to opt in to per-monitor v2 DPI awareness.</td></tr>
     <tr><td><code>GetSystemDpi()</code></td><td>Primary monitor DPI (default 96).</td></tr>
     <tr><td><code>GetWindowDpi(HWND)</code></td><td>Current DPI of the window (per-monitor v2 aware).</td></tr>
+    <tr><td><code>GetDpiForPoint(POINT)</code></td><td>DPI of the monitor containing a screen point. For content that has to be measured for its target monitor before the window exists (menus and tooltips measure first, then create the window at a given position).</td></tr>
     <tr><td><code>Scale(logical, dpi)</code></td><td>Logical px → device px.</td></tr>
     <tr><td><code>Unscale(device, dpi)</code></td><td>Device px → logical px.</td></tr>
   </table>
@@ -4268,7 +4305,7 @@ bool MyControl::OnLButtonUp(POINT, UINT)
 
 <p class="note"><b>Key conventions</b>:<br>
 ① <code>m_rcItem</code> is this control's rectangle as computed by the parent layout (in host client-area coordinates); all drawing happens inside it — you don't need to handle coordinate offsets yourself.<br>
-② The default font always goes through <code>DuiResMgr::Inst().GetDefaultFont()</code> (Microsoft YaHei 9 pt GB2312); don't hardcode a LOGFONT.<br>
+② Inside a control, prefer <code>GetDefaultFont()</code> (a <code>DuiControl</code> member that returns Microsoft YaHei 9 pt GB2312 for the DPI of the control's window); don't hardcode a LOGFONT and don't keep the handle. The examples below use <code>DuiResMgr::Inst().GetDefaultFont()</code>, which follows the global DPI &mdash; the same thing on a single monitor, but use the former when monitors have different scale factors.<br>
 ③ Non-axis-aligned geometry (circles / triangles / diagonals) must go through <code>DuiPaintAA</code> or directly use <code>Gdiplus::Graphics + SetSmoothingMode(AntiAlias)</code>, or you'll get jaggies.<br>
 ④ Use named constants for colors: <code>static const COLORREF kXxx = RGB(...)</code>, which makes it easy to later move them into <code>DuiTheme</code>.</p>
 
@@ -7648,7 +7685,7 @@ public:
 
 <h3 id="g-dpi">DPI / Per-Monitor V2</h3>
 <p><b>DPI</b> (dots per inch) = the number of pixels per inch on the screen. Windows defaults to 96 DPI, i.e. "100% scaling"; users can crank scaling up in display settings to 125% (120 DPI) / 150% (144 DPI) / 200% (192 DPI), so the UI doesn't look tiny on high-resolution displays.</p>
-<p><b>Per-Monitor V2</b> is the DPI-awareness mode introduced in Windows 10 1703; it tells the OS the program <u>computes its own DPI for each monitor separately</u>, so dragging a window from a 100% primary to a 200% secondary monitor auto-resizes the UI. balloonui opts in once with <code>DuiDpi::OptInPerMonitorV2()</code>; every <code>DuiHost</code> then automatically receives <code>WM_DPICHANGED</code> and exposes the current DPI via <code>GetDpi()</code> to controls for scaling.</p>
+<p><b>Per-Monitor V2</b> is the DPI-awareness mode introduced in Windows 10 1703; it tells the OS the program <u>computes its own DPI for each monitor separately</u>, so dragging a window from a 100% primary to a 200% secondary monitor auto-resizes the UI. balloonui opts in once with <code>DuiDpi::OptInPerMonitorV2()</code>; every <code>DuiHost</code> then automatically receives <code>WM_DPICHANGED</code> and exposes the current DPI via <code>GetDpi()</code> to controls for scaling. Controls fetch fonts for the DPI of their own window (<code>DuiControl::GetDefaultFont</code> and friends), so windows on monitors with different scale factors each get the right size; on a DPI change the host notifies the whole tree through <code>OnDpiChanged</code> and lays it out again.</p>
 <p>In balloonui, "96-dpi logical pixels" means <u>the physical-pixel value at DPI=96</u>; at runtime it's scaled with <code>actual = MulDiv(logical, GetDpi(), 96)</code> (e.g. <code>DuiFrameWindow</code>'s <code>m_borderPx</code>).</p>
 
 <h3 id="g-defwindowproc">DefWindowProc</h3>

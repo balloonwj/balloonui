@@ -15,7 +15,8 @@ namespace balloonwjui {
 //
 // 本文件只覆盖 DuiEdit 相对基类 DuiRichEdit **多出来的那部分语义**：单行时
 // 回车与 Esc 的处理、左右内联图标栏对文本区的影响、密码显隐按钮与右侧图标的
-// 互斥关系、单行文字垂直居中，以及 SetText / SetTextNoNotify 的通知差异。
+// 互斥关系、单行文字垂直居中、SetText / SetTextNoNotify 的通知差异，以及
+// 纯文本模式（选区不越过文本末尾，文字后面不会多出一块选不掉的高亮）。
 // 文本读写、选区、撤销重做、剪贴板、滚动条等基类能力已由 DuiRichEditTests
 // 覆盖，这里不重复。
 //

@@ -68,6 +68,13 @@ namespace DuiDpi
     //   返回：DPI 数值（96 / 120 / 144 / 192 等）。
     BUI_API int GetWindowDpi(HWND hwnd);
 
+    // 取屏幕上某一点所在显示器的 DPI（离该点最近的显示器）。用于窗口创建之前就要
+    // 按目标显示器测量内容的场合，例如菜单、提示框先测量尺寸、再在指定位置建窗。
+    // 老系统或 API 缺失时回退到 GetSystemDpi()。
+    //   screenPt：屏幕坐标。
+    //   返回：DPI 数值（96 / 120 / 144 / 192 等）。
+    BUI_API int GetDpiForPoint(POINT screenPt);
+
     // 把进程加入 per-monitor v2 DPI 感知（Windows 10 1703+ 支持）。
     //   返回：true 表示成功，或 API 不存在（caller 不要把"API 缺"当
     //         失败处理 —— 老系统就当 system-aware 即可）。

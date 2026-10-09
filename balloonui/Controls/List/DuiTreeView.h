@@ -201,6 +201,17 @@ public:
     void  Remove(int id);              // 删除子树
     void  Clear();
 
+    // 把根节点 id 连同其整棵子树移到根节点 beforeId 之前；beforeId 传 -1 表示移到最后。
+    // 用于列表需要重新排序、又不想整表重建的场合（例如会话列表里收到新消息的会话挪到
+    // 最前面）。插入到指定位置可写成"AddRoot 追加到末尾，再 MoveRoot 到目标位置"。
+    //   id：      要移动的根节点 id。
+    //   beforeId：目标位置之后的那个根节点 id；-1 表示末尾。
+    // 返回：移动成功，或本来就在目标位置（含 id == beforeId）返回 true；id 不存在或不是
+    //       根节点、beforeId 既不是 -1 也不是一个存在的根节点时返回 false，树保持不变。
+    // 节点 id、选中、悬停、折叠 / 显隐状态与各节点数据都原样保留，只是位置变了。
+    // 副作用：可见行随之变化并重绘。开销与节点总数成正比。
+    bool  MoveRoot(int id, int beforeId);
+
     int   GetRootCount() const;
     int   GetChildCount(int parentId) const;
     bool  HasChildren(int id) const;
@@ -276,6 +287,11 @@ public:
     // 例："离线好友 / 已禁用项" 这种"在但不可用"的视觉表达。
     void     SetItemIconGrayed (int id, bool grayed);
     bool     IsItemIconGrayed  (int id) const;
+    // 灰显图标缓存的诊断信息，供单元测试核对「每个节点只转换一次」与「不泄漏」：
+    //   GetGrayIconCacheCount：当前缓存着的灰度位图个数（每个灰显且画过的节点一张）；
+    //   GetGrayIconConversionCount：自控件创建以来实际做灰度转换的累计次数。
+    size_t   GetGrayIconCacheCount() const { return m_grayIcons.size(); }
+    int      GetGrayIconConversionCount() const { return m_grayIconConversions; }
     void     SetItemParam      (int id, LPARAM param);
     LPARAM   GetItemParam      (int id) const;
     // 状态点（仅<u>单列模式</u>有效；多列模式下不画，因为右端可能在水平
@@ -567,10 +583,47 @@ private:
     };
 
     // ---- node helpers ----
+    // 按 id 取 m_nodes 下标，不存在返回 -1。经 m_idToIndex 直接定位（2026-10-01 前是
+    // 逐个比对，几千个节点时每个 SetItemXxx 都要扫一遍）。
     int   IndexOf(int id) const;
     void  RemoveSubtree(int idx);
+    // 标记可见行表待重算。结构变化（增删节点、折叠展开、显隐、过滤）后调用；真正的重算
+    // 推迟到下一次读可见行时（VisibleRows_），连续添加几千个节点只重算一次。
     void  RebuildVisible();
     bool  HasChildrenIdx(int idx) const;
+
+    // 取可见行表（元素为 m_nodes 下标）。表过期时先重算。读 m_visible 一律经这里，
+    // 不要直接读成员，否则可能读到过期内容。
+    const std::vector<int>& VisibleRows_() const
+    {
+        if (m_visibleDirty)
+        {
+            RebuildVisibleNow_();
+        }
+        return m_visible;
+    }
+
+    // 立即按 m_nodes 与各节点的折叠 / 显隐 / 过滤状态重算可见行表。
+    void  RebuildVisibleNow_() const;
+
+    // 按 m_nodes 整体重建 id → 下标对照表。中间插入或删除节点之后由 IndexOf 按需调用。
+    void  RebuildIdIndex_() const;
+
+    // 新节点追加到 m_nodes 末尾之后，在对照表末尾补上它的下标（对照表过期时不必补，
+    // 下次重建会一并算上）。
+    //   id：新节点 id；idx：它在 m_nodes 中的下标。
+    void  AppendIdIndex_(int id, int idx);
+
+    // parentIdx 处节点的子树是否一直延伸到 m_nodes 末尾（从最后一个节点沿父下标上溯，
+    // 只走树的深度那么几步）。是的话给它加子节点直接追加到末尾即可，不必扫描子树。
+    bool  SubtreeReachesEnd_(int parentIdx) const;
+
+    // 按 m_nodes 的先序顺序与各节点深度，重算 [lo, hi) 这一段节点的 parentIdx。
+    // MoveRoot 整段挪动节点之后调用。lo 必须是某个根节点的起点。
+    void  RecomputeParentIdx_(size_t lo, size_t hi);
+
+    // 把 [lo, hi) 这一段节点的新下标写回 id 对照表（对照表已过期时不必写）。
+    void  UpdateIdIndexRange_(size_t lo, size_t hi);
 
     // ---- cell helpers ----
     Cell&       EnsureCell(int idx, int col);
@@ -652,15 +705,27 @@ private:
         kSortArrowSizePx  = 8,
         kCheckBoxSizePx   = 16,
         kProgressBarH     = 14,    // 进度条厚度
-        kScrollBarPx      = 12,
+        kScrollBarPx      = 11,    // 多列模式两条滚动条的命中带宽（与 DuiScrollBar::kOverlayBandPx 相同）；悬浮在表体之上，不占表体宽高
         kZebraDefault     = 0,
     };
 
 private:
     // ---- node data ----
     std::vector<Node>      m_nodes;
-    std::vector<int>       m_visible;
+    // 可见行表（元素为 m_nodes 下标），只能经 VisibleRows_() 读取。mutable：const 的读取
+    // 路径发现它过期时要就地重算。
+    mutable std::vector<int> m_visible;
+    // m_visible 是否过期。RebuildVisible() 置位，RebuildVisibleNow_() 清零。
+    mutable bool           m_visibleDirty = false;
     int                    m_nextId   = 1;
+    // id → m_nodes 下标的对照表，按 (id - m_idBase) 直接取；-1 表示该 id 的节点已删除。
+    // 节点 id 只增不减、Clear 也不回收，所以当前这批节点的 id 一定落在
+    // [m_idBase, m_nextId) 之内，表长与节点数同一量级。
+    mutable std::vector<int> m_idToIndex;
+    // m_idToIndex[0] 对应的节点 id。Clear 时置为当时的 m_nextId。
+    int                    m_idBase   = 1;
+    // 对照表是否过期（中间插入或删除节点使后续下标整体移动）。过期时 IndexOf 先整体重建。
+    mutable bool           m_idIndexDirty = false;
     int                    m_curSelId = -1;
     int                    m_hoverId  = -1;
 
@@ -739,6 +804,27 @@ private:
     // 按节点 id 索引;value 为 tree 持有的 DuiControl。节点 Remove 时自动 erase;
     // SetItemCustomControl(id, nullptr) 也从这里清除。
     std::map<int, std::unique_ptr<DuiControl> >  m_customControls;
+
+    // 灰显节点的灰度图标缓存（2026-10-04）。原先每次绘制都为每个灰显节点临时新建位图、逐像素转灰度，
+    // 整屏灰显时每帧多 20%~25% 的绘制时间；改为首次绘制时转换一次并缓存，之后直接贴图。
+    struct GrayIconCache
+    {
+        HBITMAP source        = nullptr;   // 转换所依据的原图标（借用，只用来判断图标有没有换）
+        HBITMAP gray          = nullptr;   // 灰度位图（32 位 DIB，本控件持有，释放时 DeleteObject）
+        bool    premultiplied = false;     // 按透明通道模式（预乘）转换的为 true；模式切换后作废重转
+    };
+    // 节点 id → 灰度图标缓存。SetItemIcon 换图标、SetItemIconGrayed(false)、删除节点、Clear 与析构时释放。
+    std::map<int, GrayIconCache>                 m_grayIcons;
+    // 自控件创建以来实际做灰度转换的累计次数，见 GetGrayIconConversionCount。
+    int                                          m_grayIconConversions = 0;
+
+    // 取节点 n 的灰度图标：缓存有效时直接返回，否则按当前模式转换一张并缓存。w、h 是原图标尺寸（像素），
+    // hdc 用来建兼容 DC。失败返回 nullptr（调用方不画图标）。返回的位图归本控件所有。
+    HBITMAP GrayIconFor_(const Node& n, HDC hdc, int w, int h);
+    // 释放节点 id 的灰度图标缓存（没有时什么都不做）。
+    void    ReleaseGrayIcon_(int id);
+    // 释放全部灰度图标缓存。
+    void    ReleaseAllGrayIcons_();
 
     // ---- 节点可见性过滤器 ----
     std::function<bool(int /*nodeId*/)>  m_filter;        // 空 = 无过滤器

@@ -68,11 +68,44 @@ COLORREF DuiLabel::EffectiveColor() const
     return m_clrText;
 }
 
+void DuiLabel::SetFont(HFONT hFont)
+{
+    m_hFont = hFont;
+    m_textPt = 0;
+    m_textBold = false;
+    Invalidate();
+}
+
+void DuiLabel::SetTextPointSize(int pt, bool bold)
+{
+    m_hFont = nullptr;
+    m_textPt = (pt > 0) ? pt : 0;
+    m_textBold = (pt > 0) ? bold : false;
+    Invalidate();
+}
+
+HFONT DuiLabel::GetFont() const
+{
+    if (m_hFont)
+    {
+        return m_hFont;
+    }
+    if (m_textPt > 0)
+    {
+        return GetFontByPointSize(m_textPt, m_textBold);
+    }
+    return nullptr;
+}
+
+HFONT DuiLabel::BaseFont() const
+{
+    HFONT hf = GetFont();
+    return hf ? hf : GetDefaultFont();
+}
+
 HFONT DuiLabel::EffectiveFont(HDC hdc) const
 {
-    HFONT base = m_hFont
-                 ? m_hFont
-                 : DuiResMgr::Inst().GetDefaultFont();
+    HFONT base = BaseFont();
     if (!base)
     {
         base = (HFONT)::GetCurrentObject(hdc, OBJ_FONT);
@@ -168,7 +201,7 @@ int DuiLabel::MeasureHeight(int width) const
     {
         return 0;
     }
-    HFONT use = m_hFont ? m_hFont : DuiResMgr::Inst().GetDefaultFont();
+    HFONT use = BaseFont();
     HFONT old = use ? (HFONT)::SelectObject(hdc, use) : nullptr;
 
     DWORD flags = DT_CALCRECT | DT_LEFT | DT_TOP | DT_NOPREFIX;
@@ -214,13 +247,23 @@ bool DuiLabel::OnLButtonUp(POINT pt, UINT /*mkFlags*/)
     {
         return false;
     }
-    if (!m_bEnabled)
+
+    // 只有之前在本控件上按下过（见 OnLButtonDown），这次松开才可能构成一次点击。
+    // 先清除按下状态并释放捕获，后面无论是否构成点击都不再保留
+    const bool wasPressed = m_linkPressed;
+    m_linkPressed = false;
+    if (m_bCapture)
+    {
+        ReleaseCapture();
+    }
+    if (!wasPressed || !m_bEnabled)
     {
         return false;
     }
+    // 按下后移出链接再松开：视为取消，不算点击
     if (!::PtInRect(&m_rcItem, pt))
     {
-        return false;
+        return true;
     }
 
     m_visited = true;
@@ -487,23 +530,34 @@ void DuiLabel::CopyToClipboard(const CString& text)
 
 bool DuiLabel::OnLButtonDown(POINT pt, UINT /*mkFlags*/)
 {
-    // 仅在 selectable + 启用 + 单行 + 点中文字框内时启动拖选。
-    if (!m_selectable || !m_bEnabled || m_wordWrap)
+    if (!m_bEnabled || !::PtInRect(&m_rcItem, pt))
     {
         return false;
     }
-    if (!::PtInRect(&m_rcItem, pt))
+
+    // 仅在 selectable + 启用 + 单行 + 点中文字框内时启动拖选。拖选优先于链接点击，
+    // 与 OnLButtonUp 先处理拖选结束的顺序一致。
+    if (m_selectable && !m_wordWrap)
     {
-        return false;
+        SetFocus();
+        int idx = HitTestCharIndex(pt);
+        m_selAnchor   = idx;
+        m_selCaret    = idx;
+        m_selDragging = true;
+        Capture();
+        Invalidate();
+        return true;
     }
-    SetFocus();
-    int idx = HitTestCharIndex(pt);
-    m_selAnchor   = idx;
-    m_selCaret    = idx;
-    m_selDragging = true;
-    Capture();
-    Invalidate();
-    return true;
+
+    // 链接模式：记下按下并捕获鼠标，松开时据此判断是否构成一次点击（规则与 DuiButton 相同）。
+    // 捕获保证按下后移出链接再松开时，松开的消息仍交给本控件，按下状态得以清除。
+    if (m_mode == ModeLink)
+    {
+        m_linkPressed = true;
+        Capture();
+        return true;
+    }
+    return false;
 }
 
 bool DuiLabel::OnMouseMove(POINT pt, UINT /*mkFlags*/)

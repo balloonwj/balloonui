@@ -107,6 +107,33 @@ DuiTextHost* FindTimerOwner(UINT_PTR idSystem)
     return nullptr;
 }
 
+// 单色位图每行按多少位对齐。CreateBitmap 要求单色位图的每一行按 16 位（一个
+// WORD）对齐，行尾不足的部分要补齐。
+const int kMonoBitmapRowAlignBits = 16;
+
+// 一个字节的位数。
+const int kBitsPerByte = 8;
+
+// 建一张全零的单色位图，给系统光标当形状用。
+//
+// 系统画位图光标时只反转位图里置位的像素，全零的位图画下去没有任何像素变化。
+// 排版引擎在有选区时就是用这种位图让光标「存在但看不见」的（2026-09-30 实测：
+// 8×20、每个字节都是 0）。系统光标用它创建，就算引擎或宿主的 BeginPaint /
+// EndPaint 把它显示出来，屏幕上也不会多出第二个光标。
+//   width / height：位图尺寸（像素），必须大于 0。
+//   返回：位图句柄，调用方负责 DeleteObject；创建失败返回 nullptr。
+HBITMAP CreateBlankMonoBitmap(int width, int height)
+{
+    if (width <= 0 || height <= 0)
+    {
+        return nullptr;
+    }
+    const int bytesPerRow = ((width + kMonoBitmapRowAlignBits - 1) / kMonoBitmapRowAlignBits)
+                          * (kMonoBitmapRowAlignBits / kBitsPerByte);
+    std::vector<BYTE> zeros((size_t)bytesPerRow * (size_t)height, 0);
+    return ::CreateBitmap(width, height, 1, 1, &zeros[0]);
+}
+
 // 把系统的滚动条方向常量翻译成"要通知哪几个方向"，逐个通知实现方。
 //
 // 注意 SB_BOTH 要通知两个方向。参考实现（SOUI）在这里用的是
@@ -157,14 +184,23 @@ DuiTextHost::DuiTextHost()
     , m_crSelText(CLR_INVALID)
     , m_bUiActive(false)
     , m_bShowCaret(true)
+    , m_bCaretWanted(false)
+    , m_bCaretBlinkOn(true)
+    , m_idCaretBlinkTimer(0)
+    , m_hCaretPaintBmp(nullptr)
+    , m_hSysCaretBlankBmp(nullptr)
+    , m_bInDraw(false)
     , m_bInScrollNotify(false)
 {
     ++s_nLiveTextHostCount;
 
     ::SetRect(&m_rcClient, 0, 0, 0, 0);
     ::SetRect(&m_rcViewInset, 0, 0, 0, 0);
+    ::SetRectEmpty(&m_rcCaretBeforeDraw);
     m_sizeExtent.cx = 0;
     m_sizeExtent.cy = 0;
+    m_szCaretPaint.cx = 0;
+    m_szCaretPaint.cy = 0;
 
     for (int i = 0; i < kMaxTimers; ++i)
     {
@@ -309,8 +345,24 @@ void DuiTextHost::Shutdown()
         }
     }
 
+    // 光标闪烁定时器同理，也登记在归属表里，一并撤掉。
+    StopCaretBlink();
+    m_bCaretWanted = false;
+
     // 让出系统光标（线程唯一的共享资源，不能一直占着）。
     m_caret.Destroy();
+
+    // 两张位图都由本对象持有。系统光标已经销毁，空白位图不再被引用，可以删除。
+    if (m_hSysCaretBlankBmp != nullptr)
+    {
+        ::DeleteObject(m_hSysCaretBlankBmp);
+        m_hSysCaretBlankBmp = nullptr;
+    }
+    if (m_hCaretPaintBmp != nullptr)
+    {
+        ::DeleteObject(m_hCaretPaintBmp);
+        m_hCaretPaintBmp = nullptr;
+    }
 
     if (m_pServices != nullptr)
     {
@@ -478,14 +530,14 @@ void DuiTextHost::SetShowCaret(bool b)
     {
         return;
     }
+    RECT rcBefore;
+    GetCaretVisibleRect(rcBefore);
     m_bShowCaret = b;
 
-    // 关掉时把已经显示出来的光标立刻收掉 —— 不做这一步的话，要等引擎下一次
-    // 主动来问才生效，而只读控件可能很久都不会有下一次。
-    if (!b)
-    {
-        m_caret.Show(false);
-    }
+    // 关掉时立刻失效光标所在的矩形，让已经画出来的光标随下一次绘制消失 ——
+    // 不做这一步的话，要等引擎下一次主动来问才生效，而只读控件可能很久都不会
+    // 有下一次。重新打开时同理，引擎仍要求显示的话立即画出来。
+    OnCaretMaybeChanged(rcBefore);
 }
 
 void DuiTextHost::SetUiActive(bool bActive)
@@ -494,26 +546,42 @@ void DuiTextHost::SetUiActive(bool bActive)
     {
         return;
     }
+    RECT rcBefore;
+    GetCaretVisibleRect(rcBefore);
     m_bUiActive = bActive;
 
-    if (m_pServices == nullptr)
+    if (m_pServices != nullptr)
     {
-        return;
+        if (bActive)
+        {
+            m_pServices->OnTxUIActivate();
+            m_pServices->TxSendMessage(WM_SETFOCUS, 0, 0, nullptr);
+        }
+        else
+        {
+            m_pServices->OnTxUIDeactivate();
+            m_pServices->TxSendMessage(WM_KILLFOCUS, 0, 0, nullptr);
+            // 失焦时主动让出系统光标。不做这一步的话，线程唯一的那份光标会
+            // 被本控件一直占着，别的控件再想用就得先把它顶掉。
+            m_caret.Destroy();
+            // 系统光标已经销毁，它用的空白位图不再被引用。
+            if (m_hSysCaretBlankBmp != nullptr)
+            {
+                ::DeleteObject(m_hSysCaretBlankBmp);
+                m_hSysCaretBlankBmp = nullptr;
+            }
+        }
     }
 
-    if (bActive)
+    // 失焦后引擎先前的显示要求作废：下次获得焦点时引擎会重新建光标、重新要求显示。
+    if (!bActive)
     {
-        m_pServices->OnTxUIActivate();
-        m_pServices->TxSendMessage(WM_SETFOCUS, 0, 0, nullptr);
+        m_bCaretWanted = false;
     }
-    else
-    {
-        m_pServices->OnTxUIDeactivate();
-        m_pServices->TxSendMessage(WM_KILLFOCUS, 0, 0, nullptr);
-        // 失焦时主动让出系统光标。不做这一步的话，线程唯一的那份光标会
-        // 被本控件一直占着，别的控件再想用就得先把它顶掉。
-        m_caret.Destroy();
-    }
+
+    // 失焦时擦掉控件自己画的光标并停止闪烁；获得焦点时引擎在上面的
+    // WM_SETFOCUS 里已经建好并要求显示光标，这里再核对一次即可。
+    OnCaretMaybeChanged(rcBefore);
 }
 
 // =================================================================
@@ -816,10 +884,12 @@ BOOL DuiTextHost::TxCreateCaret(HBITMAP hbmp, INT xWidth, INT yHeight)
 {
     // 引擎什么时候来问：控件获得焦点、或者行高变化需要换光标尺寸时。
     // 它期望什么：宿主准备好一个该尺寸的插入光标。
-    // 我们答什么：交给 DuiCaret 抢占线程的系统光标。
-    // 为什么用系统光标而不自绘：系统光标的位置同时是**输入法候选窗的定位
+    // 我们答什么：交给 DuiCaret 抢占线程的系统光标（用空白位图创建），同时记下
+    //   绘制用的尺寸，界面上的光标由控件按这个尺寸自己画。
+    // 为什么还要建系统光标：系统光标的位置同时是**输入法候选窗的定位
     //   依据**。只自绘一根竖线的话，系统不知道插入点在哪里，中文输入时
     //   候选条会跑到窗口左上角。详见 DuiCaret.h 的文件头。
+    // 为什么不显示它：见 DuiTextHost.h「光标绘制」一节。
     //
     // hbmp 的所有权归引擎，我们只是转交，绝不能销毁它。
     if (m_pSite == nullptr)
@@ -831,36 +901,129 @@ BOOL DuiTextHost::TxCreateCaret(HBITMAP hbmp, INT xWidth, INT yHeight)
     {
         return FALSE;
     }
-    return m_caret.Create(hwndHost, hbmp, xWidth, yHeight) ? TRUE : FALSE;
+
+    RECT rcBefore;
+    GetCaretVisibleRect(rcBefore);
+
+    // 绘制尺寸。引擎给的若是位图，系统会忽略宽高参数、按位图尺寸画，这里照同样
+    // 的规则取位图的宽高。hbmp 在「逻辑光标」样式下是一组标志位而不是位图（见
+    // docs/windowless-richedit.md 10.1），此时 GetObject 取不到位图信息，自然
+    // 退回宽高参数。宽或高为 0 时，系统 CreateCaret 的规则是取窗口边框的宽度。
+    m_szCaretPaint.cx = xWidth;
+    m_szCaretPaint.cy = yHeight;
+
+    // 上一次的形状位图随旧光标一起作废。
+    if (m_hCaretPaintBmp != nullptr)
+    {
+        ::DeleteObject(m_hCaretPaintBmp);
+        m_hCaretPaintBmp = nullptr;
+    }
+
+    BITMAP bm;
+    if (hbmp != nullptr
+        && ::GetObject(hbmp, sizeof(bm), &bm) == (int)sizeof(bm)
+        && bm.bmWidth > 0 && bm.bmHeight > 0)
+    {
+        m_szCaretPaint.cx = bm.bmWidth;
+        m_szCaretPaint.cy = bm.bmHeight;
+        // 复制一份自己保管，绘制时按它的形状反色。复制失败时退回实心矩形 ——
+        // 光标形状略有出入，但不影响输入。
+        m_hCaretPaintBmp = (HBITMAP)::CopyImage(hbmp, IMAGE_BITMAP, 0, 0, 0);
+    }
+    if (m_szCaretPaint.cx <= 0)
+    {
+        m_szCaretPaint.cx = ::GetSystemMetrics(SM_CXBORDER);
+    }
+    if (m_szCaretPaint.cy <= 0)
+    {
+        m_szCaretPaint.cy = ::GetSystemMetrics(SM_CYBORDER);
+    }
+
+    // 系统光标用一张同尺寸的全零位图创建：位置、尺寸照常报告给输入法与辅助工具，
+    // 但不管谁把它显示出来，屏幕上都不会多出像素。引擎自己给的位图（若有）只用来
+    // 决定控件画出的形状，不交给系统。
+    //
+    // 顺序不能颠倒：旧的系统光标还引用着旧位图，必须先销毁光标、再删旧位图。
+    m_caret.Destroy();
+    if (m_hSysCaretBlankBmp != nullptr)
+    {
+        ::DeleteObject(m_hSysCaretBlankBmp);
+        m_hSysCaretBlankBmp = nullptr;
+    }
+    m_hSysCaretBlankBmp = CreateBlankMonoBitmap(m_szCaretPaint.cx, m_szCaretPaint.cy);
+    if (m_hSysCaretBlankBmp == nullptr)
+    {
+        // 建不出空白位图时只能退回实心的系统光标。极少发生，记一条跟踪便于排查。
+        BUI_TRACE("ENGINE-CREATECARET blank bitmap FAILED, fall back to a solid system caret");
+    }
+    const bool bCreated = m_caret.Create(hwndHost, m_hSysCaretBlankBmp,
+                                         m_szCaretPaint.cx, m_szCaretPaint.cy);
+
+    BUI_TRACE("ENGINE-CREATECARET hbmp=%p w=%d h=%d paint=%dx%d ok=%d",
+              (void*)hbmp, (int)xWidth, (int)yHeight,
+              (int)m_szCaretPaint.cx, (int)m_szCaretPaint.cy, bCreated ? 1 : 0);
+    if (DuiTrace::IsEnabled() && hbmp != nullptr
+        && ::GetObject(hbmp, sizeof(bm), &bm) == (int)sizeof(bm))
+    {
+        // 位图光标的像素构成：系统只反转位图里置位的像素，全零的位图画出来看不见。
+        const LONG cbBits = bm.bmWidthBytes * bm.bmHeight;
+        std::vector<BYTE> bits(cbBits > 0 ? (size_t)cbBits : 0);
+        LONG cbRead = 0;
+        int nonZero = 0;
+        if (!bits.empty())
+        {
+            cbRead = ::GetBitmapBits(hbmp, cbBits, &bits[0]);
+            for (LONG i = 0; i < cbRead; ++i)
+            {
+                if (bits[i] != 0)
+                {
+                    ++nonZero;
+                }
+            }
+        }
+        BUI_TRACE("ENGINE-CREATECARET bitmap %dx%d bpp=%d bytes=%d nonZeroBytes=%d",
+                  (int)bm.bmWidth, (int)bm.bmHeight, (int)bm.bmBitsPixel,
+                  (int)cbRead, nonZero);
+    }
+
+    // 系统光标新建出来是隐藏的，引擎随后会再调 TxShowCaret 要求显示。这里照同样
+    // 的语义把「引擎要求显示」复位，控件自己画的光标与之保持一致。
+    m_bCaretWanted = false;
+    OnCaretMaybeChanged(rcBefore);
+    return bCreated ? TRUE : FALSE;
 }
 
 BOOL DuiTextHost::TxShowCaret(BOOL fShow)
 {
-    // 引擎什么时候来问：插入点变化、获得焦点、或者它自己认为该显示光标时。
+    // 引擎什么时候来问：插入点变化、获得焦点、或者它自己认为该显示光标时；
+    //   另外它在 TxDraw 里画字之前会隐藏、画完再显示一次（见 BeginDraw 的注释）。
+    // 我们答什么：只记下引擎的要求，由控件在绘制时据此决定画不画光标。
+    //   本对象**不调用** ShowCaret，原因见 DuiTextHost.h「光标绘制」一节。
     //
-    // **这里必须把关，不能照做。** 引擎有时会在控件并无键盘焦点的情况下
+    // **显示请求必须把关，不能照收。** 引擎有时会在控件并无键盘焦点的情况下
     // 要求显示光标 —— 典型是它刚收到一条设置文本或设置选区的命令。若原样
     // 执行，界面上就会出现一个没有焦点的输入框在闪光标，看起来像是可以输入。
     // 参考实现在同一位置做了同样的拦截。
-    BUI_TRACE("ENGINE-SHOWCARET show=%d uiActive=%d showCaret=%d",
-              (int)fShow, (int)m_bUiActive, (int)m_bShowCaret);
-
-    // 调用方关掉了光标显示：一律按「隐藏」处理。
     //
-    // 这一档服务的是「只读展示区」—— 那种地方要的是能点击、能拖选、能复制，
-    // 但不该有一个闪烁的光标让人以为可以编辑。注意不能改用「不接受焦点」去
-    // 达到同样效果：排版引擎在拖选过程中需要控件持有焦点，不给焦点它就不认为
-    // 自己在拖选，文字会变得选不中。
-    if (!m_bShowCaret)
-    {
-        return m_caret.Show(false) ? TRUE : FALSE;
-    }
+    // 调用方关掉光标显示（SetShowCaret(false)）时，引擎的要求照常记录，只是
+    // 绘制时不画 —— 这样重新打开时能立即恢复，不必等引擎再来要求一次。
+    // 那一档服务的是「只读展示区」：要的是能点击、能拖选、能复制，但不该有
+    // 一个闪烁的光标让人以为可以编辑。注意不能改用「不接受焦点」去达到同样
+    // 效果：排版引擎在拖选过程中需要控件持有焦点，不给焦点它就不认为自己在
+    // 拖选，文字会变得选不中。
+    BUI_TRACE("ENGINE-SHOWCARET show=%d uiActive=%d showCaret=%d inDraw=%d",
+              (int)fShow, (int)m_bUiActive, (int)m_bShowCaret, (int)m_bInDraw);
 
     if (fShow && !m_bUiActive)
     {
         return FALSE;
     }
-    return m_caret.Show(fShow != FALSE) ? TRUE : FALSE;
+
+    RECT rcBefore;
+    GetCaretVisibleRect(rcBefore);
+    m_bCaretWanted = (fShow != FALSE);
+    OnCaretMaybeChanged(rcBefore);
+    return m_caret.IsCreated() ? TRUE : FALSE;
 }
 
 BOOL DuiTextHost::TxSetCaretPos(INT x, INT y)
@@ -868,11 +1031,167 @@ BOOL DuiTextHost::TxSetCaretPos(INT x, INT y)
     // 引擎什么时候来问：插入点移动（打字、点击、方向键、重排版）。
     // 坐标是宿主客户区坐标、像素 —— 与我们在 TxGetClientRect 里交出去的
     // 那套坐标一致，所以直接用，不需要换算。
-    //
-    BUI_TRACE("ENGINE-CARETPOS x=%d y=%d", (int)x, (int)y);
+    BUI_TRACE("ENGINE-CARETPOS x=%d y=%d inDraw=%d", (int)x, (int)y, (int)m_bInDraw);
 
-    // 即使光标当前是隐藏的也照样设：输入法要靠这个位置决定候选条弹在哪里。
-    return m_caret.SetPos(x, y) ? TRUE : FALSE;
+    RECT rcBefore;
+    GetCaretVisibleRect(rcBefore);
+
+    // 系统光标照样移动：它虽然不显示，输入法却要靠这个位置决定候选条弹在哪里。
+    const bool bMoved = m_caret.SetPos(x, y);
+
+    // 控件自己画的光标跟着移动：失效新旧两处，并从亮的相位重新计时。
+    OnCaretMaybeChanged(rcBefore);
+    return bMoved ? TRUE : FALSE;
+}
+
+// =================================================================
+// 光标绘制
+// =================================================================
+
+void DuiTextHost::BeginDraw()
+{
+    if (m_bInDraw)
+    {
+        return;
+    }
+    GetCaretVisibleRect(m_rcCaretBeforeDraw);
+    m_bInDraw = true;
+}
+
+void DuiTextHost::EndDraw()
+{
+    if (!m_bInDraw)
+    {
+        return;
+    }
+    m_bInDraw = false;
+
+    // 引擎在绘制期间的「隐藏 → 设位置 → 显示」通常原样恢复了光标状态，此时
+    // 这里比较结果相同、什么都不做；只有状态确实变了才失效并重新计时。
+    OnCaretMaybeChanged(m_rcCaretBeforeDraw);
+}
+
+bool DuiTextHost::GetCaretPaintRect(RECT& outRc) const
+{
+    GetCaretVisibleRect(outRc);
+    if (::IsRectEmpty(&outRc) || !m_bCaretBlinkOn)
+    {
+        ::SetRectEmpty(&outRc);
+        return false;
+    }
+    return true;
+}
+
+void DuiTextHost::GetCaretVisibleRect(RECT& outRc) const
+{
+    ::SetRectEmpty(&outRc);
+    if (!m_bShowCaret || !m_bUiActive || !m_bCaretWanted || !m_caret.IsCreated())
+    {
+        return;
+    }
+    const POINT pt = m_caret.GetPos();
+    outRc.left   = pt.x;
+    outRc.top    = pt.y;
+    outRc.right  = pt.x + m_szCaretPaint.cx;
+    outRc.bottom = pt.y + m_szCaretPaint.cy;
+}
+
+void DuiTextHost::OnCaretMaybeChanged(const RECT& rcBefore)
+{
+    // 绘制期间只记录，由 EndDraw 拿绘制开始时的状态统一比较。
+    if (m_bInDraw)
+    {
+        return;
+    }
+
+    RECT rcNow;
+    GetCaretVisibleRect(rcNow);
+    if (::EqualRect(&rcBefore, &rcNow))
+    {
+        return;
+    }
+
+    BUI_TRACE("CARET-CHANGE before=(%d,%d,%d,%d) now=(%d,%d,%d,%d)",
+              (int)rcBefore.left, (int)rcBefore.top, (int)rcBefore.right, (int)rcBefore.bottom,
+              (int)rcNow.left, (int)rcNow.top, (int)rcNow.right, (int)rcNow.bottom);
+
+    // 旧位置上画过的光标要擦掉，新位置上要画出来，两处都得重画。
+    if (m_pSite != nullptr)
+    {
+        if (!::IsRectEmpty(&rcBefore))
+        {
+            m_pSite->TxSiteInvalidate(&rcBefore);
+        }
+        if (!::IsRectEmpty(&rcNow))
+        {
+            m_pSite->TxSiteInvalidate(&rcNow);
+        }
+    }
+
+    if (::IsRectEmpty(&rcNow))
+    {
+        StopCaretBlink();
+    }
+    else
+    {
+        RestartCaretBlink();
+    }
+}
+
+void DuiTextHost::RestartCaretBlink()
+{
+    StopCaretBlink();
+    m_bCaretBlinkOn = true;
+
+    // 闪烁周期跟随系统设置。用户关闭了闪烁时系统返回 INFINITE，此时光标一直亮，
+    // 不需要定时器；返回 0 表示取值失败，同样按一直亮处理。
+    const UINT blinkMs = ::GetCaretBlinkTime();
+    if (blinkMs == 0 || blinkMs == INFINITE)
+    {
+        return;
+    }
+
+    // 与引擎的定时器一样用线程定时器，并登记进同一张归属表，由 TimerProc 找回本实例。
+    const UINT_PTR idSystem = ::SetTimer(nullptr, 0, blinkMs, &DuiTextHost::TimerProc);
+    if (idSystem == 0)
+    {
+        // 定时器建不出来时光标一直亮着，不影响输入，只是不闪。
+        BUI_TRACE("CARET-BLINK start FAILED period=%u", blinkMs);
+        return;
+    }
+    m_idCaretBlinkTimer = idSystem;
+    RegisterTimerOwner(idSystem, this);
+}
+
+void DuiTextHost::StopCaretBlink()
+{
+    if (m_idCaretBlinkTimer != 0)
+    {
+        ::KillTimer(nullptr, m_idCaretBlinkTimer);
+        UnregisterTimerOwner(m_idCaretBlinkTimer);
+        m_idCaretBlinkTimer = 0;
+    }
+    m_bCaretBlinkOn = true;
+}
+
+void DuiTextHost::OnCaretBlinkTimer()
+{
+    RECT rc;
+    GetCaretVisibleRect(rc);
+    if (::IsRectEmpty(&rc))
+    {
+        // 光标已经不该显示，定时器本应已被撤掉。保险起见在这里撤掉。
+        StopCaretBlink();
+        return;
+    }
+
+    m_bCaretBlinkOn = !m_bCaretBlinkOn;
+    if (m_pSite != nullptr)
+    {
+        // 整块失效光标矩形：亮、灭切换必须一次重画整个光标，否则会重演只亮
+        // 一段的问题。
+        m_pSite->TxSiteInvalidate(&rc);
+    }
 }
 
 // =================================================================
@@ -948,6 +1267,13 @@ void CALLBACK DuiTextHost::TimerProc(HWND /*hwnd*/, UINT /*uMsg*/,
     DuiTextHost* pHost = FindTimerOwner(idEvent);
     if (pHost == nullptr)
     {
+        return;
+    }
+
+    // 光标闪烁定时器是本对象自己的，不转给引擎。
+    if (idEvent == pHost->m_idCaretBlinkTimer)
+    {
+        pHost->OnCaretBlinkTimer();
         return;
     }
 

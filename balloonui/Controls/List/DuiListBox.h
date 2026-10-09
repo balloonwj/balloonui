@@ -33,8 +33,10 @@ namespace balloonwjui {
 // 工作机制：
 //   · 持有自己的 m_items vector（CString text + LPARAM + 选中 / 勾选
 //     标志）。
-//   · 嵌入 DuiScrollBar 处理纵向溢出；滚轮按行滚；键盘 Up/Down/PgUp/
-//     PgDn 移动 m_curSel 并自动滚到可见。
+//   · 嵌入 DuiScrollBar 处理纵向溢出（2026-10-04 起为悬浮式：行按全宽排版，
+//     滚动条浮在右缘、默认自动隐藏，滚动时淡入；行右侧的删除叉在滚动条出现时
+//     左移让开命中带）；滚轮按行滚；键盘 Up/Down/PgUp/PgDn 移动 m_curSel 并
+//     自动滚到可见。
 //   · 多选 / checkbox / 拖拽重排都是 opt-in；可以同时开启。
 //   · 所有通知靠 WM_DUI_NOTIFY 同步上冒，extra 是受影响的行索引。
 //
@@ -155,6 +157,36 @@ public:
     void    SetShowItemDelete(bool b);
     bool    GetShowItemDelete() const { return m_showItemDelete; }
 
+    // ---- 每行图标与副文字（2026-10-04 起，登录窗账号下拉列表「头像 - 账号 - 姓名」用）----
+    //
+    // 两者都不设时，绘制与命中与以前完全相同。图标画在文字左边（开了勾选框列时在勾选框
+    // 之后），按 GetIconSize() 的边长在行内垂直居中，文字随之右移；副文字画在主文字右侧，
+    // 主文字只占它实际需要的宽度，副文字放不下时以省略号截断。
+
+    // 给第 index 项设置左侧图标。
+    //   index：行索引；越界时忽略。
+    //   hbm：32 位预乘 alpha 位图，按图标边长缩放绘制。调用方持有，本控件不复制、不释放，
+    //        须在本控件销毁或改设之前保持有效；NULL 表示不画图标。
+    void    SetItemIcon(int index, HBITMAP hbm);
+
+    // 第 index 项的图标；越界或没有设时返回 NULL。
+    HBITMAP GetItemIcon(int index) const;
+
+    // 给第 index 项设置副文字。
+    //   index：行索引；越界时忽略。
+    //   text：副文字；NULL 或空串表示没有副文字。
+    void    SetItemSubText(int index, LPCTSTR text);
+
+    // 第 index 项的副文字；越界或没有设时返回空串。
+    CString GetItemSubText(int index) const;
+
+    // 图标边长（像素），默认 16；小于 1 时按 1。只影响设了图标的行。
+    void    SetIconSize(int px);
+    int     GetIconSize() const { return m_iconSize; }
+
+    // 副文字颜色，默认中灰；选中行的副文字与主文字同用选中文字色。
+    void    SetSubTextColor(COLORREF c) { m_clrSubText = c; Invalidate(); }
+
     // ---- 拖拽重排 ----
 
     // 启用 / 关闭拖拽重排。开启后用户可拖一行上下移动。
@@ -206,7 +238,7 @@ private:
     int         IndexFromPoint(POINT pt) const;
     RECT        ItemRect(int index) const;          // host-客户区坐标（已应用 scroll）
     int         ContentHeight() const               { return (int)m_items.size() * m_itemH; }
-    int         BodyWidth() const;                  // m_rcItem 宽 - 滚动条宽
+    int         BodyWidth() const;                  // 行宽：m_rcItem 全宽（2026-10-04 起滚动条为悬浮式，不再扣掉它的宽度）
 
     // 第 index 行删除叉的绘制矩形（host 客户区坐标）；未开启删除列时返回空矩形。
     RECT        DeleteButtonRect(int index) const;
@@ -218,12 +250,16 @@ private:
     bool        HitDeleteButton(POINT pt, int index) const;
 
 private:
-    struct Item { CString text; LPARAM lParam; bool selected; bool checked; };
+    // 一行的数据。icon 与 subText 是 2026-10-04 加的：icon 为调用方持有的图标位图（NULL 表示不画），
+    // subText 为主文字右侧的副文字（空串表示没有）。
+    struct Item { CString text; LPARAM lParam; bool selected; bool checked; HBITMAP icon; CString subText; };
     std::vector<Item>   m_items;
+    int                 m_iconSize   = 16;                    // 图标边长（像素）
+    COLORREF            m_clrSubText = RGB(150, 150, 150);    // 副文字颜色（非选中行）
     int                 m_curSel    = -1;
     int                 m_hoverIdx  = -1;
     int                 m_itemH     = 22;
-    int                 m_sbWidth   = 12;
+    int                 m_sbWidth   = DuiScrollBar::kOverlayBandPx;   // 滚动条命中带宽（px），浮在行的右缘之上
     DuiScrollBar*       m_sb        = nullptr;       // 所有权在 m_children
 
     bool                m_multiSelect    = false;
@@ -354,7 +390,7 @@ private:
     int             m_rowH       = 28;
     int             m_curSel     = -1;
     int             m_hoverIdx   = -1;
-    int             m_sbWidth    = 12;
+    int             m_sbWidth    = DuiScrollBar::kOverlayBandPx;   // 滚动条命中带宽（px），浮在行的右缘之上
     DuiScrollBar*   m_sb         = nullptr;
     PaintRowFn      m_paint      = nullptr;
     void*           m_paintUser  = nullptr;

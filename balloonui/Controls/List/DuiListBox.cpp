@@ -47,6 +47,35 @@ const COLORREF kDeleteCrossRowHover = RGB(120, 120, 128);
 // destroys something" cue.
 const COLORREF kDeleteCrossHot      = RGB(214,  70,  70);
 
+// ---- 每行图标与副文字（2026-10-04 起）----------------------------------------
+// 图标与其右侧文字之间的间距（像素）。
+const int kIconTextGapPx            = 8;
+// 主文字与其右侧副文字之间的间距（像素）。
+const int kSubTextGapPx             = 12;
+// AlphaBlend 的整体不透明度：图标自带逐像素 alpha，整体不再叠加透明度。
+const BYTE kIconConstantAlpha       = 255;
+
+// 把一个 32 位预乘 alpha 位图按 px × px 画到 (x, y)。位图取不到尺寸时什么都不画。
+//   hdc：目标设备上下文；hbm：图标位图（调用方持有）；x、y：左上角；px：边长（像素）。
+void DrawItemIcon(HDC hdc, HBITMAP hbm, int x, int y, int px)
+{
+    BITMAP bm;
+    if (::GetObject(hbm, sizeof(bm), &bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0)
+    {
+        return;
+    }
+    HDC mem = ::CreateCompatibleDC(hdc);
+    if (mem == NULL)
+    {
+        return;
+    }
+    HGDIOBJ old = ::SelectObject(mem, hbm);
+    BLENDFUNCTION bf = { AC_SRC_OVER, 0, kIconConstantAlpha, AC_SRC_ALPHA };
+    ::AlphaBlend(hdc, x, y, px, px, mem, 0, 0, bm.bmWidth, bm.bmHeight, bf);
+    ::SelectObject(mem, old);
+    ::DeleteDC(mem);
+}
+
 } // anonymous namespace
 
 // =====================================================================
@@ -59,7 +88,7 @@ DuiListBox::DuiListBox()
     auto sb = std::unique_ptr<DuiScrollBar>(new DuiScrollBar(/*horizontal=*/false));
     m_sb = sb.get();
     m_sb->SetOnScroll(&DuiListBox::OnSbScrolledStub, this);
-    m_sb->SetAutoHide(true);    // 默认 auto-hide：鼠标进 list / 滚轮才显示，离开渐隐
+    m_sb->SetAutoHide(true);    // 默认 auto-hide：滚动时淡入、鼠标悬停在滚动条上保持可见，停手后淡出
     DuiControl::AddChild(std::move(sb));
 }
 
@@ -70,6 +99,7 @@ int DuiListBox::AddItem(LPCTSTR text, LPARAM lParam)
     it.lParam = lParam;
     it.selected = false;
     it.checked  = false;
+    it.icon     = NULL;
     m_items.push_back(it);
     UpdateScrollRange();
     Invalidate();
@@ -91,6 +121,7 @@ void DuiListBox::InsertItem(int index, LPCTSTR text, LPARAM lParam)
     it.lParam = lParam;
     it.selected = false;
     it.checked  = false;
+    it.icon     = NULL;
     m_items.insert(m_items.begin() + index, it);
     if (m_curSel >= index)
     {
@@ -157,6 +188,50 @@ void DuiListBox::SetItemText(int index, LPCTSTR text)
         return;
     }
     m_items[index].text = text ? text : _T("");
+    Invalidate();
+}
+
+void DuiListBox::SetItemIcon(int index, HBITMAP hbm)
+{
+    if (index < 0 || index >= (int)m_items.size())
+    {
+        return;
+    }
+    m_items[index].icon = hbm;
+    Invalidate();
+}
+
+HBITMAP DuiListBox::GetItemIcon(int index) const
+{
+    if (index < 0 || index >= (int)m_items.size())
+    {
+        return NULL;
+    }
+    return m_items[index].icon;
+}
+
+void DuiListBox::SetItemSubText(int index, LPCTSTR text)
+{
+    if (index < 0 || index >= (int)m_items.size())
+    {
+        return;
+    }
+    m_items[index].subText = text ? text : _T("");
+    Invalidate();
+}
+
+CString DuiListBox::GetItemSubText(int index) const
+{
+    if (index < 0 || index >= (int)m_items.size())
+    {
+        return CString();
+    }
+    return m_items[index].subText;
+}
+
+void DuiListBox::SetIconSize(int px)
+{
+    m_iconSize = (px < 1) ? 1 : px;
     Invalidate();
 }
 
@@ -328,10 +403,11 @@ RECT DuiListBox::DeleteButtonRect(int index) const
         return RECT{ 0, 0, 0, 0 };
     }
 
-    // 贴着行的右边界往左让出一个删除列。ItemRect 的 right 已经扣掉滚动条宽度，
-    // 所以叉不会被滚动条压住。
+    // 贴着行的右边界往左让出一个删除列。滚动条是悬浮式的（2026-10-04 起行按全宽排版），
+    // 出现时整条命中带都归滚动条，删除叉再往左让开命中带，否则点不到也会被滑块压住。
     const RECT rc = ItemRect(index);
-    return RECT{ rc.right - kDeleteColW, rc.top, rc.right, rc.bottom };
+    const int right = (m_sb && m_sb->IsVisible()) ? rc.right - m_sbWidth : rc.right;
+    return RECT{ right - kDeleteColW, rc.top, right, rc.bottom };
 }
 
 bool DuiListBox::HitDeleteButton(POINT pt, int index) const
@@ -468,14 +544,19 @@ void DuiListBox::EnsureVisible(int index)
     {
         pos = bot - viewH;
     }
-    m_sb->SetPos(pos, /*notify=*/false);
+    // 真的滚动了才淡入滚动条（键盘翻页、选中项滚到可见）；本来就可见时不惊动它
+    if (pos != m_sb->GetPos())
+    {
+        m_sb->SetPos(pos, /*notify=*/false);
+        m_sb->TriggerShow();
+    }
     Invalidate();
 }
 
 int DuiListBox::BodyWidth() const
 {
-    int w = m_rcItem.right - m_rcItem.left;
-    return (m_sb && m_sb->IsVisible()) ? w - m_sbWidth : w;
+    // 悬浮式滚动条（2026-10-04 起）：行按全宽排版，滚动条浮在右缘之上，不再扣掉它的宽度
+    return m_rcItem.right - m_rcItem.left;
 }
 
 int DuiListBox::RowsVisible() const
@@ -507,6 +588,15 @@ void DuiListBox::UpdateScrollRange()
 
     bool needBar = ContentHeight() > viewH;
     m_sb->SetVisible(needBar);
+    // 滚动条变为可见时同时放到列表右侧。本函数在排版之后也会被调用（添加 / 删除项、
+    // 改行高），若只切换显隐，滚动条会停在空矩形上：画不出来，也命中不到、无法拖动
+    //（2026-10-03 修复）。隐藏时保留原矩形即可，HitTest 与绘制都先判断可见性。
+    if (needBar)
+    {
+        RECT rcSb = { m_rcItem.right - m_sbWidth, m_rcItem.top,
+                      m_rcItem.right,             m_rcItem.bottom };
+        m_sb->SetRect(rcSb);
+    }
 }
 
 int DuiListBox::IndexFromPoint(POINT pt) const
@@ -537,13 +627,8 @@ RECT DuiListBox::ItemRect(int index) const
 void DuiListBox::Layout(const RECT& rcAvail)
 {
     m_rcItem = rcAvail;
+    // 滚动范围、显隐与滚动条的矩形都在 UpdateScrollRange 里一并处理
     UpdateScrollRange();
-    if (m_sb && m_sb->IsVisible())
-    {
-        RECT rcSb = { m_rcItem.right - m_sbWidth, m_rcItem.top,
-                      m_rcItem.right,             m_rcItem.bottom };
-        m_sb->SetRect(rcSb);
-    }
 }
 
 DuiControl* DuiListBox::HitTest(POINT pt)
@@ -586,7 +671,7 @@ void DuiListBox::OnPaint(HDC hdc, const RECT& rcDirty)
     ::IntersectClipRect(hdc, m_rcItem.left + 1, m_rcItem.top + 1,
                         m_rcItem.left + bodyW, m_rcItem.bottom - 1);
 
-    HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+    HFONT useFont = GetDefaultFont();
     HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
 
     int firstVisible = (m_sb ? m_sb->GetPos() : 0) / m_itemH;
@@ -647,16 +732,47 @@ void DuiListBox::OnPaint(HDC hdc, const RECT& rcDirty)
             textLeft = rc.left + kCheckColW + kCheckboxLeftPadPx;
         }
 
+        // 行左侧图标：按图标边长在行内垂直居中，文字随之右移。没设图标的行不受影响。
+        if (m_items[i].icon != NULL)
+        {
+            const int iconTop = (rc.top + rc.bottom - m_iconSize) / 2;
+            DrawItemIcon(hdc, m_items[i].icon, textLeft, iconTop, m_iconSize);
+            textLeft += m_iconSize + kIconTextGapPx;
+        }
+
         COLORREF clr = sel ? m_clrSelText : m_clrText;
         COLORREF oldClr = ::SetTextColor(hdc, clr);
         RECT rText = rc;
         rText.left = textLeft;
-        // 开了删除列就把文字右边界往里收，否则长文本会被省略号盖到叉底下。
+        // 开了删除列就把文字右边界收到删除叉左边，否则长文本会被省略号盖到叉底下。
         if (m_showItemDelete)
         {
-            rText.right -= kDeleteColW;
+            rText.right = DeleteButtonRect((int)i).left;
         }
-        ::DrawText(hdc, m_items[i].text, -1, &rText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        if (m_items[i].subText.IsEmpty())
+        {
+            ::DrawText(hdc, m_items[i].text, -1, &rText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        else
+        {
+            // 有副文字：主文字只占它实际需要的宽度（放不下时以省略号截断），副文字接在右边
+            const CString& mainText = m_items[i].text;
+            SIZE mainSize = { 0, 0 };
+            ::GetTextExtentPoint32(hdc, mainText, mainText.GetLength(), &mainSize);
+            RECT rMain = rText;
+            if (rMain.left + mainSize.cx < rMain.right)
+            {
+                rMain.right = rMain.left + mainSize.cx;
+            }
+            ::DrawText(hdc, mainText, -1, &rMain, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            RECT rSub = rText;
+            rSub.left = rMain.right + kSubTextGapPx;
+            if (rSub.left < rSub.right)
+            {
+                ::SetTextColor(hdc, sel ? m_clrSelText : m_clrSubText);
+                ::DrawText(hdc, m_items[i].subText, -1, &rSub, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            }
+        }
         ::SetTextColor(hdc, oldClr);
 
         // 行右侧的删除叉。三档配色：平时淡灰（不喧宾夺主）、鼠标在本行时加深
@@ -821,9 +937,8 @@ bool DuiListBox::OnLButtonDblClk(POINT pt, UINT)
 
 bool DuiListBox::OnMouseMove(POINT pt, UINT)
 {
-    // 鼠标在 list 内移动 → scrollbar fade in（auto-hide 模式下）
-    if (m_sb) { m_sb->TriggerShow(); }
-
+    // 鼠标在行上移动不唤出滚动条（2026-10-04 起按 UI 约定：滚动时、或鼠标移进滚动条的
+    // 命中带时才淡入，后者由滚动条自己的 OnMouseEnter 处理）
     int idx = IndexFromPoint(pt);
 
     // Drag-reorder: compute insertion slot — top half of row -- before
@@ -1032,7 +1147,12 @@ void DuiVirtualList::EnsureVisible(int idx)
     {
         pos = bot - viewH;
     }
-    m_sb->SetPos(pos, /*notify=*/false);
+    // 真的滚动了才淡入滚动条（键盘翻页、选中项滚到可见）；本来就可见时不惊动它
+    if (pos != m_sb->GetPos())
+    {
+        m_sb->SetPos(pos, /*notify=*/false);
+        m_sb->TriggerShow();
+    }
     Invalidate();
 }
 
@@ -1051,8 +1171,8 @@ void DuiVirtualList::SetScrollPos(int p)
 
 int DuiVirtualList::BodyWidth() const
 {
-    int w = m_rcItem.right - m_rcItem.left;
-    return (m_sb && m_sb->IsVisible()) ? w - m_sbWidth : w;
+    // 悬浮式滚动条（2026-10-04 起）：行按全宽排版，滚动条浮在右缘之上，不再扣掉它的宽度
+    return m_rcItem.right - m_rcItem.left;
 }
 
 int DuiVirtualList::RowsVisible() const
@@ -1082,7 +1202,16 @@ void DuiVirtualList::UpdateScrollRange()
     m_sb->SetRange(0, over);
     m_sb->SetPage(viewH > 0 ? viewH : 1);
     m_sb->SetLineSize(m_rowH);
-    m_sb->SetVisible(contentH > viewH);
+    bool needBar = contentH > viewH;
+    m_sb->SetVisible(needBar);
+    // 与 DuiListBox::UpdateScrollRange 相同：排版之后再设行数或行高时，滚动条变为可见的
+    // 同时放到列表右侧，否则它停在空矩形上，画不出来也无法拖动
+    if (needBar)
+    {
+        RECT rcSb = { m_rcItem.right - m_sbWidth, m_rcItem.top,
+                      m_rcItem.right,             m_rcItem.bottom };
+        m_sb->SetRect(rcSb);
+    }
 }
 
 int DuiVirtualList::IndexFromPoint(POINT pt) const
@@ -1107,13 +1236,8 @@ int DuiVirtualList::IndexFromPoint(POINT pt) const
 void DuiVirtualList::Layout(const RECT& rcAvail)
 {
     m_rcItem = rcAvail;
+    // 滚动范围、显隐与滚动条的矩形都在 UpdateScrollRange 里一并处理
     UpdateScrollRange();
-    if (m_sb && m_sb->IsVisible())
-    {
-        RECT rcSb = { m_rcItem.right - m_sbWidth, m_rcItem.top,
-                      m_rcItem.right,             m_rcItem.bottom };
-        m_sb->SetRect(rcSb);
-    }
 }
 
 DuiControl* DuiVirtualList::HitTest(POINT pt)
@@ -1155,7 +1279,7 @@ void DuiVirtualList::OnPaint(HDC hdc, const RECT& rcDirty)
     ::IntersectClipRect(hdc, m_rcItem.left + 1, m_rcItem.top + 1,
                         m_rcItem.left + bodyW, m_rcItem.bottom - 1);
 
-    HFONT useFont = DuiResMgr::Inst().GetDefaultFont();
+    HFONT useFont = GetDefaultFont();
     HFONT oldFont = useFont ? (HFONT)::SelectObject(hdc, useFont) : nullptr;
 
     int firstVisible = (m_sb ? m_sb->GetPos() : 0) / m_rowH;
@@ -1231,7 +1355,7 @@ bool DuiVirtualList::OnLButtonDblClk(POINT pt, UINT)
 
 bool DuiVirtualList::OnMouseMove(POINT pt, UINT)
 {
-    if (m_sb) { m_sb->TriggerShow(); }
+    // 与 DuiListBox::OnMouseMove 相同：鼠标在行上移动不唤出滚动条
     int idx = IndexFromPoint(pt);
     if (idx == m_hoverIdx)
     {

@@ -172,7 +172,7 @@ int DuiMenuBar::ItemWidth(int i) const
     // "普通态绘制"宽度（&不画）测量；激活态显示下划线时下划线在 baseline
     // 下面，不影响水平宽度，所以同一个 cachedW 两态通用。
     HDC   hdc  = ::GetDC(NULL);
-    HFONT font = DuiResMgr::Inst().GetDefaultFont();
+    HFONT font = GetDefaultFont();
     HFONT old  = font ? (HFONT)::SelectObject(hdc, font) : nullptr;
     RECT  r    = { 0, 0, 0, 0 };
     ::DrawText(hdc, m_items[i].text.GetString(), -1, &r,
@@ -261,7 +261,7 @@ void DuiMenuBar::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
     {
         return;
     }
-    HFONT font   = DuiResMgr::Inst().GetDefaultFont();
+    HFONT font   = GetDefaultFont();
     HFONT oldFnt = font ? (HFONT)::SelectObject(hdc, font) : nullptr;
     int   oldBk  = ::SetBkMode(hdc, TRANSPARENT);
 

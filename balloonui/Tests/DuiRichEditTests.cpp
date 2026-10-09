@@ -183,6 +183,49 @@ static Result Test_WordWrapToggleKeepsContent()
     return OK(_T("WordWrapToggleKeepsContent"));
 }
 
+//纯文本 / 富文本模式的切换约定。
+//
+//与多行、自动换行不同，这个开关**只能在文档为空时切换**，这是排版引擎的限制。
+//本用例钉住接口对这一限制的处理：空文档时切换成功且引擎确实变了；有内容时
+//返回失败、模式与内容都保持原样，宿主记录的模式与引擎一致。模式一律向引擎
+//查询核对，不只看控件自己记下的标志位。
+static Result Test_PlainTextModeSwitch()
+{
+    DuiRichEdit re;
+
+    //默认富文本。
+    EXPECT_BOOL(re.IsPlainTextMode(), false, _T("TextMode/defaultRich"));
+    const int modeRich = (int)re.SendMessageToEngine(EM_GETTEXTMODE, 0, 0);
+    EXPECT_BOOL((modeRich & TM_RICHTEXT) != 0, true, _T("TextMode/engineDefaultRich"));
+
+    //空文档切为纯文本：成功，且引擎的模式值只有纯文本 / 富文本这两位变化，
+    //撤销级数与代码页两组保持原样。
+    EXPECT_BOOL(re.SetPlainTextMode(true), true, _T("TextMode/switchToPlainWhenEmpty"));
+    EXPECT_BOOL(re.IsPlainTextMode(), true, _T("TextMode/hostSaysPlain"));
+    const int modePlain = (int)re.SendMessageToEngine(EM_GETTEXTMODE, 0, 0);
+    EXPECT_INT(modePlain, (modeRich & ~TM_RICHTEXT) | TM_PLAINTEXT,
+               _T("TextMode/onlyTextModeBitsChanged"));
+
+    //已是目标模式时再调一次，直接返回成功。
+    EXPECT_BOOL(re.SetPlainTextMode(true), true, _T("TextMode/sameModeIsSuccess"));
+
+    //有内容时切回富文本：引擎拒绝，接口返回失败，模式与内容都不变。
+    re.SetText(_T("abc"));
+    EXPECT_BOOL(re.SetPlainTextMode(false), false, _T("TextMode/refusedWhenNotEmpty"));
+    EXPECT_BOOL(re.IsPlainTextMode(), true, _T("TextMode/hostStillPlain"));
+    EXPECT_INT(re.SendMessageToEngine(EM_GETTEXTMODE, 0, 0), modePlain,
+               _T("TextMode/engineStillPlain"));
+    EXPECT_STR(re.GetText(), _T("abc"), _T("TextMode/contentKept"));
+
+    //清空后可以切回富文本。
+    re.SetText(_T(""));
+    EXPECT_BOOL(re.SetPlainTextMode(false), true, _T("TextMode/switchBackWhenEmptied"));
+    EXPECT_BOOL(re.IsPlainTextMode(), false, _T("TextMode/hostSaysRichAgain"));
+    EXPECT_INT(re.SendMessageToEngine(EM_GETTEXTMODE, 0, 0), modeRich,
+               _T("TextMode/engineRichAgain"));
+    return OK(_T("PlainTextModeSwitch"));
+}
+
 //运行期切换只读，内容不丢；并且**只读不拦程序化修改**。
 //只读约束的是用户输入，不是业务代码 —— 公告预览面板就是只读的，
 //但业务要往里填内容。
@@ -944,6 +987,8 @@ static Result Test_ScrollBarBecomesVisibleOnOverflow()
                  (int)rcText.left, (int)rcText.right);
         return Fail(_T("ScrollBarRect/notNarrow"), d);
     }
+    //REO1（2026-10-04 起）：命中带宽与库内其它悬浮式滚动条统一为 DuiScrollBar::kOverlayBandPx
+    EXPECT_INT(rcBar.right - rcBar.left, (int)DuiScrollBar::kOverlayBandPx, _T("ScrollBarRect/REO1_bandWidth"));
     return OK(_T("ScrollBarBecomesVisibleOnOverflow"));
 }
 
@@ -1568,6 +1613,97 @@ static Result Test_MeasureIndependentOfControlHeight()
         }
     }
     return OK(_T("MeasureIndependentOfControlHeight"));
+}
+
+//**量出来的内容高度必须与排版引擎实际排出的行距一致**（绝对值，不只是相对大小）。
+//
+//上一条只比大小、只设了一个很低的下界，测量结果整体按比例偏小时照样通过：2026-10-01
+//之前单行只量出 3～6 像素、三行 9～18 像素，而引擎实际的行距在 17 像素上下。原因是
+//TxGetNaturalSize 把「入参高度 ÷ 范围参数的高度」当缩放比例，入参高度传 0 时比例失真。
+//
+//基准取引擎自己报的字符坐标：同一段三行文字里，第二行行首与第一行行首的纵坐标之差
+//就是行距。测量结果按行数与它比对，允许取整带来的误差。
+static Result Test_MeasureMatchesEngineLineHeight()
+{
+    //三种控件高度：零、一行都装不下、装得很宽裕，与上一条一致。宽度保持一致
+    const int kHeights[] = { 0, 20, 200 };
+    const int kHeightCount = sizeof(kHeights) / sizeof(kHeights[0]);
+    //控件宽度（像素），三行短文字都不会折行
+    const int kWidth = 200;
+    //取行距基准用的控件高度（像素），足够排下三行
+    const int kPitchHeight = 200;
+    //第二行行首在文本里的位置：引擎把 "\r\n" 存成一个字符，"aaa\r" 之后就是第二行
+    const int kSecondLineCp = 4;
+    //允许的误差（像素）：字符坐标与测量结果都取整到像素，每行最多差不到 1 像素
+    const int kOneLineTolerance   = 1;
+    const int kThreeLineTolerance = 3;
+    //三行文字的行数
+    const int kThreeLines = 3;
+
+    //基准：引擎实际排出的行距
+    int nPitch = 0;
+    {
+        DuiRichEdit re;
+        re.SetMultiLine(true);
+        re.SetWordWrap(true);
+        RECT rc;
+        ::SetRect(&rc, 0, 0, kWidth, kPitchHeight);
+        re.Layout(rc);
+        re.SetText(_T("aaa\r\nbbb\r\nccc"));
+
+        ITextServices* pSvc = re.Test_GetTextServices();
+        if (pSvc == nullptr)
+        {
+            return Fail(_T("MeasureMatchesEngineLineHeight"), _T("no text services"));
+        }
+        POINTL ptFirst  = { 0, 0 };
+        POINTL ptSecond = { 0, 0 };
+        LRESULT lr = 0;
+        pSvc->TxSendMessage(EM_POSFROMCHAR, (WPARAM)&ptFirst, 0, &lr);
+        pSvc->TxSendMessage(EM_POSFROMCHAR, (WPARAM)&ptSecond, kSecondLineCp, &lr);
+        nPitch = (int)(ptSecond.y - ptFirst.y);
+        if (nPitch <= 0)
+        {
+            CString d;
+            d.Format(_T("Measure/pitchNotPositive: first.y=%d second.y=%d"),
+                     (int)ptFirst.y, (int)ptSecond.y);
+            return Fail(_T("Measure/pitchNotPositive"), d);
+        }
+    }
+
+    for (int i = 0; i < kHeightCount; ++i)
+    {
+        DuiRichEdit re;
+        re.SetMultiLine(true);
+        re.SetWordWrap(true);
+        RECT rc;
+        ::SetRect(&rc, 0, 0, kWidth, kHeights[i]);
+        re.Layout(rc);
+
+        re.SetText(_T("aaa"));
+        const int nOne = re.Test_MeasureContentHeight();
+        re.SetText(_T("aaa\r\nbbb\r\nccc"));
+        const int nThree = re.Test_MeasureContentHeight();
+
+        int nOneDiff = nOne - nPitch;
+        if (nOneDiff < 0)
+        {
+            nOneDiff = -nOneDiff;
+        }
+        int nThreeDiff = nThree - nPitch * kThreeLines;
+        if (nThreeDiff < 0)
+        {
+            nThreeDiff = -nThreeDiff;
+        }
+        if (nOneDiff > kOneLineTolerance || nThreeDiff > kThreeLineTolerance)
+        {
+            CString d;
+            d.Format(_T("Measure/notEngineLineHeight at ctrlHeight=%d: pitch=%d one=%d three=%d"),
+                     kHeights[i], nPitch, nOne, nThree);
+            return Fail(_T("Measure/notEngineLineHeight"), d);
+        }
+    }
+    return OK(_T("MeasureMatchesEngineLineHeight"));
 }
 
 //上下限：内容少时不低于下限，内容多时不超过上限。
@@ -3079,6 +3215,7 @@ CString RunAll()
         { _T("TextLengthMatchesGetText"),           &Test_TextLengthMatchesGetText           },
         { _T("MultiLineToggleKeepsContent"),        &Test_MultiLineToggleKeepsContent        },
         { _T("WordWrapToggleKeepsContent"),         &Test_WordWrapToggleKeepsContent         },
+        { _T("PlainTextModeSwitch"),                &Test_PlainTextModeSwitch                },
         { _T("ReadOnlyToggleAndProgrammaticWrite"), &Test_ReadOnlyToggleAndProgrammaticWrite },
         { _T("PlaceholderVisibility"),              &Test_PlaceholderVisibility              },
         { _T("FocusableSyncsTabStop"),              &Test_FocusableSyncsTabStop              },
@@ -3117,6 +3254,7 @@ CString RunAll()
         { _T("PasswordAndVerticalToggles"),         &Test_PasswordAndVerticalToggles         },
         { _T("AutoGrowFollowsContent"),             &Test_AutoGrowFollowsContent             },
         { _T("MeasureIndependentOfControlHeight"),  &Test_MeasureIndependentOfControlHeight  },
+        { _T("MeasureMatchesEngineLineHeight"),     &Test_MeasureMatchesEngineLineHeight     },
         { _T("AutoGrowClampsToRange"),              &Test_AutoGrowClampsToRange              },
         { _T("AutoGrowOffYieldsToParent"),          &Test_AutoGrowOffYieldsToParent          },
         { _T("AutoGrowLinesConvertToPixels"),       &Test_AutoGrowLinesConvertToPixels       },
