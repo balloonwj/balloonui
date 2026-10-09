@@ -97,7 +97,7 @@ extern CAppModule _Module;
 
 #include "DuiDpi.h"
 #include "DuiXmlBuilder.h"
-#include "Controls/DuiFrameWindow.h"
+#include "Controls/Window/DuiFrameWindow.h"
 
 CAppModule _Module;
 
@@ -109,9 +109,9 @@ int WINAPI _tWinMain(HINSTANCE hInst, HINSTANCE, LPTSTR, int nCmdShow)
     _Module.Init(NULL, hInst);
 
     balloonwjui::DuiFrameWindow frame;
-    frame.SetTitle(_T("Hello balloonui"));
     frame.SetButtons(true, true, true);
     frame.Create(NULL, CWindow::rcDefault, _T("Hello"), WS_OVERLAPPEDWINDOW, 0);
+    frame.SetTitle(_T("Hello balloonui"));
 
     // 客户区：从 XML 加载，或代码构建。
     auto root = balloonwjui::DuiXmlBuilder::FromString(
@@ -164,7 +164,7 @@ LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lParam, BOOL&)
 
 <a id="xml-tag-overview"></a>
 
-### 3.1 内置标签一览（17 个）
+### 3.1 内置标签一览（19 个）
 
 | 标签 | 对应类 | 类别 | 用途简述 |
 | --- | --- | --- | --- |
@@ -186,8 +186,9 @@ LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lParam, BOOL&)
 | `<searchbox>` | DuiSearchBox | 交互 | 带放大镜 + 清除按钮的搜索框（本身就是一个输入框） |
 | `<spinbox>` | DuiSpinBox | 交互 | 整数微调（内含一个输入框） |
 | `<treeview>` | DuiTreeView | 列表 | 层级树 / 多列表格混合（XML 仅配 `<column>`，节点 C++ 添加） |
+| `<menu-bar>` | DuiMenuBar | 列表 | 常驻菜单条（子元素 `<menu-item id text>` 描述各栏目；每栏的下拉 `DuiMenu` 在 C++ 里用 `SetDropdown` 关联） |
 
-表里的全部标签都建出**无 HWND 的纯 DUI 控件**，构造完即可用，没有任何额外的"创建"步骤。`<edit>` / `<searchbox>` / `<spinbox>` / `<combobox>` 在 2026-08-17 之前内嵌真的 Win32 子窗口，需要调用方补一次 `EnsureCreated(hostHwnd)`；改为无窗口实现之后这条约定作废（参见 [§3.4](#xml-ensure-created)）。
+表里的全部标签都建出**无 HWND 的纯 DUI 控件**，构造完即可用，没有任何额外的"创建"步骤。`<edit>` / `<searchbox>` / `<spinbox>`（以及没有 XML 标签的 `DuiComboBox` 可输入模式）在 2026-08-17 之前内嵌真的 Win32 子窗口，需要调用方补一次 `EnsureCreated(hostHwnd)`；改为无窗口实现之后这条约定作废（参见 [§3.4](#xml-ensure-created)）。需要弹性占位时，放一个不带子元素的 `<vbox weight="1"/>`（或 `<hbox>`）即可：空容器不画任何东西，只按权重分得空间。表外的标签要先经 [§3.6](#xml-custom-factory) 的 `CustomFactory` 注册，否则解析器只往调试输出打一行 `unknown tag` 并跳过该节点。
 
 <a id="xml-common-attrs"></a>
 
@@ -237,7 +238,7 @@ LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lParam, BOOL&)
   <label text="姓名" fixedHeight="22"/>
   <edit  placeholder="请输入" fixedHeight="32"/>
   <hbox gap="8" fixedHeight="36">
-    <control weight="1"/>            <!-- 弹性占位 -->
+    <vbox weight="1"/>               <!-- 弹性占位 -->
     <button text="取消" fixedWidth="80"/>
     <button text="确定" fixedWidth="80" id="100"/>
   </hbox>
@@ -421,7 +422,7 @@ LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lParam, BOOL&)
 | `off-color` | "r,g,b" | off 态胶囊底色。默认 RGB(229,229,229)（浅灰）。 |
 | `knob-color` | "r,g,b" | 滑块色。默认 RGB(255,255,255)（白）。 |
 
-**动画驱动：**切换走 `DuiAnimMgr`，而 `DuiAnimMgr` 自带一个 16ms 的共享脉冲定时器：活跃动画列表由空变非空时自行装上，动画全部播完（或调 `Clear()`）时自行卸掉。因此宿主窗口<u>不需要也不应该</u>再周期性调 `TickAll`，只要所在线程在正常泵消息，中间帧就会自己跑出来。`TickAll` 仍是 public 的，用途是**单元测试里手动驱动**动画（无 HWND 也能跑）。
+**动画驱动：**切换走 `DuiAnimMgr`，而 `DuiAnimMgr` 自带一个约 60Hz 的共享脉冲定时器（请求间隔 10ms，实际随系统定时器节拍约 15.6ms 触发一次）：活跃动画列表由空变非空时自行装上，动画全部播完（或调 `Clear()`）时自行卸掉。因此宿主窗口<u>不需要也不应该</u>再周期性调 `TickAll`，只要所在线程在正常泵消息，中间帧就会自己跑出来。`TickAll` 仍是 public 的，用途是**单元测试里手动驱动**动画（无 HWND 也能跑）。
 
 **事件**：`DUIN_VALUECHANGED`（`extra` = 1（on）/ 0（off））—— 鼠标点击 / Space / Enter 翻转时触发；`SetChecked()` 编程调用<u>不</u>触发，匹配 `DuiButton` checkbox 行为。
 
@@ -547,7 +548,7 @@ XML 仅配列定义；节点（`AddRoot`/`AddChild`）必须由 C++ 端添加，
 
 ### 3.4 EnsureCreated 约定已作废
 
-2026-08-17 之前，4 个输入类标签（`<edit>` / `<searchbox>` / `<spinbox>` / `<combobox>`）内部各自内嵌一个真的 Win32 输入框子窗口。这些子窗口必须有<u>已创建的父窗口</u>才能建出来，而 XML 解析阶段控件还没挂上 host，所以 builder 不会主动创建它们，调用方必须在 host 有了真窗口之后自己补一次 `EnsureCreated(hostHwnd)`。
+2026-08-17 之前，3 个输入类标签（`<edit>` / `<searchbox>` / `<spinbox>`，以及没有 XML 标签的 `DuiComboBox` 可输入模式）内部各自内嵌一个真的 Win32 输入框子窗口。这些子窗口必须有<u>已创建的父窗口</u>才能建出来，而 XML 解析阶段控件还没挂上 host，所以 builder 不会主动创建它们，调用方必须在 host 有了真窗口之后自己补一次 `EnsureCreated(hostHwnd)`。
 
 输入框改为无窗口实现（[DuiEdit](#DuiEdit)）之后，**这条约定整个作废**：
 
@@ -622,12 +623,12 @@ auto root = balloonwjui::DuiXmlBuilder::FromString(xml.c_str(), fac);
 | 层级 | API | 影响 |
 | --- | --- | --- |
 | 全局字体 | `DuiControl::GetDefaultFont()`（控件内）/ `DuiResMgr::Inst().GetDefaultFontForDpi(dpi)` | 所有控件默认 UI 字体，按控件所在窗口的 DPI 缩放 |
-| 主题色 | `DuiTheme` 命名空间常量 | 品牌色、状态色（online/away/red） |
+| 主题色 | `DuiTheme` 单例（按槽位取色，可切换浅色 / 深色 / 高对比预设） | 品牌色、状态色（online/away/red） |
 | per-控件 | 各 Set* 接口（见下） | 该实例 |
 
 **默认 UI 风格**：
 
-- 字体：**Microsoft YaHei 9pt**（GB2312）— 由 `DuiResMgr` 提供
+- 字体：默认 **Microsoft YaHei 9pt**。字体名取自 `DuiTheme::GetDefaultFontFace()`，宿主可在启动时用 `SetDefaultFontFace` 按界面语言改换；字体按 DPI 缓存在 `DuiResMgr` 里，控件按自己所在窗口的 DPI 取用
 - 圆角：button 8px、bubble 8px、chip 9-11px
 - 品牌色：`#2D6CDF`（蓝）、`#4CC7A1`（绿，DuiAvatar/DuiBadge 默认）
 - I-beam 光标在 DuiEdit / DuiRichEdit 上自动出现
@@ -715,7 +716,7 @@ ATL CWindowImpl<DuiHost, CWindow>
 
 | 类 | 角色 | 关系 |
 | --- | --- | --- |
-| `DuiMenu` | 右键 / 命令菜单 | 内部维护一个独立的 `DuiMenuPopup`（弹层 HWND），`PopupAt(pt, owner)` 显示。**不是** `DuiControl`，不能 `AddChild` 到任何父控件。 |
+| `DuiMenu` | 右键 / 命令菜单 | 内部维护一个独立的 `DuiMenuPopup`（弹层 HWND），`TrackPopup(x, y, owner)` 同步弹出并返回所选项的 id。**不是** `DuiControl`，不能 `AddChild` 到任何父控件。 |
 | `DuiToolTipMgr` | 悬停提示管理器 | 单例。`Register(ctrl, text)` 把 `DuiControl*` 与提示文本关联，hover 自动浮出。 |
 | `DuiAnim` / `DuiDoubleAnim` | 动画值生成器 | 定时插值器，输出值由 caller 应用到任意属性。 |
 | `CDuiImageOle` | RichEdit 内嵌图 | 实现 `IOleObject` 系列接口，由 RichEdit 通过 OLE 装载。 |
@@ -796,8 +797,8 @@ struct DuiNotify {
 | **子窗口 host** `m_host.Create(m_hWnd, ...)` | 包含 `m_host` 的对话框 / 框架窗类 | `::GetParent(host)` = 你的对话框 HWND |
 | **SubclassWindow** `m_host.SubclassWindow(m_hWnd)` | 同上 — host 与对话框共用一个 HWND | 对话框自身 HWND |
 | **顶层 DuiFrameWindow** （无父） | `DuiFrameWindow` 的子类（你扩展的那个） | `GetParent` 为空时，**路由回到 host 自身** — 你在子类里加 `WM_DUI_NOTIFY` handler 即可 |
-| **弹层 DuiPopupHost** | 调 `popup->SetOwner(ownerHwnd)` 指定的 HWND 所属类 | popup 不挂到任何 parent，事件去 owner |
-| **DuiMenu** | `PopupAt(pt, ownerHwnd)` 中的 owner 所属类 | 同上 |
+| **弹层 DuiPopupHost** | `Show(anchor, ownerHwnd)` 传入的所有者窗口所属类 | 浮层是带所有者的 `WS_POPUP` 窗口，`GetParent` 返回所有者，事件发给它 |
+| **DuiMenu** | 调 `TrackPopup` 的那段代码（同步返回所选项的 id） | 不发 `WM_DUI_NOTIFY` |
 
 **三个常见误解**：
 
@@ -935,26 +936,29 @@ public:
 
 ### 6.5 弹层 / 菜单的事件路由
 
-弹层窗口（`DuiPopupHost` / `DuiMenu`）不在主窗口的子树里 — 它们是<u>独立顶层窗口</u>。事件需要显式指定接收者：
+弹层窗口（`DuiPopupHost` / `DuiMenu`）不在主窗口的子树里 — 它们是<u>独立顶层窗口</u>。两者取得结果的方式不同：`DuiPopupHost` 里子控件的事件发给 `Show` 时传入的所有者窗口；`DuiMenu` 不发事件，`TrackPopup` 同步返回被点项的 id。
 
 ```
-// DuiPopupHost：自定义弹层（下拉、表情面板等）
-auto popup = std::make_unique<balloonwjui::DuiPopupHost>();
-popup->SetContent(BuildEmojiPanel());
-popup->SetOwner(m_hWnd);          // 事件回这个 HWND
-popup->SetAnchor(button->GetRect(), balloonwjui::DuiPopupHost::AnchorBelow);
-popup->Show();
+// DuiPopupHost：自定义弹层（下拉、表情面板等），一般是对话框的成员变量
+m_popup.SetContent(BuildEmojiPanel());
+m_popup.SetSize(320, 240);
+m_popup.SetEdge(balloonwjui::DuiPopupHost::EdgeBelow);   // 优先弹在锚点下方
+RECT rcAnchor = button->GetRect();                       // 宿主客户区坐标
+::MapWindowPoints(m_hWnd, NULL, (POINT*)&rcAnchor, 2);   // 转成屏幕坐标
+m_popup.Show(rcAnchor, m_hWnd);          // 第二个参数是所有者窗口，事件发给它
 // 你的对话框 OnDuiNotify 会收到 popup 内子控件的事件，
 // n->ctrlId 是子控件的 SetCtrlId。
 
-// DuiMenu：右键 / 命令菜单
+// DuiMenu：右键 / 命令菜单。不发事件，TrackPopup 同步返回被点项的 id
 balloonwjui::DuiMenu menu;
-menu.AddItem(IDM_OPEN,  _T("Open"),   _T("Ctrl+O"));
-menu.AddItem(IDM_SAVE,  _T("Save"),   _T("Ctrl+S"));
-menu.AddSeparator();
-menu.AddItem(IDM_DEL,   _T("Delete"), _T("Del"), /*danger*/ true);
-menu.PopupAt(pt, m_hWnd);          // 事件回 m_hWnd
-// 你的 OnDuiNotify 收到 DUIN_CLICK，n->ctrlId = IDM_OPEN / IDM_SAVE / IDM_DEL
+menu.AppendItem(IDM_OPEN, _T("打开(&O)\tCtrl+O"));
+menu.AppendItem(IDM_SAVE, _T("保存(&S)\tCtrl+S"));
+menu.AppendSeparator();
+menu.AppendItem(IDM_DEL,  _T("删除(&D)\tDel"));
+POINT pt;
+::GetCursorPos(&pt);
+UINT id = menu.TrackPopup(pt.x, pt.y, m_hWnd);   // 0 表示没有选择
+// 按 id 分派：IDM_OPEN / IDM_SAVE / IDM_DEL
 ```
 
 <a id="event-routing-cheatsheet"></a>
@@ -1441,7 +1445,7 @@ host.SetRoot(std::move(dock));    // dock 当顶层；嵌套时改 outer->AddChi
 静态文本 + 超链接。两种模式（与**可选中**能力正交）：
 
 - `ModeText`（默认）：纯文本
-- `ModeLink`：下划线 + hover 高亮 + IDC_HAND 光标 + 点击发 `DUIN_CLICK` 或自动 ShellExecute（`SetAutoNavigate`）
+- `ModeLink`：下划线 + hover 高亮 + IDC_HAND 光标 + 点击发 `DUIN_CLICK`，开了 `SetAutoNavigate` 时随后再用 ShellExecute 打开网址
 
 支持 **多行 wrap**（`SetWordWrap(true)`）+ **测高**（`MeasureHeight(width)`）— 这是聊天气泡 / 流式列表所必需。
 
@@ -1510,7 +1514,7 @@ host.SetRoot(std::move(root));
 
 | code | 触发 | extra (LPARAM) |
 | --- | --- | --- |
-| `DUIN_CLICK` | 仅 `ModeLink` 模式：用户左键点击文本。`ModeText` 不发任何事件。`SetAutoNavigate(true)` 时点击不再发 `DUIN_CLICK` 而直接 `ShellExecute` 打开 URL | 0 |
+| `DUIN_CLICK` | 仅 `ModeLink` 模式：用户在链接上按下左键、并在链接上松开（只收到松开，或按下后移出链接再松开，都不算点击）。`ModeText` 不发任何事件。`SetAutoNavigate(true)` 时照样发 `DUIN_CLICK`，发完再用 `ShellExecute` 打开 URL | 0 |
 
 ```
 // 父对话框 OnDuiNotify：
@@ -1526,7 +1530,7 @@ if (n->ctrlId == IDC_FORGOT_LINK && n->code == DUIN_CLICK) {
 | --- | --- |
 | 标签 | `<label text="..." textColor="..."/>` |
 | 详细属性参考 | [§3.3.4 label](#xml-label) |
-| 事件 | `ModeText` 无；`ModeLink` + `SetAutoNavigate(false)` 时发 `DUIN_CLICK` |
+| 事件 | `ModeText` 无；`ModeLink` 点击时发 `DUIN_CLICK`（无论是否开了 `SetAutoNavigate`） |
 | 说明 | XML 暂不暴露 ModeLink / 字体 / 对齐 等高级属性，需要时拿到 builder 返回的 root 后用 FindControlById + SetXxx 自己设 |
 
 <a id="DuiButton"></a>
@@ -2555,7 +2559,7 @@ if (n->ctrlId == IDC_MUTE_NOTIF && n->code == DUIN_VALUECHANGED) {
 
 #### 动画驱动
 
-DuiSwitch 通过 `balloonwjui::DuiAnimMgr` + `DuiDoubleAnim` 驱动滑块动画。`DuiAnimMgr` 自带一个 16ms（约 60Hz）的共享脉冲定时器 `::SetTimer(NULL, 0, 16, PulseProc)`，在活跃动画列表由空变非空时装上、列表清空时立刻卸掉，空闲期不会有定时器长期挂着。所以宿主窗口<u>不需要也不应该</u>再写「`OnCreate` 里 `SetTimer(id, 16)` + `OnTimer` 里调 `TickAll` + `OnDestroy` 里 `KillTimer`」那一套；`DuiGallery` 的 `GalleryFrame` 与 XChat 的两个 frame 都已经把这份宿主定时器删掉了。
+DuiSwitch 通过 `balloonwjui::DuiAnimMgr` + `DuiDoubleAnim` 驱动滑块动画。`DuiAnimMgr` 自带一个约 60Hz 的共享脉冲定时器 `::SetTimer(NULL, 0, 10, PulseProc)`（请求 10ms，实际随系统定时器节拍约 15.6ms 触发一次；若请求 16ms，大多要等到第二个节拍才触发，实测只有约 40Hz），在活跃动画列表由空变非空时装上、列表清空时立刻卸掉，空闲期不会有定时器长期挂着。所以宿主窗口<u>不需要也不应该</u>再写「`OnCreate` 里 `SetTimer(id, 16)` + `OnTimer` 里调 `TickAll` + `OnDestroy` 里 `KillTimer`」那一套；`DuiGallery` 的 `GalleryFrame` 与 XChat 的两个 frame 都已经把这份宿主定时器删掉了。
 
 宿主唯一仍需参与的是销毁时机：窗口析构前调一次 `DuiAnimMgr::Inst().Clear()`，把可能还持有本窗口控件指针的动画取消掉（`Clear()` 同时会卸掉共享脉冲定时器）。
 
@@ -2605,9 +2609,9 @@ host.SetRoot(std::move(root));
 ```
 auto cb = std::make_unique<balloonwjui::DuiComboBox>();
 cb->SetCtrlId(IDC_FRUIT);
-cb->AddItem(_T("Apple"));
-cb->AddItem(_T("Banana"));
-cb->AddItem(_T("Cherry"));
+cb->AddString(_T("Apple"));
+cb->AddString(_T("Banana"));
+cb->AddString(_T("Cherry"));
 cb->SetEditable(true);
 cb->SetIncrementalSearch(true);
 cb->SetIncrementalSearchSubstring(true);   // 子串匹配（默认 false 仅前缀）
@@ -2618,27 +2622,34 @@ hbox->AddChild(std::move(cb), balloonwjui::DuiLayout::Hint().Fixed(160));
 
 |   |   |
 | --- | --- |
-| `AddItem / RemoveAt / Clear` | 项目操作 |
-| `GetCount / GetItemText(idx)` | 查询 |
-| `SetCurSel(idx) / GetCurSel()` | 当前选中 |
-| `SetEditable(bool)` | 是否允许输入 |
+| `AddString(text)` / `DeleteString(idx)` / `ResetContent()` | 追加 / 删除 / 清空项目；`AddString` 返回新项的索引 |
+| `GetCount()` / `GetItemText(idx)` / `SetItemText(idx, text)` | 项数与项文字 |
+| `SetCurSel(idx, notify = true)` / `GetCurSel()` | 当前选中项，-1 表示未选中；`notify` 为 false 时不发事件 |
+| `SetEditable(bool)` / `GetText()` / `SetText(text)` | 是否允许输入；读写当前文字（`SetText` 不发事件） |
 | `SetBgColor(COLORREF)` / `SetShowBorder(bool)` / `SetShowArrow(bool)` | 主体底色 / 边框 / 右侧箭头开关 |
+| `SetBorderColors(normal, active)` | 1px 边框颜色：`normal` 为常态，`active` 为鼠标悬停或下拉展开时。默认 RGB(150,150,150) / RGB(80,130,200)；禁用态与 `SetShowBorder(false)` 时不使用这两个颜色 |
 | `SetArrowColor(COLORREF)` / `GetArrowColor()` | 下拉箭头颜色（默认 RGB(80,100,140)）。仅覆盖 enabled 态，disabled 态沿用内部灰色不变。三角形走 `DuiAA::FillPolygon` AA 绘制 |
-| `SetIncrementalSearch(bool)` | 键入过滤下拉项 |
+| `SetItemIcon(idx, hbm)` / `SetItemSubText(idx, text)` / `SetIconSize(px)` | 下拉列表里每一行的左侧图标与主文字右侧的弱色副文字（如「头像 - 账号 - 姓名」）。图标是 32 位预乘 alpha 位图，由调用方持有、须保持有效；图标边长默认 16。只影响下拉列表，主体只显示选中项的文字 |
+| `SetShowItemDelete(bool)` | 下拉列表每行右侧画删除叉（默认关）。点叉发 `DUICBN_ITEMDELETE`，本控件<u>不删</u>该项，由宿主决定是否确认、再调 `DeleteString` |
+| `SetMaxVisibleItems(n)` / `SetItemHeight(px)` | 下拉列表最多显示几行（超出时滚动）/ 行高 |
+| `SetIncrementalSearch(bool)` | 可输入模式下按输入过滤下拉项（默认前缀匹配、不区分大小写，另有 `SetIncrementalSearchSubstring` / `SetIncrementalSearchCaseSensitive`） |
 | `ComputeFilteredIndices(query)` | 纯函数：返回过滤后真实索引列表 |
 
 #### 事件
 
 | code | 触发 | extra (LPARAM) |
 | --- | --- | --- |
-| `DUIN_VALUECHANGED` | 用户从下拉列表选了某项；`SetCurSel(_, true)` 程序选择也触发，`SetCurSel(_, false)` 不触发 | 新选中索引 `(int)n->extra` |
+| `DUIN_VALUECHANGED` | 用户从下拉列表选了某项；`SetCurSel(_, true)` 程序选择也触发，`SetCurSel(_, false)` 不触发。可输入模式下<u>每次输入</u>也触发 | 当前选中索引 `(int)n->extra`。输入触发时，输入的文字与某一项完全相同则自动选中并给出它的索引，否则为 -1 |
+| `DuiComboBox::DUICBN_ITEMDELETE` | 下拉列表里点了某行的删除叉（需 `SetShowItemDelete(true)`）；不改变当前选中项 | 该项的索引（过滤状态下也已换算成真实索引） |
 
-可输入模式（`SetEditable(true)`）下，键入过滤是内部对下拉项的隐藏 / 显示，<u>不会</u>额外发事件 — 只有最终选中某项才发 `DUIN_VALUECHANGED`。需要监听键入过程，请改用 `DuiSearchBox`。
+可输入模式（`SetEditable(true)`）下，键入过滤是内部对下拉项的隐藏 / 显示；每次输入都会发 `DUIN_VALUECHANGED`，`extra` 为 -1 表示输入的文字不在列表里。
+
+处理 `DUICBN_ITEMDELETE` 时<u>不要同步弹模态对话框</u>：通知是在下拉浮层的消息处理中途发出的，模态框一泵消息，浮层就会因失去焦点而销毁。要弹确认框，先 `PostMessage` 给自己，延后一拍再弹。判断时要连 `ctrlId` 一起判：各控件的自定义通知码都从 `DUIN_CUSTOM` 起编号，数值会重复。
 
 ```
 // 父对话框 OnDuiNotify：语言切换
 auto* n = (balloonwjui::DuiNotify*)lp;
-if (n->ctrlId == IDC_LANGUAGE && n->code == DUIN_VALUECHANGED) {
+if (n->ctrlId == IDC_LANGUAGE && n->code == DUIN_VALUECHANGED && (int)n->extra >= 0) {
     int idx = (int)n->extra;
     static const LPCTSTR codes[] = { _T("en"), _T("zh-CN"), _T("ja") };
     SetUiLocale(codes[idx]);
@@ -2661,7 +2672,7 @@ XML 暂未原生支持 `<combobox>`（项目列表 + editable 模式涉及内嵌
 
 简单滚动列表。支持单选 / 多选、自定义行高、可选 checkbox / 拖动重排。<u>所有 item 都存在控件内部（`std::vector<Item>`）</u>—— 这意味着 N 行就有 N 份字符串副本，N 万行起就该考虑下面的 [DuiVirtualList](#DuiVirtualList)。
 
-**典型父：**任意 layout 容器（VBox / HBox / Grid / GroupBox 内容区 / Splitter pane / Dock 子区）。<u>长列表通常套一层 `DuiScrollView`</u> 让超出可视区时滚动 —— DuiListBox 自身不内置滚动条。
+**典型父：**任意 layout 容器（VBox / HBox / Grid / GroupBox 内容区 / Splitter pane / Dock 子区）。<u>内置纵向滚动条</u>，不需要再套 `DuiScrollView`：滚动条是悬浮式细滑块，浮在行的右缘之上、不占行宽（行按全宽排版），内容放得下时不出现，滚动或鼠标移近时淡入；滚轮按行滚动，键盘 ↑ / ↓ / PgUp / PgDn 移动选中项并自动滚到可见。
 
 **什么时候不用 DuiListBox 而用 DuiVirtualList：**
 
@@ -2674,18 +2685,30 @@ XML 暂未原生支持 `<combobox>`（项目列表 + editable 模式涉及内嵌
 ```
 auto lb = std::make_unique<balloonwjui::DuiListBox>();
 lb->SetCtrlId(IDC_SESSION_LIST);
-for (auto& s : items) lb->AddItem(s);
-lb->SetSelectMode(balloonwjui::DuiListBox::Multi);
+for (auto& s : items)
+{
+    lb->AddItem(s);
+}
+lb->SetMultiSelect(true);
 lb->SetItemHeight(28);
 lb->SetCurSel(0);
-
-// 套 DuiScrollView 让超长列表能滚：
-auto sv = std::make_unique<balloonwjui::DuiScrollView>();
-balloonwjui::DuiListBox* lbRaw = lb.get();
-sv->SetContent(std::move(lb));
-sv->SetContentHeight(lbRaw->GetCount() * lbRaw->GetItemHeight());
-vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
+// 列表自带滚动条，直接放进布局即可，行数多了自动可滚
+vbox->AddChild(std::move(lb), balloonwjui::DuiLayout::Hint().Weight(1));
 ```
+
+#### 关键 API
+
+| 方法 | 说明 |
+| --- | --- |
+| `AddItem(text, lParam = 0)` / `InsertItem` / `DeleteItem` / `DeleteAllItems` | 增删行；每行可带一个 `LPARAM`（`GetItemParam` / `SetItemParam`） |
+| `GetItemCount()` / `GetItemText(idx)` / `SetItemText(idx, text)` | 行数与行文字 |
+| `SetCurSel(idx, notify = true)` / `GetCurSel()` | 单选模式的当前行 |
+| `SetMultiSelect(bool)` / `SetItemSelected` / `GetSelectedIndices` / `ClearSelection` | 多选模式与选中集合 |
+| `SetShowCheckboxes(bool)` / `IsItemChecked` / `SetItemChecked` | 每行前面的勾选框 |
+| `SetItemIcon(idx, hbm)` / `SetIconSize(px)` | 每行左侧的图标（32 位预乘 alpha 位图，调用方持有、须保持有效；开了勾选框时画在勾选框之后），按边长缩放后在行内垂直居中，默认边长 16 |
+| `SetItemSubText(idx, text)` / `SetSubTextColor(c)` | 主文字右侧的副文字（默认中灰；选中行与主文字同色）。主文字只占自己需要的宽度，副文字放不下时以省略号截断 |
+| `SetShowItemDelete(bool)` | 每行右端画删除叉（默认关）；点叉发 `DUITN_ITEMDELETE`，<u>不改变</u>选中行，也不删该行，由宿主决定是否删除。滚动条出现时删除叉左移，让开滚动条 |
+| `SetItemHeight(px)` / `SetDragReorderEnabled(bool)` / `MoveItem(from, to)` | 行高；拖动重排 |
 
 #### 事件
 
@@ -2695,6 +2718,7 @@ vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 | `DUIN_DBLCLK` | 双击某项（典型用作"打开会话"等回车等价行为） | 双击的项索引 |
 | `DuiListBox::DUITN_CHECKED` | 多选 + checkbox 模式（`SetShowCheckboxes(true)`）下，用户翻转某项 checkbox | 项索引；调 `IsItemChecked(idx)` 拿新状态 |
 | `DuiListBox::DUITN_REORDERED` | 启用 `SetDragReorderEnabled(true)` 后，拖动重排完成 | 新索引（被拖动项移动到的位置） |
+| `DuiListBox::DUITN_ITEMDELETE` | 点了某行右端的删除叉（需 `SetShowItemDelete(true)`） | 行索引 |
 
 ```
 // 父对话框 OnDuiNotify：会话列表
@@ -2749,7 +2773,7 @@ if (n->ctrlId == IDC_SESSION_LIST) {
 | 每行内容接口 | 纯文本 + LPARAM 业务 ID + 可选 checkbox | caller 自绘整行（HDC + RECT），想画啥画啥 |
 | 插入 / 删除一行 | O(N) 拷贝（vector 中间删 / 插） | caller 自管业务数据；控件只须 `SetRowCount(n)` |
 | 滚动条 | 需要外层套 `DuiScrollView` | 内置自管 |
-| 多选 | 支持（`SetSelectMode(Multi)` + 可选 checkbox） | <u>仅单选</u>（`m_curSel`，没有多选 API） |
+| 多选 | 支持（`SetMultiSelect(true)` + 可选 checkbox） | <u>仅单选</u>（`m_curSel`，没有多选 API） |
 | 拖动重排 | 支持（`SetDragReorderEnabled`） | 不支持（控件不知道行的真实身份，没法在 UI 层重排） |
 
 选择路径：<u>≤ 几千行的简单文本列表</u> → DuiListBox；<u>万行起 / 行需要自绘 / 数据本来就在 model 里</u> → DuiVirtualList。
@@ -3065,7 +3089,7 @@ DuiGallery 演示：TreeView tab → **"Per-node icons (HBITMAP via SetItemIcon)
 
 **选中模型：**多列模式下选中粒度 = 单元格。`GetCurSelCell()` 返回 `{itemId, col}`。Ctrl+click 多选 / Shift+click 区域选 → `GetSelectedCellCount()`+`GetSelectedCell(n)` 遍历。当前活动 cell 画 1px 品牌蓝边 + 1px 内白（cell focus rect）。
 
-**列宽行为：**`SetColumnMinWidth` 给最小（默认 40px）；最后列<u>不</u>自动 stretch（留 scrollbar 空间）；header 列分隔线双击触发 <u>auto-fit</u>（按可见 cell 实际文字宽度）；<u>不</u>支持拖动重排列序。
+**列宽行为：**`SetColumnMinWidth` 给最小（默认 40px）；最后列<u>不</u>自动 stretch（滚动条是悬浮在表体之上的细滑块，不占列宽）；header 列分隔线双击触发 <u>auto-fit</u>（按可见 cell 实际文字宽度）；<u>不</u>支持拖动重排列序。
 
 **视觉细节：**`SetZebra(bool)` 默认关；hover 整行高亮；cell focus rect 1px 蓝 + 1px 内白；文本溢出末尾省略号。
 
@@ -3312,13 +3336,13 @@ if (rowFrom >= rowTo) { return; }
 
 **已知瓶颈 / 不在 dirty-rect 裁剪管辖范围内：**
 
-- **插入 / 删除 / 展开折叠是 O(N)**：`AddRoot`/`AddChild`/`Remove`/`SetExpanded` 内部都会调一次 `RebuildVisible`（全表扫一遍 `m_nodes`）。批量灌 N 行就是 O(N²)，10k 行 ≈ 1 秒、30k 行 ≈ 10 秒。日常一次性建树没问题；如果业务要做"实时追加日志"那种持续插入，需要在调用侧攒一批再统一 `Clear`+rebuild。
+- **结构变化后的第一次读取要整表重算可见行**：`AddRoot` / `AddChild` / `Remove` / `SetExpanded` 只把可见行表标为过期，下一次绘制或命中测试时才整表扫一遍 `m_nodes` 重算（O(N)），连续添加多少个节点都只重算这一次（见上文「可见行按需重算」），批量建树不需要在调用侧攒批。另外，往不在末尾的子树里插入节点、或删除节点时，要移动 `m_nodes` 里其后的全部节点，单次开销与节点总数成正比；先建完一棵子树再建下一棵（深度优先）时新节点都追加在末尾，没有这项开销。
 - **cell-level 多选是线性扫描**：每画一个 cell 都会遍历一次 `m_selCells` 看自己是否在选中里。视口里 30 行 × 5 列 × 选中 100 cell ≈ 1.5 万次比较 / 帧仍能扛住；但若用户全选几千 cell，会开始掉帧。需要时考虑把 `m_selCells` 换成哈希表。
 - **节点存扁平 `vector<Node>`**：删子树要从中间删掉一段，会触发后续元素位移；频繁删 / 移动节点的场景会有 O(N) 抖动。
 
 #### 压测 demo：DemoTreeViewLargeData
 
-仓库内自带的多列大数据量压测 demo。位置 `third-party/balloonui/DemoTreeViewLargeData/`，编出来在 `Bin/DemoTreeViewLargeData.exe`。打开后顶部有"插入 1k / 10k / 30k 行 / 清空 / 全展开 / 全折叠"6 个按钮，下方状态条实时显示：
+仓库内自带的多列大数据量压测 demo。位置 `DemoTreeViewLargeData/`，编出来在 `Bin/DemoTreeViewLargeData.exe`。打开后顶部有"插入 1k / 10k / 30k 行 / 清空 / 全展开 / 全折叠"6 个按钮，下方状态条实时显示：
 
 ```
 行数: N  |  上次 OnPaint: X.XX ms (脏区高 H px)
@@ -3469,52 +3493,54 @@ if (n->ctrlId == IDC_TABPAGE && n->code == DUIN_VALUECHANGED) {
 
 ### DuiMenu  `[popup]`
 
-右键 / 命令菜单。支持快捷键文本列、checked 状态、子菜单（hover 自动展开）、danger 项（红色文字）、分隔线。
+右键 / 命令菜单。支持图标、勾选项、禁用项、子菜单（悬停自动展开）、分隔线、分组标题行，以及靠右对齐的快捷键文字列。
 
-**典型父：**<u>不挂</u>父 DuiControl —— 调 `PopupAt(pt, ownerHwnd)` 在屏幕坐标弹出，自己创建一个 popup HWND；选完 / 失焦自动销毁。owner HWND 是事件接收者（通常就是当前对话框）。
+**典型父：**<u>不挂</u>父 DuiControl —— 在栈上建一个 `DuiMenu`，调 `TrackPopup(x, y, ownerHwnd)` 在屏幕坐标弹出。`TrackPopup` 是<u>同步</u>的（与 Win32 的 `TrackPopupMenu` 一样）：用户点了某项、点到菜单外或按 Esc 之后才返回，返回值就是被点项的 id，0 表示没有选择。落点会自动限制在锚点所在显示器的工作区内（右边放不下翻向左、下边放不下翻向上），贴着屏幕边缘弹出也不会跑到桌面外，调用方不必自己处理。
 
 #### 代码用法
 
 ```
 // 在某个右键事件 handler 里调用：
 balloonwjui::DuiMenu m;
-m.AddItem(IDM_OPEN,   _T("Open"),       _T("Ctrl+O"));
-m.AddItem(IDM_SAVE,   _T("Save"),       _T("Ctrl+S"));
-m.AddSeparator();
-m.AddItem(IDM_DELETE, _T("Delete"),     _T("Del"), /*danger*/ true);
+m.AppendHeader(_T("文件"));                              // 分组标题：灰色小字，不可选中
+m.AppendItem(IDM_OPEN, _T("打开(&O)\tCtrl+O"));        // '\t' 之后的文字靠右画成灰色快捷键列
+m.AppendItem(IDM_SAVE, _T("保存(&S)\tCtrl+S"));
+m.AppendSeparator();
+m.AppendChecked(IDM_WRAP, _T("自动换行(&W)"), true);  // 可勾选项，初始为勾选
+m.AppendDisabled(IDM_DELETE, _T("删除(&D)\tDel"));   // 禁用项：灰显，点了不返回
 
-POINT pt; ::GetCursorPos(&pt);
-m.PopupAt(pt, m_hWnd);    // m 是栈对象；菜单关闭后局部变量析构
-// owner（m_hWnd）收 WM_DUI_NOTIFY: code=DUIN_CLICK, ctrlId=IDM_OPEN
+POINT pt;
+::GetCursorPos(&pt);
+UINT id = m.TrackPopup(pt.x, pt.y, m_hWnd);   // 同步返回；m 是栈对象，返回后即可析构
+if (id == IDM_OPEN)
+{
+    DoOpen();
+}
+else if (id == IDM_SAVE)
+{
+    DoSave();
+}
 ```
+
+#### 关键 API
+
+| 方法 | 说明 |
+| --- | --- |
+| `AppendItem(nID, text, icon = nullptr)` | 追加普通项。`text` 里的 `&X` 是助记符（菜单弹出后按 X 选中）；写成 `"文字\t快捷键"` 时，`\t` 之后的部分以灰色靠右画在单独的快捷键列里，菜单随之加宽，助记符只认 `\t` 之前的部分。快捷键文字只是显示用，按键本身由调用方自己处理 |
+| `AppendChecked(nID, text, checked)` | 追加可勾选项；之后用 `SetCheck(nID, b)` / `IsChecked(nID)` 修改、读取 |
+| `AppendDisabled(nID, text, icon = nullptr)` | 追加禁用项（灰显，点击不返回）；之后可用 `SetEnabled(nID, b)` 切换 |
+| `AppendSeparator()` | 追加分隔线 |
+| `AppendHeader(text)` | 追加分组标题行：灰色小字、行高比普通项矮，不可选中、没有悬停高亮，键盘上下键与助记符都跳过它；其中的 `&` 不作为助记符 |
+| `AppendSubMenu(nID, text, subMenu, icon = nullptr)` | 追加子菜单项。`subMenu` 由调用方持有，必须在整个 `TrackPopup` 期间保持有效；点子菜单的父项不返回 id，只有叶子项才返回 |
+| `SetItemIcon(nID, icon)` | 设置或清除某项的图标（`CImageEx*`，调用方持有） |
+| `MeasureSize()` | 不建窗口，算出菜单弹出后的像素尺寸。要把菜单主动摆到按钮上方之类的位置时，先量出尺寸再算落点 |
+| `TrackPopup(x, y, ownerHwnd)` | 在屏幕坐标 (x, y) 弹出并<u>阻塞</u>到菜单关闭；返回被点项的 id，0 表示没有选择。`ownerHwnd` 是所有者窗口，菜单关闭后焦点回到它 |
 
 **无 XML 路径**：DuiMenu 通过命令式 API 弹出，没有"挂入控件树"这一步，因此不参与 XML builder。如要从配置文件描述菜单项，业务自己写解析代码。
 
 #### 事件
 
-| code | 触发 | extra (LPARAM) |
-| --- | --- | --- |
-| `DUIN_CLICK` | 用户选了某个菜单项；菜单自动关闭。disabled 项不发；分隔线不可点 | 0（项 id 由 `n->ctrlId` 给出，即 `AddItem` 的第一个参数） |
-
-事件目标是 `PopupAt(pt, owner)` 传入的 `owner` HWND（不一定是触发右键的控件所在窗口）— 通常就是主对话框。
-
-```
-// 弹菜单（在某个右键事件里）
-POINT pt; ::GetCursorPos(&pt);
-balloonwjui::DuiMenu m;
-m.AddItem(IDM_OPEN, _T("Open"), _T("Ctrl+O"));
-m.AddItem(IDM_SAVE, _T("Save"), _T("Ctrl+S"));
-m.PopupAt(pt, m_hWnd);
-
-// 父对话框 OnDuiNotify 收菜单事件：
-auto* n = (balloonwjui::DuiNotify*)lp;
-if (n->code == DUIN_CLICK) {
-    switch (n->ctrlId) {
-    case IDM_OPEN: DoOpen(); break;
-    case IDM_SAVE: DoSave(); break;
-    }
-}
-```
+无。`DuiMenu` 不发 `WM_DUI_NOTIFY`，用户的选择由 `TrackPopup` 的返回值给出。
 
 <a id="DuiMenuBar"></a>
 
@@ -3592,8 +3618,7 @@ XML 不支持声明<u>菜单项内容</u>（`DuiMenu` 是事件触发的瞬时�
 
 ```
 // emoji 按钮 OnClick handler 里：
-RECT anchorScreen;
-m_emojiBtn->GetRect(anchorScreen);
+RECT anchorScreen = m_emojiBtn->GetRect();   // 宿主客户区坐标，下面转成屏幕坐标
 ::ClientToScreen(m_hWnd, (LPPOINT)&anchorScreen);
 ::ClientToScreen(m_hWnd, ((LPPOINT)&anchorScreen) + 1);
 
@@ -3605,7 +3630,7 @@ m_pop.Show(anchorScreen, m_hWnd);     // owner = m_hWnd，事件冒到对话框
 
 #### 事件
 
-本身不发事件 — 它只是个浮层壳。<u>其内部 `Content` 子控件</u>的事件按常规通过 `WM_DUI_NOTIFY` 冒到 popup 的 owner HWND（即调 `SetOwner(hwnd)` 的窗口）。所以业务收到的还是 `DUIN_CLICK` / `DUIN_VALUECHANGED` 等 — 路由透明。
+本身不发事件 — 它只是个浮层壳。<u>其内部 `Content` 子控件</u>的事件按常规通过 `WM_DUI_NOTIFY` 冒到 popup 的 owner HWND（即 `Show(anchor, owner)` 传入的那个窗口）。所以业务收到的还是 `DUIN_CLICK` / `DUIN_VALUECHANGED` 等 — 路由透明。
 
 <a id="DuiToolTip"></a>
 
@@ -3730,8 +3755,7 @@ ep->AddCategory(_T("😀"), GetSmileyCodepoints());
 ep->AddCategory(_T("🐾"), GetAnimalCodepoints());
 m_emojiPopup.SetContent(std::move(ep));
 
-RECT anchor;
-m_emojiBtn->GetRect(anchor);
+RECT anchor = m_emojiBtn->GetRect();   // 宿主客户区坐标，下面转成屏幕坐标
 ::ClientToScreen(m_hWnd, (LPPOINT)&anchor);
 ::ClientToScreen(m_hWnd, ((LPPOINT)&anchor) + 1);
 m_emojiPopup.Show(anchor, m_hWnd);
@@ -3882,13 +3906,13 @@ class MyDlg : public CDialogImpl<MyDlg> {
 
 ```
 balloonwjui::DuiFrameWindow frame;
-frame.SetTitle(_T("My App"));
 frame.SetButtons(true, true, true);   // min, max, close 三按钮
 frame.SetTitleBarHeight(36);          // 默认 36（最小 18）
 frame.SetMinSize(720, 480);
 frame.SetResizable(true);
 frame.Create(NULL, CWindow::rcDefault, _T("My App"),
              WS_OVERLAPPEDWINDOW, 0);
+frame.SetTitle(_T("My App"));
 frame.SetClientContent(BuildClientUi());   // 注意：不要直接 SetRoot
 frame.ResizeClient(1080, 720);
 frame.CenterWindow();
@@ -4031,7 +4055,7 @@ vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 
 | code | 触发 | extra (LPARAM) |
 | --- | --- | --- |
-| `DUIN_VALUECHANGED` | 用户拖 thumb / 点击轨道 / 滚轮 / 键盘（PgUp/PgDn/Home/End）；`SetPos(_, true)` 程序写入也触发 | 新位置（像素） |
+| `DUIN_VALUECHANGED` | 用户拖 thumb / 点击轨道 / 滚轮（滚动条本身不处理键盘，按键滚动由宿主容器负责，如 `DuiListBox` 的 ↑ / ↓ / PgUp / PgDn）；`SetPos(_, true)` 程序写入也触发 | 新位置（像素） |
 
 嵌入 `DuiScrollView` 时通常不需要订阅 — 滚动条与内容偏移已联动。仅当独立使用 `DuiScrollBar`（不通过 ScrollView）需要自己处理偏移时才监听。
 
@@ -4047,7 +4071,7 @@ vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 | `StartFadeOut()` | 取消 idle 计时器，启动 fade-out（300ms 渐出到 0）。caller 在 OnMouseLeave 里调。auto-hide 关闭时是 no-op。 |
 | `SetAlpha(float)` / `GetAlpha()` | 直接设 / 查询 alpha，跳过动画。0 完全透明（OnPaint 不画），1 完全不透明。一般不用，让 fade 函数管理。 |
 
-**不必挂 pulse**：auto-hide 的 fade 走 `DuiAnimMgr`，而 `DuiAnimMgr` 自带 16ms 共享脉冲定时器 —— 有活跃动画时自行装上、播完自行卸掉。caller 所在的 frame <u>不需要</u>写 `SetTimer`，也不该再调 `TickAll`；只要该线程在正常泵消息，渐入渐出就会自己跑起来。`TickAll` 仍是 public 的，但只用于单元测试手动驱动。
+**不必挂 pulse**：auto-hide 的 fade 走 `DuiAnimMgr`，而 `DuiAnimMgr` 自带约 60Hz 的共享脉冲定时器 —— 有活跃动画时自行装上、播完自行卸掉。caller 所在的 frame <u>不需要</u>写 `SetTimer`，也不该再调 `TickAll`；只要该线程在正常泵消息，渐入渐出就会自己跑起来。`TickAll` 仍是 public 的，但只用于单元测试手动驱动。
 
 #### 滚轮步长
 
@@ -4113,7 +4137,7 @@ bool OnMouseWheel(POINT pt, short z, UINT mk) override {
 
 ### DuiResMgr — 资源管理器
 
-单例。包装 `CSkinManager`（图片）+ 进程级共享 UI 字体（Microsoft YaHei GB2312，按 (DPI, 磅值, 是否加粗) 分别缓存、惰性创建）。`SetDpi` 只切换全局 DPI，**不销毁**任何已创建的字体 —— 控件可能还保存着它们的句柄；切回用过的 DPI 时直接复用，全部字体在进程退出时统一释放。
+单例。包装 `CSkinManager`（图片）+ 进程级共享 UI 字体（字体名取自 `DuiTheme::GetDefaultFontFace()`，默认 Microsoft YaHei；微软雅黑用 GB2312 字符集，其它字体用 DEFAULT_CHARSET。按 (DPI, 磅值, 是否加粗) 分别缓存、惰性创建）。缓存的键里<u>没有</u>字体名，所以 `SetDefaultFontFace` 必须在第一次取字体之前调用，之后再改字体名，已经建好的字体不会更新。`SetDpi` 只切换全局 DPI，**不销毁**任何已创建的字体 —— 控件可能还保存着它们的句柄；切回用过的 DPI 时直接复用，全部字体在进程退出时统一释放。
 
 ```
 // 控件内：按控件所在窗口的 DPI 取（推荐）
@@ -4176,7 +4200,7 @@ GDI+ 在第一次调用时惰性初始化（进程生命期 token）。轴对齐
 
 *左→右：brand / deep / online / away / busy / off。控件默认配色直接读这些常量。*
 
-命名空间常量集合：品牌色、状态色（online/away/red）、墨色 (ink-1..4)、表面色等。控件内部默认使用，亦可被业务直接引用。
+单例类（`DuiTheme::Inst()`），按槽位保存一套颜色：品牌色（`BrandPrimary` / `BrandHover` / `BrandPressed` …）、文字色、表面色、边框色、行悬停 / 选中色、状态色（`StatusOnline` / `StatusAway` / `StatusBusy` / `StatusOffline`）等。`Get(slot)` 取色，`Set(slot, c)` 改单个颜色，`ApplyPreset(Light / Dark / HighContrast)` 整套切换；`SubscribeChange` 登记回调，颜色变化后通知。它还保存默认字体名（`SetDefaultFontFace` / `GetDefaultFontFace`，默认 Microsoft YaHei），`DuiResMgr` 建字体时读取。
 
 <a id="DuiNotify"></a>
 
@@ -4294,7 +4318,7 @@ bool MyControl::OnLButtonUp(POINT, UINT)
 
 ① `m_rcItem` 是父布局已经算好的本控件矩形（host 客户区坐标），所有绘制都在它内部进行 — 你不需要自己处理坐标偏移。
 
-② 默认字体在控件内优先走 `GetDefaultFont()`（`DuiControl` 成员，按控件所在窗口的 DPI 取 Microsoft YaHei 9pt GB2312），不要硬编码 LOGFONT，也不要把取到的句柄长期保存。下面示例里的 `DuiResMgr::Inst().GetDefaultFont()` 按全局 DPI 取，单显示器下与前者相同；多显示器缩放比例不同时应改用前者。
+② 默认字体在控件内优先走 `GetDefaultFont()`（`DuiControl` 成员，按控件所在窗口的 DPI 取默认字体，默认是 Microsoft YaHei 9pt），不要硬编码 LOGFONT，也不要把取到的句柄长期保存。下面示例里的 `DuiResMgr::Inst().GetDefaultFont()` 按全局 DPI 取，单显示器下与前者相同；多显示器缩放比例不同时应改用前者。
 
 ③ 非轴向几何（圆 / 三角 / 对角线）必须走 `DuiPaintAA` 或直接 `Gdiplus::Graphics + SetSmoothingMode(AntiAlias)`，否则有锯齿。
 
@@ -4585,10 +4609,10 @@ host.SetRoot(std::move(root));
 
 | 工程 | 演示重点 | 源代码 |
 | --- | --- | --- |
-| `DemoTextBadgeTile.exe` | 最简自绘 — 圆角矩形 + 居中文字 | `third-party/balloonui/DemoTextBadgeTile/` |
-| `DemoCircularProgress.exe` | GDI+ 抗锯齿圆环 + clamp setter | `third-party/balloonui/DemoCircularProgress/` |
-| `DemoChatBubble.exe` | 异形（带尾巴）+ MeasureHeight 测高 + 左右对齐 | `third-party/balloonui/DemoChatBubble/` |
-| `DemoFileTypeIcon.exe` | 数据驱动配色 + 折角 + hover 反馈 | `third-party/balloonui/DemoFileTypeIcon/` |
+| `DemoTextBadgeTile.exe` | 最简自绘 — 圆角矩形 + 居中文字 | `DemoTextBadgeTile/` |
+| `DemoCircularProgress.exe` | GDI+ 抗锯齿圆环 + clamp setter | `DemoCircularProgress/` |
+| `DemoChatBubble.exe` | 异形（带尾巴）+ MeasureHeight 测高 + 左右对齐 | `DemoChatBubble/` |
+| `DemoFileTypeIcon.exe` | 数据驱动配色 + 折角 + hover 反馈 | `DemoFileTypeIcon/` |
 
 每个 demo 都同时演示 **代码方式** 与 **XML 方式** 两条创建路径，并自带 `--capture-all <dir>` 截图模式（本节里的 PNG 都是从这些 demo 真截出来的）。
 
@@ -4679,7 +4703,7 @@ void DemoTextBadgeTile::OnPaint(HDC hdc, const RECT&)
 
 <details class="full-code">
   <summary>展开完整代码（.h + .cpp + main.cpp 的 XML 工厂）</summary>
-  <pre><code>// 完整源代码见 third-party/balloonui/DemoTextBadgeTile/
+  <pre><code>// 完整源代码见 DemoTextBadgeTile/
 //   stdafx.h               — ATL/WTL 通用前向
 //   DemoTextBadgeTile.h    — 类声明
 //   DemoTextBadgeTile.cpp  — setter + OnPaint + OnLButtonUp
@@ -5143,7 +5167,7 @@ static Palette LookupPalette(LPCTSTR ext);
 
 ### 8.5 编译运行
 
-4 个 demo 都在 `third-party/balloonui/Demos.sln` 里。命令行编译：
+4 个 demo 都在 `Demos.sln` 里。命令行编译：
 
 ```
 msbuild Demos.sln /p:Configuration=Debug /p:Platform=Win32 ^
@@ -5156,10 +5180,10 @@ Bin\DemoChatBubble.exe
 Bin\DemoFileTypeIcon.exe
 
 # 截图模式（重新生成本节用图）
-Bin\DemoTextBadgeTile.exe   --capture-all third-party\balloonui\docs\images
-Bin\DemoCircularProgress.exe --capture-all third-party\balloonui\docs\images
-Bin\DemoChatBubble.exe      --capture-all third-party\balloonui\docs\images
-Bin\DemoFileTypeIcon.exe    --capture-all third-party\balloonui\docs\images
+Bin\DemoTextBadgeTile.exe   --capture-all docs\images
+Bin\DemoCircularProgress.exe --capture-all docs\images
+Bin\DemoChatBubble.exe      --capture-all docs\images
+Bin\DemoFileTypeIcon.exe    --capture-all docs\images
 ```
 
 ---
@@ -5168,7 +5192,7 @@ Bin\DemoFileTypeIcon.exe    --capture-all third-party\balloonui\docs\images
 
 ## 9. 完整布局示例
 
-本章给 5 个常见 UI 布局的完整 demo — **每个都是 balloonui 真控件渲染**（不是 mock），并附等价 XML 描述。截图来自 DuiGallery 的 `Layouts` tab，运行 `DuiGallery.exe --capture-all third-party\balloonui\docs\images` 可重新生成。
+本章给 5 个常见 UI 布局的完整 demo — **每个都是 balloonui 真控件渲染**（不是 mock），并附等价 XML 描述。截图来自 DuiGallery 的 `Layouts` tab，运行 `DuiGallery.exe --capture-all docs\images` 可重新生成。
 
 本章的目标是**"看完就会拼一个真窗口"** — 重点演示 `DuiVBox/HBox/Dock/Splitter` 的 Hint 用法（`Fixed`/`Weight`）+ 现成控件（`DuiLabel`/`DuiEdit`/`DuiButton`/`DuiListBox`/`DuiSearchBox`/`DuiAvatar`/`DuiComboBox`）的组合方式。
 
@@ -5180,7 +5204,7 @@ Bin\DemoFileTypeIcon.exe    --capture-all third-party\balloonui\docs\images
 
 #### 9.0.1 项目设置
 
-- **解决方案 / 工程**：`third-party/balloonui/Demos.sln` 里加一个 Application 工程（参 `DemoNinePatchBg.vcxproj` 模板），`OutDir = ..\Bin\`。
+- **解决方案 / 工程**：`Demos.sln` 里加一个 Application 工程（参 `DemoNinePatchBg.vcxproj` 模板），`OutDir = ..\Bin\`。
 - **预处理器**：`WIN32;_WINDOWS;BUI_USE_DLL;_CRT_SECURE_NO_WARNINGS`（`BUI_USE_DLL` 让 `BUI_API` 解析为 `__declspec(dllimport)`，对接 balloonui.dll）。
 - **包含目录**：`..\balloonui;..\wtl10.1`
 - **链接库**：`balloonui.lib;gdiplus.lib;comctl32.lib`（`AdditionalLibraryDirectories=..\Bin`）
@@ -5197,11 +5221,11 @@ Bin\DemoFileTypeIcon.exe    --capture-all third-party\balloonui\docs\images
 #include "DuiDpi.h"
 #include "DuiHost.h"
 #include "DuiNotify.h"
-#include "Controls/DuiFrameWindow.h"
-#include "Controls/DuiLayout.h"
-#include "Controls/DuiLabel.h"
-#include "Controls/DuiButton.h"
-#include "Controls/DuiEdit.h"
+#include "Controls/Window/DuiFrameWindow.h"
+#include "Controls/Layout/DuiLayout.h"
+#include "Controls/Basic/DuiLabel.h"
+#include "Controls/Basic/DuiButton.h"
+#include "Controls/Input/DuiEdit.h"
 // ...按本示例需要 include 其它控件头...
 
 using namespace balloonwjui;
@@ -5284,7 +5308,7 @@ int WINAPI _tWinMain(HINSTANCE hInst, HINSTANCE, LPTSTR, int nCmdShow)
     }
 
     // g) 显示窗口 + 消息循环。
-    frame.ResizeClient(800, 600);          // 客户区目标尺寸
+    frame.ResizeClient(800, 600);          // 整窗尺寸，标题栏也在其内
     frame.CenterWindow();                  // 屏幕居中
     frame.ShowWindow(nCmdShow);
     frame.UpdateWindow();
@@ -5307,12 +5331,12 @@ int WINAPI _tWinMain(HINSTANCE hInst, HINSTANCE, LPTSTR, int nCmdShow)
 
 ```
 # 在 VS 2022 里：
-# 1. 打开 third-party\balloonui\Demos.sln
+# 1. 打开仓库根目录的 Demos.sln
 # 2. 把新工程加进去（或克隆 DemoNinePatchBg.vcxproj 改名）
 # 3. 选 Debug | Win32 → 生成解决方案
 # 4. 跑 Bin\MyApp.exe
 
-# 命令行（在 third-party\balloonui\ 下）：
+# 命令行（在仓库根目录下）：
 "%MSBuild%" Demos.sln /t:MyApp /p:Configuration=Debug /p:Platform=Win32
 .\Bin\MyApp.exe
 ```
@@ -5399,7 +5423,7 @@ frame.SetClientContent(std::move(root));
 
 ```
 <hbox>
-  <control weight="1"/>          <!-- 左占位实现居中 -->
+  <vbox weight="1"/>             <!-- 左占位实现居中 -->
   <vbox padding="20" gap="10" fixedWidth="320">
     <logo  fixedHeight="48"/>     <!-- 业务自绘标签 -->
     <label text="FlamingoNewUI" textAlign="center" fixedHeight="28"/>
@@ -5413,7 +5437,7 @@ frame.SetClientContent(std::move(root));
     </hbox>
     <button id="104" text="登录" fixedHeight="36"/>
   </vbox>
-  <control weight="1"/>
+  <vbox weight="1"/>
 </hbox>
 ```
 
@@ -5617,10 +5641,10 @@ col->AddChild(std::move(buttons), DuiLayout::Hint().Fixed(32));
     <edit id="103" weight="1"/>
   </hbox>
 
-  <control weight="1"/>            <!-- 弹性占位推按钮到底 -->
+  <vbox weight="1"/>               <!-- 弹性占位推按钮到底 -->
 
   <hbox fixedHeight="32" gap="8">
-    <control weight="1"/>         <!-- 弹性占位推按钮到右 -->
+    <vbox weight="1"/>            <!-- 弹性占位推按钮到右 -->
     <button id="200" buttonType="icon" text="取消" fixedWidth="80"/>
     <button id="201" text="保存" fixedWidth="80"/>
   </hbox>
@@ -5790,13 +5814,13 @@ root->AddChild(std::move(right), DuiLayout::Hint().Weight(1));
     <button id="201" buttonType="icon" fixedHeight="36"/>
     <button id="202" buttonType="icon" fixedHeight="36"/>
     <button id="203" buttonType="icon" fixedHeight="36"/>
-    <control weight="1"/>
+    <vbox weight="1"/>
   </vbox>
 
   <!-- 中 list -->
   <vbox fixedWidth="240">
-    <search-box id="100" placeholder="搜索" fixedHeight="36"/>
-    <listbox    id="101" itemHeight="48" weight="1"/>
+    <searchbox id="100" placeholder="搜索" fixedHeight="36"/>
+    <listbox    id="101" itemHeight="48" weight="1"/>   <!-- 非内置标签，需经 CustomFactory 注册（见 3.6） -->
   </vbox>
 
   <!-- 右 content -->
@@ -5980,8 +6004,8 @@ root->AddChild(std::move(content), DuiLayout::Hint().Weight(1));
 <hbox>
   <!-- 左 nav -->
   <listbox id="100" fixedWidth="160" itemHeight="32">
-    <!-- 注：listbox 项目目前需要代码 AddItem，XML 不支持
-         <item> 子节点 — 这是后续可补的功能 -->
+    <!-- 注：DuiXmlBuilder 没有内置 <listbox> 标签，这里要经 CustomFactory 注册（见 3.6），
+         返回一个 DuiListBox；列表项在代码里 AddItem，XML 不支持 <item> 子节点 -->
   </listbox>
 
   <!-- 右 content -->
@@ -5998,7 +6022,7 @@ root->AddChild(std::move(content), DuiLayout::Hint().Weight(1));
       <combo-box id="201" fixedWidth="120"/>
     </hbox>
 
-    <control weight="1"/>
+    <vbox weight="1"/>
   </vbox>
 </hbox>
 ```
@@ -6143,14 +6167,7 @@ frame.SetClientContent(std::move(dock));
 
 #### XML 方式
 
-```
-<dock>
-  <toolbar    dockSide="top"    dockSize="32"/>
-  <statusbar  dockSide="bottom" dockSize="24"/>
-  <left-nav   dockSide="left"   dockSize="140"/>
-  <content    dockSide="fill"/>
-</dock>
-```
+`DuiXmlBuilder` 目前<u>没有</u> `<dock>` 标签，`DuiDock` 只能像上面那样用 C++ 构造。确实需要从 XML 描述时，可以通过 `DuiXmlBuilder::CustomFactory` 注册一个自定义的 `<dock>` 标签，自行解析停靠方向与尺寸后调用 `AddDocked`。
 
 DuiDock 的子节点添加顺序<u>很重要</u>：先 add 的占外圈，后 add 的占内圈。最后一个 `DockFill` 拿剩下的所有空间。如果你想让左 nav 一直顶到顶 / 底（而不是停在 toolbar / statusbar 之间），调换"先 left 后 top/bottom"的顺序即可。
 
@@ -6330,9 +6347,9 @@ public:
 ```
 // === main.cpp ===
 balloonwjui::DuiFrameWindow frame;
-frame.SetTitle(_T("BuddyInfo"));
 frame.Create(NULL, CWindow::rcDefault, _T("BuddyInfo"),
              WS_OVERLAPPEDWINDOW, 0);
+frame.SetTitle(_T("BuddyInfo"));
 
 // 加载背景 PNG（caller 持有 HBITMAP）
 HBITMAP hbm = LoadBgPng(_T("BuddyInfoDlgBg.png"));
@@ -6466,7 +6483,6 @@ public:
 
 ```
 balloonwjui::DuiFrameWindow frame;
-frame.SetTitle(_T("好友资料"));
 
 // 关键尺寸
 const int kSrcGradientH = 69;   // 源图里渐变带的真实像素高度（量出来的）
@@ -6481,6 +6497,7 @@ frame.SetMinSize(320, 240);
 frame.SetResizable(true);
 
 frame.Create(NULL, CWindow::rcDefault, _T("MyApp"), WS_OVERLAPPEDWINDOW, 0);
+frame.SetTitle(_T("好友资料"));
 
 // 9-grid 背景：源 69px 渐变带 → 目标 40px 标题栏（等比压缩，渐变完整呈现）
 HBITMAP hbm = LoadBgPng(_T("BuddyInfoDlgBg.png"));
@@ -6508,7 +6525,7 @@ frame.ShowWindow(SW_SHOW);
 
 ### 10.9 完整 Demo
 
-独立可运行 demo 在 `third-party/balloonui/DemoNinePatchBg/`：
+独立可运行 demo 在 `DemoNinePatchBg/`：
 
 | 文件 | 作用 |
 | --- | --- |
@@ -6525,7 +6542,7 @@ msbuild Demos.sln /p:Configuration=Debug /p:Platform=Win32 /t:DemoNinePatchBg
 Bin\DemoNinePatchBg.exe
 
 # 截图模式 — 重新生成本节图
-Bin\DemoNinePatchBg.exe --capture-all third-party\balloonui\docs\images
+Bin\DemoNinePatchBg.exe --capture-all docs\images
 ```
 
 ---
@@ -6630,7 +6647,7 @@ public:
     static CString ResolveAssetPath(LPCTSTR userPath);
 };
 
-// Controls/DuiFrameWindow.h
+// Controls/Window/DuiFrameWindow.h
 class BUI_API DuiFrameWindow : public DuiHost
 {
     ...
@@ -6724,7 +6741,7 @@ balloonui 提供 31 个控件 + 一个 XML builder。但实际项目里业务多
 | 开关 | 控件 | 关闭后影响 | 依赖（被传染） |
 | --- | --- | --- | --- |
 | `BUI_DISABLE_LAYOUT` | DuiVBox / DuiHBox / DuiGrid | **不允许**（基础容器，文件中 `#error` 拦截） |  |
-| `BUI_DISABLE_DOCK` | DuiDock | `<dock>` XML 失效 | — |
+| `BUI_DISABLE_DOCK` | DuiDock | `DuiDock` 类不可用（它没有内置 XML 标签） | — |
 | `BUI_DISABLE_SPLITTER` | DuiSplitter | `<splitter>` XML 失效 | — |
 | `BUI_DISABLE_LABEL` | DuiLabel | `<label>` XML 失效 | — |
 | `BUI_DISABLE_BUTTON` | DuiButton | `<button>` XML 失效 | — |
@@ -6740,8 +6757,8 @@ balloonui 提供 31 个控件 + 一个 XML builder。但实际项目里业务多
 | `BUI_DISABLE_SLIDER` | DuiSlider | `<slider>` XML 失效 | — |
 | `BUI_DISABLE_SWITCH` | DuiSwitch | `<switch>` XML 失效 | — |
 | `BUI_DISABLE_SCROLLBAR` | DuiScrollBar | — | LISTBOX, TREEVIEW |
-| `BUI_DISABLE_LISTBOX` | DuiListBox | `<listbox>` XML 失效 | COMBOBOX |
-| `BUI_DISABLE_COMBOBOX` | DuiComboBox | `<combobox>` XML 失效 | — |
+| `BUI_DISABLE_LISTBOX` | DuiListBox | `DuiListBox` 类不可用（它没有内置 XML 标签） | COMBOBOX |
+| `BUI_DISABLE_COMBOBOX` | DuiComboBox | `DuiComboBox` 类不可用（它没有内置 XML 标签） | — |
 | `BUI_DISABLE_TREEVIEW` | DuiTreeView | `<treeview>` XML 失效 | — |
 | `BUI_DISABLE_TAB` | DuiTab | — | TABPAGE |
 | `BUI_DISABLE_TABPAGE` | DuiTabPage | `<tab-page>` CustomFactory 失效 | — |
@@ -6819,7 +6836,7 @@ Release 模式收益最大（48.7%）—— 因为 Release 没有 Debug 信息�
 
 ## 13. 综合案例：DemoTaskManager
 
-`third_party/DemoTaskManager/` 用 balloonui 复刻 Win10 任务管理器界面，是把库里多个控件、XML 驱动、自绘控件、事件路由的整套用法贯穿起来的最完整 demo。本章详述其结构 —— **重点是布局**，因为这是新加入开发者最需要"对照着抄"的部分。
+`DemoTaskManager/` 用 balloonui 复刻 Win10 任务管理器界面，是把库里多个控件、XML 驱动、自绘控件、事件路由的整套用法贯穿起来的最完整 demo。本章详述其结构 —— **重点是布局**，因为这是新加入开发者最需要"对照着抄"的部分。
 
 ![DemoTaskManager 进程页全貌](images/demo-taskmgr-processes.png)
 
@@ -7111,7 +7128,7 @@ DuiTreeView  cols=6
 
 ## 14. 综合案例：XChat（某信 PC 复刻）
 
-`third_party/XChat/` 用 balloonui 复刻某信 Windows PC 客户端界面，是除 DemoTaskManager 之外另一个完整的"参考贴近"案例。重点演示：<u>多视图主面板（聊天 / 联系人 / 公众号 / 空 chat 水印）的切换</u>、<u>session-list 驱动的右栏 view</u>、<u>无窗口输入框（搜索栏 / 聊天输入区）</u>、<u>ChatScrollBar auto-hide</u> 以及大量<u>自绘 stroke icon / chat 气泡 / 文件卡 / 程序化"假图片"</u>。和 DemoTaskManager 互补 —— 后者偏 menu/tab/list 这种"工具型 UI"，本 demo 偏"消息流 + 弹层 + 大量自定义视觉元素"的"消费型 UI"。
+`XChat/` 用 balloonui 复刻某信 Windows PC 客户端界面，是除 DemoTaskManager 之外另一个完整的"参考贴近"案例。重点演示：<u>多视图主面板（聊天 / 联系人 / 公众号 / 空 chat 水印）的切换</u>、<u>session-list 驱动的右栏 view</u>、<u>无窗口输入框（搜索栏 / 聊天输入区）</u>、<u>ChatScrollBar auto-hide</u> 以及大量<u>自绘 stroke icon / chat 气泡 / 文件卡 / 程序化"假图片"</u>。和 DemoTaskManager 互补 —— 后者偏 menu/tab/list 这种"工具型 UI"，本 demo 偏"消息流 + 弹层 + 大量自定义视觉元素"的"消费型 UI"。
 
 ![XChat 主面板聊天 view](images/xchat/main_chat.png)
 
@@ -7135,7 +7152,7 @@ DuiTreeView  cols=6
 | `DuiLabel` | chat-title（id=300）；登录窗"扫码登录"/"仅传输文件"等文字（手动 SetTextAlign 居中）；info-field 的 label/value 两行 |
 | `DuiMenu` | 左下汉堡 nav-icon 点击弹出 5 项菜单（聊天文件 / 聊天记录管理 / 锁定 / 意见反馈 / 设置） |
 | `DuiAA / GDI+` | 所有非轴对齐路径（圆角矩形头像 / unread badge 胶囊 / mute bell 圆环 / chevron 三角 / chat 圆头像 / DuiSwitch 胶囊 / 8 种"假图片" / 文件 ext-icon / 水印双气泡）走 GDI+ AntiAlias |
-| `DuiAnim` | 登录 spinner（旋转 240° 弧线）+ DuiSwitch 拨动 + DuiScrollBar fade in/out 都走 DuiAnimMgr。DuiAnimMgr 自带 16ms 共享脉冲定时器，LoginFrame 与 XChatMainFrame 都不挂宿主 pulse，只在 `OnDestroy` 里调 `DuiAnimMgr::Inst().Clear()` |
+| `DuiAnim` | 登录 spinner（旋转 240° 弧线）+ DuiSwitch 拨动 + DuiScrollBar fade in/out 都走 DuiAnimMgr。DuiAnimMgr 自带约 60Hz 的共享脉冲定时器，LoginFrame 与 XChatMainFrame 都不挂宿主 pulse，只在 `OnDestroy` 里调 `DuiAnimMgr::Inst().Clear()` |
 
 <a id="xchat-files"></a>
 
@@ -7440,9 +7457,9 @@ int WINAPI _tWinMain(HINSTANCE hInst, HINSTANCE, LPTSTR cmdLine, int nCmdShow)
 
 ## 15. 综合案例：CloudMelodyDesktop（音乐 App demo）
 
-`third_party/CloudMelodyDesktop/` 用 balloonui 复刻一款音乐 App（"FangMusic"），设计稿来源 `third_party/cloud_melody_desktop/stitch_cloud_melody_desktop/music_*/` 共 8 张界面。和 DemoTaskManager / XChat 互补 —— 后两者偏"信息密集型 UI"（菜单 / 列表 / 表格），本 demo 偏"卡片 / 媒体内容 + 动效"的<u>消费型 UI</u>，演示：<u>多页面路由切换（ContentRouter）</u>、<u>真实 mock 播放计时</u>、<u>GDI+ 抗锯齿自绘控件（旋转黑胶 / 圆形播放按钮 / 色板渐变封面）</u>、<u>UpdateLayeredWindow 逐像素 alpha 桌面浮窗（桌面歌词）</u>、<u>全屏沉浸模式</u>、<u>DuiEdit 内联图标接口的应用（圆角搜索框）</u>。
+`CloudMelodyDesktop/` 用 balloonui 复刻一款音乐 App（"FangMusic"），按一套共 8 张界面的设计稿实现（设计稿文件不在本仓库中）。和 DemoTaskManager / XChat 互补 —— 后两者偏"信息密集型 UI"（菜单 / 列表 / 表格），本 demo 偏"卡片 / 媒体内容 + 动效"的<u>消费型 UI</u>，演示：<u>多页面路由切换（ContentRouter）</u>、<u>真实 mock 播放计时</u>、<u>GDI+ 抗锯齿自绘控件（旋转黑胶 / 圆形播放按钮 / 色板渐变封面）</u>、<u>UpdateLayeredWindow 逐像素 alpha 桌面浮窗（桌面歌词）</u>、<u>全屏沉浸模式</u>、<u>DuiEdit 内联图标接口的应用（圆角搜索框）</u>。
 
-**注**：以下截图来自<u>设计稿</u>（`cloud_melody_desktop/stitch_cloud_melody_desktop/music_*/screen.png`）。实际运行效果（`third_party/Bin/CloudMelodyDesktop.exe`）与设计稿基本一致 —— 同样的色板、同样的布局、同样的字号梯度；细节（卡片 hover / 按钮 active 态等）按设计稿语义实现。
+**注**：以下截图来自<u>设计稿</u>（设计稿文件不在本仓库中）。实际运行效果（`Bin/CloudMelodyDesktop.exe`）与设计稿基本一致 —— 同样的色板、同样的布局、同样的字号梯度；细节（卡片 hover / 按钮 active 态等）按设计稿语义实现。
 
 <a id="cmd-stack"></a>
 
@@ -7977,13 +7994,13 @@ Windows 多窗口的"前后顺序"。`SetWindowPos` 时 `HWND_TOPMOST` / `HWND_T
 
 ### A. 完整工程示例
 
-参见 `third-party/balloonui/NewChatDemo/`：完全基于 balloonui，演示 13 种业务自绘控件 + XML 描述、聊天气泡、自绘布局（`chat-thread` 自管子节点位置）。
+参见 `NewChatDemo/`：完全基于 balloonui，演示 13 种业务自绘控件 + XML 描述、聊天气泡、自绘布局（`chat-thread` 自管子节点位置）。
 
 ![NewChatDemo 截图](images/NewChatDemo_final.png)
 
 ### B. 编译与打包
 
-所有工程在 `third-party/balloonui/Demos.sln`：
+所有工程在 `Demos.sln`：
 
 - `balloonui` → `Bin/balloonui.dll` + `Bin/balloonui.lib`（Win32）/ `Bin/x64/...`（x64）
 - `NewChatDemo` → `Bin/NewChatDemo.exe` 链 `balloonui.lib`

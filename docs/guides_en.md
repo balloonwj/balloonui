@@ -97,7 +97,7 @@ extern CAppModule _Module;
 
 #include "DuiDpi.h"
 #include "DuiXmlBuilder.h"
-#include "Controls/DuiFrameWindow.h"
+#include "Controls/Window/DuiFrameWindow.h"
 
 CAppModule _Module;
 
@@ -109,9 +109,9 @@ int WINAPI _tWinMain(HINSTANCE hInst, HINSTANCE, LPTSTR, int nCmdShow)
     _Module.Init(NULL, hInst);
 
     balloonwjui::DuiFrameWindow frame;
-    frame.SetTitle(_T("Hello balloonui"));
     frame.SetButtons(true, true, true);
     frame.Create(NULL, CWindow::rcDefault, _T("Hello"), WS_OVERLAPPEDWINDOW, 0);
+    frame.SetTitle(_T("Hello balloonui"));
 
     // Client area: load from XML, or build in code.
     auto root = balloonwjui::DuiXmlBuilder::FromString(
@@ -165,7 +165,7 @@ LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lParam, BOOL&)
 
 <a id="xml-tag-overview"></a>
 
-### 3.1 Built-in tags at a glance (17 of them)
+### 3.1 Built-in tags at a glance (19 of them)
 
 | Tag | Class | Category | One-line purpose |
 | --- | --- | --- | --- |
@@ -187,8 +187,9 @@ LRESULT OnDuiNotify(UINT, WPARAM, LPARAM lParam, BOOL&)
 | `<searchbox>` | DuiSearchBox | Interactive | Search box with magnifier + clear button (it *is* a text box) |
 | `<spinbox>` | DuiSpinBox | Interactive | Integer spinner (wraps a text box) |
 | `<treeview>` | DuiTreeView | List | Hierarchical tree / multi-column table hybrid (XML only declares `<column>`s; nodes are added from C++) |
+| `<menu-bar>` | DuiMenuBar | List | Persistent menu bar (child `<menu-item id text>` elements describe the entries; each entry's dropdown `DuiMenu` is attached in C++ with `SetDropdown`) |
 
-Every tag in this table builds an **HWND-less pure DUI control**, usable as soon as it is constructed — there is no extra "create" step. Before 2026-08-17, `<edit>` / `<searchbox>` / `<spinbox>` / `<combobox>` embedded a real Win32 child window and the caller had to call `EnsureCreated(hostHwnd)` once; that convention is retired now that they are windowless (see [§3.4](#xml-ensure-created)).
+Every tag in this table builds an **HWND-less pure DUI control**, usable as soon as it is constructed — there is no extra "create" step. Before 2026-08-17, `<edit>` / `<searchbox>` / `<spinbox>` (and the editable mode of `DuiComboBox`, which has no XML tag) embedded a real Win32 child window and the caller had to call `EnsureCreated(hostHwnd)` once; that convention is retired now that they are windowless (see [§3.4](#xml-ensure-created)). For a flexible spacer, use a `<vbox weight="1"/>` (or `<hbox>`) with no children: an empty container draws nothing and just takes its share of the space. Tags not in this table must first be registered through the `CustomFactory` of [§3.6](#xml-custom-factory); otherwise the parser writes one `unknown tag` line to the debug output and skips the node.
 
 <a id="xml-common-attrs"></a>
 
@@ -238,7 +239,7 @@ Children fill in declaration order; the common `fixedWidth/Height/weight` attrib
   <label text="Name" fixedHeight="22"/>
   <edit  placeholder="Enter your name" fixedHeight="32"/>
   <hbox gap="8" fixedHeight="36">
-    <control weight="1"/>            <!-- elastic spacer -->
+    <vbox weight="1"/>               <!-- elastic spacer -->
     <button text="Cancel" fixedWidth="80"/>
     <button text="OK"     fixedWidth="80" id="100"/>
   </hbox>
@@ -422,7 +423,7 @@ No event.
 | `off-color` | "r,g,b" | Pill background color in the off state. Default RGB(229,229,229) (light gray). |
 | `knob-color` | "r,g,b" | Knob color. Default RGB(255,255,255) (white). |
 
-**Animation driver:** the toggle is driven by `DuiAnimMgr`, which owns a shared 16 ms pulse timer: it installs the timer when its active list goes from empty to non-empty and drops it again once every animation has finished (or `Clear()` is called). The host therefore <u>does not need to, and should not,</u> call `TickAll` periodically — as long as its thread pumps messages the intermediate frames come out on their own. `TickAll` stays public for **manual driving from unit tests** (it works without an HWND).
+**Animation driver:** the toggle is driven by `DuiAnimMgr`, which owns a shared ~60 Hz pulse timer (requested at 10 ms; it fires on every ~15.6 ms system timer tick): it installs the timer when its active list goes from empty to non-empty and drops it again once every animation has finished (or `Clear()` is called). The host therefore <u>does not need to, and should not,</u> call `TickAll` periodically — as long as its thread pumps messages the intermediate frames come out on their own. `TickAll` stays public for **manual driving from unit tests** (it works without an HWND).
 
 **Event**: `DUIN_VALUECHANGED` (`extra` = 1 (on) / 0 (off)) — fires when the user toggles via mouse click / Space / Enter; programmatic `SetChecked()` calls do <u>not</u> fire it, matching `DuiButton` checkbox behavior.
 
@@ -548,7 +549,7 @@ XML only declares columns; nodes (`AddRoot` / `AddChild`) must be added from C++
 
 ### 3.4 The EnsureCreated convention is retired
 
-Before 2026-08-17, the 4 text-input tags (`<edit>` / `<searchbox>` / `<spinbox>` / `<combobox>`) embedded a real Win32 text box child window. Such a child window needs an <u>already-created parent window</u> before it can be created, and during XML parsing the control is not attached to a host yet, so the builder never created them proactively — the caller had to call `EnsureCreated(hostHwnd)` once the host had a real window.
+Before 2026-08-17, the 3 text-input tags (`<edit>` / `<searchbox>` / `<spinbox>`, plus the editable mode of `DuiComboBox`, which has no XML tag) embedded a real Win32 text box child window. Such a child window needs an <u>already-created parent window</u> before it can be created, and during XML parsing the control is not attached to a host yet, so the builder never created them proactively — the caller had to call `EnsureCreated(hostHwnd)` once the host had a real window.
 
 Now that the text box is windowless ([DuiEdit](#DuiEdit)), **the whole convention is retired**:
 
@@ -623,12 +624,12 @@ Every control comes with its default style baked into the constructor — Micros
 | Level | API | Affects |
 | --- | --- | --- |
 | Global font | `DuiControl::GetDefaultFont()` (inside a control) / `DuiResMgr::Inst().GetDefaultFontForDpi(dpi)` | Default UI font for every control, scaled to the DPI of the window the control lives in |
-| Theme colors | Constants in the `DuiTheme` namespace | Brand color, status colors (online / away / red) |
+| Theme colors | The `DuiTheme` singleton (colors by slot, with light / dark / high-contrast presets) | Brand color, status colors (online / away / red) |
 | Per-control | Each Set* method (see per-control sections) | This instance only |
 
 **Default UI style**:
 
-- Font: **Microsoft YaHei 9 pt** (GB2312) — provided by `DuiResMgr`
+- Font: **Microsoft YaHei 9 pt** by default. The face name comes from `DuiTheme::GetDefaultFontFace()` and a host can switch it for the UI language at startup with `SetDefaultFontFace`; fonts are cached per DPI in `DuiResMgr`, and each control uses the DPI of its own window
 - Corner radius: button 8 px, bubble 8 px, chip 9–11 px
 - Brand colors: `#2D6CDF` (blue), `#4CC7A1` (green — default for DuiAvatar / DuiBadge)
 - I-beam cursor appears automatically over DuiEdit / DuiRichEdit
@@ -716,7 +717,7 @@ Key facts:
 
 | Class | Role | Relationship |
 | --- | --- | --- |
-| `DuiMenu` | Right-click / command menu | Internally owns its own `DuiMenuPopup` (a popup HWND); show via `PopupAt(pt, owner)`. **Not** a `DuiControl`; cannot be `AddChild`'d to any parent control. |
+| `DuiMenu` | Right-click / command menu | Internally owns its own `DuiMenuPopup` (a popup HWND); shown synchronously by `TrackPopup(x, y, owner)`, which returns the chosen item id. **Not** a `DuiControl`; cannot be `AddChild`'d to any parent control. |
 | `DuiToolTipMgr` | Hover-tip manager | Singleton. `Register(ctrl, text)` binds a `DuiControl*` to its tooltip text; the tip auto-floats on hover. |
 | `DuiAnim` / `DuiDoubleAnim` | Animation value generator | Timed interpolator; the caller applies the output value to any property. |
 | `CDuiImageOle` | RichEdit inline image | Implements the `IOleObject` family; loaded by RichEdit through OLE. |
@@ -797,8 +798,8 @@ Depends on how you're using `DuiHost`:
 | **Child-window host** `m_host.Create(m_hWnd, ...)` | The dialog / frame-window class that owns `m_host` | `::GetParent(host)` = your dialog HWND |
 | **SubclassWindow** `m_host.SubclassWindow(m_hWnd)` | Same as above — the host and the dialog share one HWND | The dialog's own HWND |
 | **Top-level DuiFrameWindow** (no parent) | The subclass you derive from `DuiFrameWindow` | When `GetParent` is null, **the event loops back to the host itself** — just add a `WM_DUI_NOTIFY` handler in your subclass |
-| **Popup DuiPopupHost** | The class that owns the HWND passed to `popup->SetOwner(ownerHwnd)` | The popup has no parent; events go to the owner |
-| **DuiMenu** | The class that owns the `ownerHwnd` passed to `PopupAt(pt, ownerHwnd)` | Same as above |
+| **Popup DuiPopupHost** | The class that owns the owner window passed to `Show(anchor, ownerHwnd)` | The popup is an owned `WS_POPUP` window, so `GetParent` returns the owner and events go there |
+| **DuiMenu** | The code that calls `TrackPopup` (it returns the chosen item id synchronously) | No `WM_DUI_NOTIFY` is sent |
 
 **Three common misconceptions**:
 
@@ -936,26 +937,29 @@ public:
 
 ### 6.5 Popup / menu event routing
 
-Popup windows (`DuiPopupHost` / `DuiMenu`) are not in the main window's subtree — they're <u>independent top-level windows</u>. You must explicitly designate the event recipient:
+Popup windows (`DuiPopupHost` / `DuiMenu`) are not in the main window's subtree — they're <u>independent top-level windows</u>. They report results differently: events of controls inside a `DuiPopupHost` go to the owner window passed to `Show`; `DuiMenu` sends no events, and `TrackPopup` returns the chosen item id synchronously.
 
 ```
-// DuiPopupHost: custom popup (dropdown, emoji panel, ...)
-auto popup = std::make_unique<balloonwjui::DuiPopupHost>();
-popup->SetContent(BuildEmojiPanel());
-popup->SetOwner(m_hWnd);          // events go back to this HWND
-popup->SetAnchor(button->GetRect(), balloonwjui::DuiPopupHost::AnchorBelow);
-popup->Show();
+// DuiPopupHost: custom popup (dropdown, emoji panel, ...), usually a dialog member
+m_popup.SetContent(BuildEmojiPanel());
+m_popup.SetSize(320, 240);
+m_popup.SetEdge(balloonwjui::DuiPopupHost::EdgeBelow);   // prefer opening below the anchor
+RECT rcAnchor = button->GetRect();                       // host client coordinates
+::MapWindowPoints(m_hWnd, NULL, (POINT*)&rcAnchor, 2);   // to screen coordinates
+m_popup.Show(rcAnchor, m_hWnd);          // the second argument is the owner; events go there
 // Your dialog's OnDuiNotify will receive events from controls inside the popup;
 // n->ctrlId is the child control's SetCtrlId.
 
-// DuiMenu: right-click / command menu
+// DuiMenu: right-click / command menu. No events: TrackPopup returns the chosen id
 balloonwjui::DuiMenu menu;
-menu.AddItem(IDM_OPEN,  _T("Open"),   _T("Ctrl+O"));
-menu.AddItem(IDM_SAVE,  _T("Save"),   _T("Ctrl+S"));
-menu.AddSeparator();
-menu.AddItem(IDM_DEL,   _T("Delete"), _T("Del"), /*danger*/ true);
-menu.PopupAt(pt, m_hWnd);          // events go back to m_hWnd
-// Your OnDuiNotify receives DUIN_CLICK with n->ctrlId = IDM_OPEN / IDM_SAVE / IDM_DEL
+menu.AppendItem(IDM_OPEN, _T("&Open\tCtrl+O"));
+menu.AppendItem(IDM_SAVE, _T("&Save\tCtrl+S"));
+menu.AppendSeparator();
+menu.AppendItem(IDM_DEL,  _T("&Delete\tDel"));
+POINT pt;
+::GetCursorPos(&pt);
+UINT id = menu.TrackPopup(pt.x, pt.y, m_hWnd);   // 0 means nothing was chosen
+// Dispatch on id: IDM_OPEN / IDM_SAVE / IDM_DEL
 ```
 
 <a id="event-routing-cheatsheet"></a>
@@ -1442,7 +1446,7 @@ host.SetRoot(std::move(dock));    // Dock as the top-level; when nesting, use ou
 Static text + hyperlinks. Two modes (orthogonal to the **selectable** capability):
 
 - `ModeText` (default): plain text.
-- `ModeLink`: underline + hover highlight + IDC_HAND cursor + clicking fires `DUIN_CLICK` or auto-`ShellExecute`'s the URL (`SetAutoNavigate`).
+- `ModeLink`: underline + hover highlight + IDC_HAND cursor + clicking fires `DUIN_CLICK`, then, with `SetAutoNavigate`, opens the URL via `ShellExecute`.
 
 Supports **multi-line wrap** (`SetWordWrap(true)`) + **measure-height** (`MeasureHeight(width)`) — both are necessary for chat bubbles / streaming lists.
 
@@ -1511,7 +1515,7 @@ host.SetRoot(std::move(root));
 
 | code | When it fires | extra (LPARAM) |
 | --- | --- | --- |
-| `DUIN_CLICK` | Only in `ModeLink`: the user left-clicks the text. `ModeText` fires nothing. When `SetAutoNavigate(true)` is set, the click no longer fires `DUIN_CLICK` — the URL opens directly via `ShellExecute`. | 0 |
+| `DUIN_CLICK` | Only in `ModeLink`: the user presses the left button on the link and releases it on the link (a release alone, or pressing and moving off the link before releasing, is not a click). `ModeText` fires nothing. With `SetAutoNavigate(true)` the click still fires `DUIN_CLICK`, and then the URL is opened via `ShellExecute`. | 0 |
 
 ```
 // In the parent dialog's OnDuiNotify:
@@ -1527,7 +1531,7 @@ if (n->ctrlId == IDC_FORGOT_LINK && n->code == DUIN_CLICK) {
 | --- | --- |
 | Tag | `<label text="..." textColor="..."/>` |
 | Detailed attribute reference | [§3.3.4 label](#xml-label) |
-| Events | None in `ModeText`; in `ModeLink` with `SetAutoNavigate(false)`, fires `DUIN_CLICK`. |
+| Events | None in `ModeText`; in `ModeLink` a click fires `DUIN_CLICK` (whether or not `SetAutoNavigate` is on). |
 | Notes | XML does not yet expose ModeLink / font / alignment and other advanced attributes; if you need them, grab the root the builder returns and call FindControlById + SetXxx yourself. |
 
 <a id="DuiButton"></a>
@@ -2558,7 +2562,7 @@ if (n->ctrlId == IDC_MUTE_NOTIF && n->code == DUIN_VALUECHANGED) {
 
 #### Animation driver
 
-DuiSwitch drives the knob animation through `balloonwjui::DuiAnimMgr` + `DuiDoubleAnim`. `DuiAnimMgr` owns a shared 16 ms (~60 Hz) pulse timer, `::SetTimer(NULL, 0, 16, PulseProc)`, installed when its active list goes from empty to non-empty and dropped the moment the list empties again, so no timer lingers while nothing is animating. The host therefore <u>does not need to, and should not,</u> write the old "`SetTimer(id, 16)` in `OnCreate` + `TickAll` in `OnTimer` + `KillTimer` in `OnDestroy`" boilerplate; `DuiGallery`'s `GalleryFrame` and both XChat frames have had that host timer removed.
+DuiSwitch drives the knob animation through `balloonwjui::DuiAnimMgr` + `DuiDoubleAnim`. `DuiAnimMgr` owns a shared ~60 Hz pulse timer, `::SetTimer(NULL, 0, 10, PulseProc)` (requested at 10 ms, it fires on every ~15.6 ms system timer tick; a 16 ms request mostly waits for the second tick and measured only about 40 Hz), installed when its active list goes from empty to non-empty and dropped the moment the list empties again, so no timer lingers while nothing is animating. The host therefore <u>does not need to, and should not,</u> write the old "`SetTimer(id, 16)` in `OnCreate` + `TickAll` in `OnTimer` + `KillTimer` in `OnDestroy`" boilerplate; `DuiGallery`'s `GalleryFrame` and both XChat frames have had that host timer removed.
 
 The one thing the host still has to do is teardown: call `DuiAnimMgr::Inst().Clear()` before the window goes away, to cancel animations that may still hold pointers to its controls (`Clear()` also drops the shared pulse timer).
 
@@ -2608,9 +2612,9 @@ Dropdown picker. Two flavors: read-only (click to pop the dropdown) / editable (
 ```
 auto cb = std::make_unique<balloonwjui::DuiComboBox>();
 cb->SetCtrlId(IDC_FRUIT);
-cb->AddItem(_T("Apple"));
-cb->AddItem(_T("Banana"));
-cb->AddItem(_T("Cherry"));
+cb->AddString(_T("Apple"));
+cb->AddString(_T("Banana"));
+cb->AddString(_T("Cherry"));
 cb->SetEditable(true);
 cb->SetIncrementalSearch(true);
 cb->SetIncrementalSearchSubstring(true);   // Substring match (default false = prefix only)
@@ -2621,27 +2625,34 @@ hbox->AddChild(std::move(cb), balloonwjui::DuiLayout::Hint().Fixed(160));
 
 |   |   |
 | --- | --- |
-| `AddItem / RemoveAt / Clear` | Item operations. |
-| `GetCount / GetItemText(idx)` | Query. |
-| `SetCurSel(idx) / GetCurSel()` | Current selection. |
-| `SetEditable(bool)` | Whether input is allowed. |
+| `AddString(text)` / `DeleteString(idx)` / `ResetContent()` | Append / delete / clear items; `AddString` returns the new item's index. |
+| `GetCount()` / `GetItemText(idx)` / `SetItemText(idx, text)` | Item count and item text. |
+| `SetCurSel(idx, notify = true)` / `GetCurSel()` | Current selection, -1 for none; no event when `notify` is false. |
+| `SetEditable(bool)` / `GetText()` / `SetText(text)` | Whether input is allowed; read / write the current text (`SetText` fires no event). |
 | `SetBgColor(COLORREF)` / `SetShowBorder(bool)` / `SetShowArrow(bool)` | Body fill / border / right-side arrow toggles. |
+| `SetBorderColors(normal, active)` | 1px border colors: `normal` at rest, `active` while hovered or while the dropdown is open. Defaults RGB(150,150,150) / RGB(80,130,200); neither is used when disabled or with `SetShowBorder(false)`. |
 | `SetArrowColor(COLORREF)` / `GetArrowColor()` | Down arrow color (default `RGB(80,100,140)`). Only overrides the enabled state; disabled stays at the internal gray. The triangle renders via `DuiAA::FillPolygon` (anti-aliased). |
-| `SetIncrementalSearch(bool)` | Type-to-filter the dropdown. |
+| `SetItemIcon(idx, hbm)` / `SetItemSubText(idx, text)` / `SetIconSize(px)` | A left icon and a dimmed secondary text after the main text for each dropdown row (e.g. "avatar - account - name"). The icon is a 32-bit premultiplied-alpha bitmap owned by the caller and must stay valid; the icon edge defaults to 16. Affects the dropdown only; the body shows just the selected item's text. |
+| `SetShowItemDelete(bool)` | Draws a delete cross at the right of each dropdown row (off by default). Clicking it fires `DUICBN_ITEMDELETE`; the control does <u>not</u> delete the item — the host decides whether to confirm and then calls `DeleteString`. |
+| `SetMaxVisibleItems(n)` / `SetItemHeight(px)` | Maximum rows shown in the dropdown (scrolls beyond that) / row height. |
+| `SetIncrementalSearch(bool)` | In editable mode, filter the dropdown while typing (prefix, case-insensitive by default; see also `SetIncrementalSearchSubstring` / `SetIncrementalSearchCaseSensitive`). |
 | `ComputeFilteredIndices(query)` | Pure helper: returns the real-index list after filtering. |
 
 #### Events
 
 | code | When it fires | extra (LPARAM) |
 | --- | --- | --- |
-| `DUIN_VALUECHANGED` | User picks an item from the dropdown; `SetCurSel(_, true)` programmatic selection also fires it; `SetCurSel(_, false)` does not. | New selected index `(int)n->extra`. |
+| `DUIN_VALUECHANGED` | User picks an item from the dropdown; `SetCurSel(_, true)` programmatic selection also fires it; `SetCurSel(_, false)` does not. In editable mode it also fires on <u>every edit</u>. | Current selected index `(int)n->extra`. When fired by typing, an exact match with an item selects it and gives its index; otherwise -1. |
+| `DuiComboBox::DUICBN_ITEMDELETE` | The delete cross of a dropdown row was clicked (needs `SetShowItemDelete(true)`); the selection does not change. | The item's index (already mapped back to the real index while filtered). |
 
-In editable mode (`SetEditable(true)`), type-to-filter only hides / shows dropdown items internally — it does <u>not</u> fire any extra event; only the final selection of an item fires `DUIN_VALUECHANGED`. To monitor the typing process, use `DuiSearchBox` instead.
+In editable mode (`SetEditable(true)`), type-to-filter only hides / shows dropdown items internally; every edit fires `DUIN_VALUECHANGED`, and `extra` == -1 means the typed text is not in the list.
+
+Do <u>not</u> open a modal dialog synchronously while handling `DUICBN_ITEMDELETE`: the notification is sent in the middle of the dropdown's message handling, and once a modal dialog pumps messages the dropdown loses focus and destroys itself. To confirm, `PostMessage` to yourself and show the dialog one step later. Check `ctrlId` together with the code: custom notification codes start at `DUIN_CUSTOM` for every control, so values repeat.
 
 ```
 // In the parent dialog's OnDuiNotify: language switch
 auto* n = (balloonwjui::DuiNotify*)lp;
-if (n->ctrlId == IDC_LANGUAGE && n->code == DUIN_VALUECHANGED) {
+if (n->ctrlId == IDC_LANGUAGE && n->code == DUIN_VALUECHANGED && (int)n->extra >= 0) {
     int idx = (int)n->extra;
     static const LPCTSTR codes[] = { _T("en"), _T("zh-CN"), _T("ja") };
     SetUiLocale(codes[idx]);
@@ -2664,7 +2675,7 @@ XML does not yet natively support `<combobox>` (the item list + editable mode in
 
 Simple scrolling list. Supports single / multi select, customizable row height, optional checkboxes / drag reorder. <u>All items are stored inside the control itself (`std::vector<Item>`)</u> — meaning N rows hold N string copies. Past ~10k rows, consider [DuiVirtualList](#DuiVirtualList) below.
 
-**Typical parent:** any layout container (VBox / HBox / Grid / GroupBox content area / Splitter pane / Dock child area). <u>Long lists are usually wrapped in a `DuiScrollView`</u> to scroll when content overflows — DuiListBox itself does not have a built-in scrollbar.
+**Typical parent:** any layout container (VBox / HBox / Grid / GroupBox content area / Splitter pane / Dock child area). <u>It has a built-in vertical scroll bar</u>, so there is no need to wrap it in a `DuiScrollView`: the bar is an overlay thin thumb floating over the right edge of the rows without taking row width (rows lay out at full width); it stays hidden while everything fits and fades in on scrolling or when the mouse comes near. The wheel scrolls by rows; ↑ / ↓ / PgUp / PgDn move the selection and scroll it into view.
 
 **When to skip DuiListBox in favor of DuiVirtualList:**
 
@@ -2677,18 +2688,30 @@ Simple scrolling list. Supports single / multi select, customizable row height, 
 ```
 auto lb = std::make_unique<balloonwjui::DuiListBox>();
 lb->SetCtrlId(IDC_SESSION_LIST);
-for (auto& s : items) lb->AddItem(s);
-lb->SetSelectMode(balloonwjui::DuiListBox::Multi);
+for (auto& s : items)
+{
+    lb->AddItem(s);
+}
+lb->SetMultiSelect(true);
 lb->SetItemHeight(28);
 lb->SetCurSel(0);
-
-// Wrap in a DuiScrollView so a long list can scroll:
-auto sv = std::make_unique<balloonwjui::DuiScrollView>();
-balloonwjui::DuiListBox* lbRaw = lb.get();
-sv->SetContent(std::move(lb));
-sv->SetContentHeight(lbRaw->GetCount() * lbRaw->GetItemHeight());
-vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
+// The list has its own scroll bar: put it straight into the layout and long lists scroll
+vbox->AddChild(std::move(lb), balloonwjui::DuiLayout::Hint().Weight(1));
 ```
+
+#### Key API
+
+| Method | Description |
+| --- | --- |
+| `AddItem(text, lParam = 0)` / `InsertItem` / `DeleteItem` / `DeleteAllItems` | Add / remove rows; each row can carry an `LPARAM` (`GetItemParam` / `SetItemParam`). |
+| `GetItemCount()` / `GetItemText(idx)` / `SetItemText(idx, text)` | Row count and row text. |
+| `SetCurSel(idx, notify = true)` / `GetCurSel()` | Current row in single-select mode. |
+| `SetMultiSelect(bool)` / `SetItemSelected` / `GetSelectedIndices` / `ClearSelection` | Multi-select mode and the selected set. |
+| `SetShowCheckboxes(bool)` / `IsItemChecked` / `SetItemChecked` | A checkbox in front of each row. |
+| `SetItemIcon(idx, hbm)` / `SetIconSize(px)` | A left icon per row (32-bit premultiplied-alpha bitmap owned by the caller, must stay valid; drawn after the checkbox when checkboxes are on), scaled to the edge length and centred vertically; default edge 16. |
+| `SetItemSubText(idx, text)` / `SetSubTextColor(c)` | A secondary text after the main text (mid grey by default; on the selected row it uses the main text color). The main text takes only the width it needs; the secondary text is truncated with an ellipsis when it does not fit. |
+| `SetShowItemDelete(bool)` | Draws a delete cross at the right end of each row (off by default); clicking it fires `DUITN_ITEMDELETE` and changes <u>neither</u> the selection nor the rows — the host decides whether to delete. The cross moves left to clear the scroll bar while the bar is shown. |
+| `SetItemHeight(px)` / `SetDragReorderEnabled(bool)` / `MoveItem(from, to)` | Row height; drag reordering. |
 
 #### Events
 
@@ -2698,6 +2721,7 @@ vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 | `DUIN_DBLCLK` | Double-click on an item (typically used as the "open conversation" / Enter-equivalent action). | Index of the double-clicked item. |
 | `DuiListBox::DUITN_CHECKED` | In multi-select + checkbox mode (`SetShowCheckboxes(true)`), when the user toggles an item's checkbox. | Item index; call `IsItemChecked(idx)` for the new state. |
 | `DuiListBox::DUITN_REORDERED` | After `SetDragReorderEnabled(true)`, when a drag reorder completes. | New index (the destination position of the dragged item). |
+| `DuiListBox::DUITN_ITEMDELETE` | The delete cross at the right end of a row was clicked (needs `SetShowItemDelete(true)`). | Row index. |
 
 ```
 // In the parent dialog's OnDuiNotify: conversation list
@@ -2752,7 +2776,7 @@ In three sentences:
 | Per-row content API | Plain text + LPARAM business id + optional checkbox | Caller paints the whole row (HDC + RECT); draw anything |
 | Insert / remove a row | O(N) shift (vector middle insert / erase) | Caller manages business data; the control only needs `SetRowCount(n)` |
 | Scrollbar | Needs an outer `DuiScrollView` | Built-in, self-managed |
-| Multi-select | Supported (`SetSelectMode(Multi)` + optional checkbox) | <u>Single-select only</u> (just `m_curSel`; no multi-select API) |
+| Multi-select | Supported (`SetMultiSelect(true)` + optional checkbox) | <u>Single-select only</u> (just `m_curSel`; no multi-select API) |
 | Drag reorder | Supported (`SetDragReorderEnabled`) | Not supported (the control doesn't know rows' real identities, so it can't reorder them at the UI layer) |
 
 Picking the right one: <u>simple text lists with ≤ a few thousand rows</u> → DuiListBox; <u>tens of thousands of rows / per-row custom painting / data already lives in a model</u> → DuiVirtualList.
@@ -3068,7 +3092,7 @@ Calling `AddColumn` switches into multi-column mode: a fixed top header (drag co
 
 **Selection model:** in multi-column mode selection granularity = cell. `GetCurSelCell()` returns `{itemId, col}`. Ctrl+click for multi-select / Shift+click for range select → iterate with `GetSelectedCellCount()`+`GetSelectedCell(n)`. The active cell is drawn with a 1 px brand-blue border + a 1 px inner white border (cell focus rect).
 
-**Column-width behavior:** `SetColumnMinWidth` sets the minimum (default 40 px); the last column does <u>not</u> auto-stretch (so the scrollbar has room); double-clicking the header column-divider triggers <u>auto-fit</u> (based on the visible cells' actual text widths); column drag-reorder is <u>not</u> supported.
+**Column-width behavior:** `SetColumnMinWidth` sets the minimum (default 40 px); the last column does <u>not</u> auto-stretch (the scroll bars are thin overlay thumbs floating over the body and take no column width); double-clicking the header column-divider triggers <u>auto-fit</u> (based on the visible cells' actual text widths); column drag-reorder is <u>not</u> supported.
 
 **Visual details:** `SetZebra(bool)` defaults off; hover highlights the whole row; the cell focus rect is 1 px blue + 1 px inner white; text overflow trails with an ellipsis.
 
@@ -3319,13 +3343,13 @@ In practice, scrolling a 10k-row multi-column tree gives single-frame OnPaint ti
 
 **Known bottlenecks not covered by dirty-rect clipping:**
 
-- **Insert / delete / expand-collapse is O(N)**: `AddRoot`/`AddChild`/`Remove`/`SetExpanded` internally each call `RebuildVisible` once (a full sweep of `m_nodes`). Bulk-loading N rows is O(N²): 10k rows ≈ 1 s, 30k rows ≈ 10 s. One-shot tree construction is fine for normal use; for "live-append log" patterns with continuous inserts, batch on the caller side and do one `Clear`+rebuild.
+- **The first read after a structural change rebuilds the visible rows**: `AddRoot` / `AddChild` / `Remove` / `SetExpanded` only mark the visible-row list stale; it is rebuilt with one sweep of `m_nodes` (O(N)) the next time painting or hit testing reads it, however many nodes were added in between (see "Visible rows are rebuilt on demand" above), so bulk loading needs no batching on the caller side. Separately, inserting a node into a subtree that is not at the end, or removing nodes, moves every node after it in `m_nodes`, a cost proportional to the total node count; building depth-first (finish one subtree before starting the next) appends every new node at the end and avoids it.
 - **Cell-level multi-select uses linear scans**: every painted cell scans `m_selCells` to see if it's in the selection. 30 rows × 5 columns × 100 selected cells in the viewport ≈ 15k comparisons per frame is still fine; if the user selects thousands of cells, frame rate drops. Replace `m_selCells` with a hash table if needed.
 - **Nodes are in a flat `vector<Node>`**: deleting a subtree removes a contiguous range from the middle, triggering element shifts; scenarios with frequent delete / move will see O(N) jitter.
 
 #### Stress-test demo: DemoTreeViewLargeData
 
-The repo ships a multi-column large-data stress demo. Path: `third-party/balloonui/DemoTreeViewLargeData/`; built binary: `Bin/DemoTreeViewLargeData.exe`. After launching, six buttons across the top — "Insert 1k / 10k / 30k rows / Clear / Expand all / Collapse all" — and a status bar below showing live:
+The repo ships a multi-column large-data stress demo. Path: `DemoTreeViewLargeData/`; built binary: `Bin/DemoTreeViewLargeData.exe`. After launching, six buttons across the top — "Insert 1k / 10k / 30k rows / Clear / Expand all / Collapse all" — and a status bar below showing live:
 
 ```
 Rows: N  |  Last OnPaint: X.XX ms (dirty-rect height H px)
@@ -3477,52 +3501,54 @@ if (n->ctrlId == IDC_TABPAGE && n->code == DUIN_VALUECHANGED) {
 
 ### DuiMenu  `[popup]`
 
-Right-click / command menu. Supports shortcut-key text column, checked state, submenus (auto-expand on hover), danger items (red text), and separators.
+Right-click / command menu. Supports icons, checkable items, disabled items, submenus (auto-expand on hover), separators, group header rows, and a right-aligned shortcut-text column.
 
-**Typical parent:** <u>not attached</u> to a parent DuiControl — call `PopupAt(pt, ownerHwnd)` to pop up at screen coordinates; it creates its own popup HWND and auto-destroys on selection / focus loss. The owner HWND is the event recipient (usually the current dialog).
+**Typical parent:** <u>not attached</u> to a parent DuiControl — create a `DuiMenu` on the stack and call `TrackPopup(x, y, ownerHwnd)` to pop it up at screen coordinates. `TrackPopup` is <u>synchronous</u> (like Win32 `TrackPopupMenu`): it returns after the user picks an item, clicks outside, or presses Esc, and its return value is the chosen item id, or 0 if nothing was chosen. The position is clamped to the work area of the anchor's monitor automatically (it flips left when there is no room on the right and up when there is no room below), so a menu opened at the screen edge never ends up off the desktop; callers need not handle this.
 
 #### Code usage
 
 ```
-// Inside some right-click event handler:
+// Inside some right-click handler:
 balloonwjui::DuiMenu m;
-m.AddItem(IDM_OPEN,   _T("Open"),       _T("Ctrl+O"));
-m.AddItem(IDM_SAVE,   _T("Save"),       _T("Ctrl+S"));
-m.AddSeparator();
-m.AddItem(IDM_DELETE, _T("Delete"),     _T("Del"), /*danger*/ true);
+m.AppendHeader(_T("File"));                              // group header: small grey text, not selectable
+m.AppendItem(IDM_OPEN, _T("&Open\tCtrl+O"));         // text after '\t' is drawn as a grey right-aligned shortcut column
+m.AppendItem(IDM_SAVE, _T("&Save\tCtrl+S"));
+m.AppendSeparator();
+m.AppendChecked(IDM_WRAP, _T("&Word wrap"), true);    // checkable item, initially checked
+m.AppendDisabled(IDM_DELETE, _T("&Delete\tDel"));    // disabled item: greyed out, clicking returns nothing
 
-POINT pt; ::GetCursorPos(&pt);
-m.PopupAt(pt, m_hWnd);    // m is a stack object; the local destructs after the menu closes
-// owner (m_hWnd) receives WM_DUI_NOTIFY: code=DUIN_CLICK, ctrlId=IDM_OPEN
+POINT pt;
+::GetCursorPos(&pt);
+UINT id = m.TrackPopup(pt.x, pt.y, m_hWnd);   // synchronous; m is a stack object and may be destroyed afterwards
+if (id == IDM_OPEN)
+{
+    DoOpen();
+}
+else if (id == IDM_SAVE)
+{
+    DoSave();
+}
 ```
+
+#### Key API
+
+| Method | Description |
+| --- | --- |
+| `AppendItem(nID, text, icon = nullptr)` | Appends a normal item. `&X` in `text` is a mnemonic (with the menu open, pressing X picks the item). Written as `"text\tshortcut"`, the part after `\t` is drawn in grey, right-aligned, in a separate shortcut column and the menu widens accordingly; the mnemonic is looked up only before `\t`. The shortcut text is for display only — the application handles the key itself |
+| `AppendChecked(nID, text, checked)` | Appends a checkable item; change or read it later with `SetCheck(nID, b)` / `IsChecked(nID)` |
+| `AppendDisabled(nID, text, icon = nullptr)` | Appends a disabled item (greyed out, clicking returns nothing); toggle it later with `SetEnabled(nID, b)` |
+| `AppendSeparator()` | Appends a separator |
+| `AppendHeader(text)` | Appends a group header row: small grey text, shorter than normal rows, not selectable, no hover highlight; keyboard navigation and mnemonics skip it, and `&` in it is not a mnemonic |
+| `AppendSubMenu(nID, text, subMenu, icon = nullptr)` | Appends a submenu item. `subMenu` is owned by the caller and must stay alive for the whole `TrackPopup` call; clicking the parent item returns no id, only leaf items do |
+| `SetItemIcon(nID, icon)` | Sets or clears an item's icon (`CImageEx*`, owned by the caller) |
+| `MeasureSize()` | Computes the pixel size of the popped-up menu without creating a window. Use it to place the menu yourself, e.g. above a button |
+| `TrackPopup(x, y, ownerHwnd)` | Pops up at screen coordinates (x, y) and <u>blocks</u> until the menu closes; returns the chosen item id, 0 if nothing was chosen. `ownerHwnd` is the owner window, which gets the focus back afterwards |
 
 **No XML path**: DuiMenu is popped through an imperative API; there's no "attach to control tree" step, so it does not participate in the XML builder. To describe menu items in a config file, write the parsing on the app side.
 
 #### Events
 
-| code | When it fires | extra (LPARAM) |
-| --- | --- | --- |
-| `DUIN_CLICK` | User picks a menu item; the menu closes automatically. Disabled items don't fire; separators aren't clickable. | 0 (the item id is given by `n->ctrlId` — the first argument to `AddItem`). |
-
-The event target is the `owner` HWND passed to `PopupAt(pt, owner)` (not necessarily the window that triggered the right-click) — usually the main dialog.
-
-```
-// Pop the menu (inside some right-click event):
-POINT pt; ::GetCursorPos(&pt);
-balloonwjui::DuiMenu m;
-m.AddItem(IDM_OPEN, _T("Open"), _T("Ctrl+O"));
-m.AddItem(IDM_SAVE, _T("Save"), _T("Ctrl+S"));
-m.PopupAt(pt, m_hWnd);
-
-// The parent dialog's OnDuiNotify receives the menu event:
-auto* n = (balloonwjui::DuiNotify*)lp;
-if (n->code == DUIN_CLICK) {
-    switch (n->ctrlId) {
-    case IDM_OPEN: DoOpen(); break;
-    case IDM_SAVE: DoSave(); break;
-    }
-}
-```
+None. `DuiMenu` sends no `WM_DUI_NOTIFY`; the user's choice is the return value of `TrackPopup`.
 
 <a id="DuiMenuBar"></a>
 
@@ -3600,8 +3626,7 @@ Auto-positioned floating window; its inside is still a DuiControl subtree. Commo
 
 ```
 // In the emoji button's OnClick handler:
-RECT anchorScreen;
-m_emojiBtn->GetRect(anchorScreen);
+RECT anchorScreen = m_emojiBtn->GetRect();   // host client coordinates, converted to screen below
 ::ClientToScreen(m_hWnd, (LPPOINT)&anchorScreen);
 ::ClientToScreen(m_hWnd, ((LPPOINT)&anchorScreen) + 1);
 
@@ -3613,7 +3638,7 @@ m_pop.Show(anchorScreen, m_hWnd);     // owner = m_hWnd; events bubble to the di
 
 #### Events
 
-The popup itself does not fire events — it's just a floating shell. <u>Its internal `Content` child controls</u>' events bubble through `WM_DUI_NOTIFY` to the popup's owner HWND (the one passed to `SetOwner(hwnd)`) as usual. So the app still receives `DUIN_CLICK` / `DUIN_VALUECHANGED` etc. — routing is transparent.
+The popup itself does not fire events — it's just a floating shell. <u>Its internal `Content` child controls</u>' events bubble through `WM_DUI_NOTIFY` to the popup's owner HWND (the one passed to `Show(anchor, owner)`) as usual. So the app still receives `DUIN_CLICK` / `DUIN_VALUECHANGED` etc. — routing is transparent.
 
 <a id="DuiToolTip"></a>
 
@@ -3738,8 +3763,7 @@ ep->AddCategory(_T("😀"), GetSmileyCodepoints());
 ep->AddCategory(_T("🐾"), GetAnimalCodepoints());
 m_emojiPopup.SetContent(std::move(ep));
 
-RECT anchor;
-m_emojiBtn->GetRect(anchor);
+RECT anchor = m_emojiBtn->GetRect();   // host client coordinates, converted to screen below
 ::ClientToScreen(m_hWnd, (LPPOINT)&anchor);
 ::ClientToScreen(m_hWnd, ((LPPOINT)&anchor) + 1);
 m_emojiPopup.Show(anchor, m_hWnd);
@@ -3890,13 +3914,13 @@ Borderless top-level window, with built-in:
 
 ```
 balloonwjui::DuiFrameWindow frame;
-frame.SetTitle(_T("My App"));
 frame.SetButtons(true, true, true);   // min, max, close — all three buttons
 frame.SetTitleBarHeight(36);          // default 36 (min 18)
 frame.SetMinSize(720, 480);
 frame.SetResizable(true);
 frame.Create(NULL, CWindow::rcDefault, _T("My App"),
              WS_OVERLAPPEDWINDOW, 0);
+frame.SetTitle(_T("My App"));
 frame.SetClientContent(BuildClientUi());   // Note: do not call SetRoot directly
 frame.ResizeClient(1080, 720);
 frame.CenterWindow();
@@ -4039,7 +4063,7 @@ vbox->AddChild(std::move(sv), balloonwjui::DuiLayout::Hint().Weight(1));
 
 | code | When it fires | extra (LPARAM) |
 | --- | --- | --- |
-| `DUIN_VALUECHANGED` | User drags the thumb / clicks the track / wheel / keyboard (PgUp/PgDn/Home/End); `SetPos(_, true)` programmatic writes also fire. | New position (pixels). |
+| `DUIN_VALUECHANGED` | User drags the thumb / clicks the track / wheel (the scroll bar itself handles no keys; keyboard scrolling belongs to the hosting container, e.g. ↑ / ↓ / PgUp / PgDn in `DuiListBox`); `SetPos(_, true)` programmatic writes also fire. | New position (pixels). |
 
 When embedded inside `DuiScrollView`, you usually don't need to subscribe — the scrollbar and content offset are already linked. Listen only when using `DuiScrollBar` standalone (not through ScrollView) and you need to handle the offset yourself.
 
@@ -4055,7 +4079,7 @@ When embedded inside `DuiScrollView`, you usually don't need to subscribe — th
 | `StartFadeOut()` | Cancel the idle timer and start the fade-out (300 ms out to 0). Call this on OnMouseLeave. No-op when auto-hide is off. |
 | `SetAlpha(float)` / `GetAlpha()` | Directly set / query alpha, skipping the animation. 0 = fully transparent (OnPaint draws nothing); 1 = fully opaque. Normally not used — let the fade functions manage it. |
 
-**No host pulse needed**: auto-hide's fade is driven by `DuiAnimMgr`, which owns a shared 16 ms pulse timer — installed while something is animating, dropped once it finishes. The caller's frame <u>does not</u> need a `SetTimer` and should no longer call `TickAll`; as long as that thread pumps messages, the fade in and out run on their own. `TickAll` is still public, but only for manual driving from unit tests.
+**No host pulse needed**: auto-hide's fade is driven by `DuiAnimMgr`, which owns a shared ~60 Hz pulse timer — installed while something is animating, dropped once it finishes. The caller's frame <u>does not</u> need a `SetTimer` and should no longer call `TickAll`; as long as that thread pumps messages, the fade in and out run on their own. `TickAll` is still public, but only for manual driving from unit tests.
 
 #### Wheel step
 
@@ -4121,7 +4145,7 @@ The base class of every DUI control. A logical node (no HWND), hosted by `DuiHos
 
 ### DuiResMgr — resource manager
 
-Singleton. Wraps `CSkinManager` (images) + the process-level shared UI fonts (Microsoft YaHei GB2312, cached separately per (DPI, point size, bold) and created lazily). `SetDpi` only switches the global DPI and **never destroys** a font it has handed out — controls may still hold the handle; switching back to a DPI used before reuses its fonts, and every font is released at process exit.
+Singleton. Wraps `CSkinManager` (images) + the process-level shared UI fonts (face name from `DuiTheme::GetDefaultFontFace()`, Microsoft YaHei by default; YaHei uses the GB2312 charset, any other face DEFAULT_CHARSET; cached separately per (DPI, point size, bold) and created lazily). The cache key does <u>not</u> include the face name, so call `SetDefaultFontFace` before the first font is fetched; changing the face afterwards does not update fonts already created. `SetDpi` only switches the global DPI and **never destroys** a font it has handed out — controls may still hold the handle; switching back to a DPI used before reuses its fonts, and every font is released at process exit.
 
 ```
 // Inside a control: fetch for the DPI of the control's window (recommended)
@@ -4185,7 +4209,7 @@ GDI+ is initialized lazily on the first call (the token lives for the process li
 
 *Left → right: brand / deep / online / away / busy / off. Default control colors read directly from these constants.*
 
-A namespace of constants: brand color, status colors (online / away / red), ink colors (ink-1..4), surface colors, and so on. Used internally by controls as defaults; apps can reference them directly.
+A singleton class (`DuiTheme::Inst()`) holding one palette by slot: brand colors (`BrandPrimary` / `BrandHover` / `BrandPressed` ...), text colors, surface colors, border colors, row hover / selection colors, status colors (`StatusOnline` / `StatusAway` / `StatusBusy` / `StatusOffline`) and so on. `Get(slot)` reads a color, `Set(slot, c)` changes one, `ApplyPreset(Light / Dark / HighContrast)` switches the whole palette; `SubscribeChange` registers a callback fired after the palette changes. It also keeps the default font face (`SetDefaultFontFace` / `GetDefaultFontFace`, Microsoft YaHei by default), which `DuiResMgr` reads when it creates fonts.
 
 <a id="DuiNotify"></a>
 
@@ -4303,7 +4327,7 @@ bool MyControl::OnLButtonUp(POINT, UINT)
 
 ① `m_rcItem` is this control's rectangle as computed by the parent layout (in host client-area coordinates); all drawing happens inside it — you don't need to handle coordinate offsets yourself.
 
-② Inside a control, prefer `GetDefaultFont()` (a `DuiControl` member that returns Microsoft YaHei 9 pt GB2312 for the DPI of the control's window); don't hardcode a LOGFONT and don't keep the handle. The examples below use `DuiResMgr::Inst().GetDefaultFont()`, which follows the global DPI — the same thing on a single monitor, but use the former when monitors have different scale factors.
+② Inside a control, prefer `GetDefaultFont()` (a `DuiControl` member that returns the default font, Microsoft YaHei 9 pt unless changed, for the DPI of the control's window); don't hardcode a LOGFONT and don't keep the handle. The examples below use `DuiResMgr::Inst().GetDefaultFont()`, which follows the global DPI — the same thing on a single monitor, but use the former when monitors have different scale factors.
 
 ③ Non-axis-aligned geometry (circles / triangles / diagonals) must go through `DuiPaintAA` or directly use `Gdiplus::Graphics + SetSmoothingMode(AntiAlias)`, or you'll get jaggies.
 
@@ -4594,10 +4618,10 @@ The four examples below are standalone runnable projects in `Demos.sln`:
 
 | Project | What it demonstrates | Source |
 | --- | --- | --- |
-| `DemoTextBadgeTile.exe` | The simplest custom paint — rounded rectangle + centered text. | `third-party/balloonui/DemoTextBadgeTile/` |
-| `DemoCircularProgress.exe` | GDI+ anti-aliased ring + clamping setter. | `third-party/balloonui/DemoCircularProgress/` |
-| `DemoChatBubble.exe` | Irregular shape (with a tail) + MeasureHeight + left/right alignment. | `third-party/balloonui/DemoChatBubble/` |
-| `DemoFileTypeIcon.exe` | Data-driven palette + folded corner + hover feedback. | `third-party/balloonui/DemoFileTypeIcon/` |
+| `DemoTextBadgeTile.exe` | The simplest custom paint — rounded rectangle + centered text. | `DemoTextBadgeTile/` |
+| `DemoCircularProgress.exe` | GDI+ anti-aliased ring + clamping setter. | `DemoCircularProgress/` |
+| `DemoChatBubble.exe` | Irregular shape (with a tail) + MeasureHeight + left/right alignment. | `DemoChatBubble/` |
+| `DemoFileTypeIcon.exe` | Data-driven palette + folded corner + hover feedback. | `DemoFileTypeIcon/` |
 
 Each demo shows both the **code path** and the **XML path**, and ships a `--capture-all <dir>` screenshot mode (the PNGs in this section were captured live from these demos).
 
@@ -4688,7 +4712,7 @@ void DemoTextBadgeTile::OnPaint(HDC hdc, const RECT&)
 
 <details class="full-code">
   <summary>Show full source (.h + .cpp + main.cpp's XML factory)</summary>
-  <pre><code>// Full source: third-party/balloonui/DemoTextBadgeTile/
+  <pre><code>// Full source: DemoTextBadgeTile/
 //   stdafx.h               — common ATL/WTL forwards
 //   DemoTextBadgeTile.h    — class declaration
 //   DemoTextBadgeTile.cpp  — setters + OnPaint + OnLButtonUp
@@ -5152,7 +5176,7 @@ static Palette LookupPalette(LPCTSTR ext);
 
 ### 8.5 Build & run
 
-All four demos live in `third-party/balloonui/Demos.sln`. Command-line build:
+All four demos live in `Demos.sln`. Command-line build:
 
 ```
 msbuild Demos.sln /p:Configuration=Debug /p:Platform=Win32 ^
@@ -5165,10 +5189,10 @@ Bin\DemoChatBubble.exe
 Bin\DemoFileTypeIcon.exe
 
 # Capture mode (regenerate the images used in this section)
-Bin\DemoTextBadgeTile.exe   --capture-all third-party\balloonui\docs\images
-Bin\DemoCircularProgress.exe --capture-all third-party\balloonui\docs\images
-Bin\DemoChatBubble.exe      --capture-all third-party\balloonui\docs\images
-Bin\DemoFileTypeIcon.exe    --capture-all third-party\balloonui\docs\images
+Bin\DemoTextBadgeTile.exe   --capture-all docs\images
+Bin\DemoCircularProgress.exe --capture-all docs\images
+Bin\DemoChatBubble.exe      --capture-all docs\images
+Bin\DemoFileTypeIcon.exe    --capture-all docs\images
 ```
 
 ---
@@ -5177,7 +5201,7 @@ Bin\DemoFileTypeIcon.exe    --capture-all third-party\balloonui\docs\images
 
 ## 9. Full layout examples
 
-This chapter walks through five complete demos of common UI layouts — **each rendered with real balloonui controls** (not mocks) — and provides equivalent XML for each. Screenshots come from DuiGallery's `Layouts` tab; rerun `DuiGallery.exe --capture-all third-party\balloonui\docs\images` to regenerate them.
+This chapter walks through five complete demos of common UI layouts — **each rendered with real balloonui controls** (not mocks) — and provides equivalent XML for each. Screenshots come from DuiGallery's `Layouts` tab; rerun `DuiGallery.exe --capture-all docs\images` to regenerate them.
 
 The goal of this chapter is **"after reading, you can assemble a real window"** — focusing on the Hint usage (`Fixed`/`Weight`) for `DuiVBox/HBox/Dock/Splitter` + how to combine the stock controls (`DuiLabel`/`DuiEdit`/`DuiButton`/`DuiListBox`/`DuiSearchBox`/`DuiAvatar`/`DuiComboBox`).
 
@@ -5189,7 +5213,7 @@ The 5 layout examples only differ in their <u>client-area control tree</u>; the 
 
 #### 9.0.1 Project setup
 
-- **Solution / project**: add an Application project to `third-party/balloonui/Demos.sln` (use the `DemoNinePatchBg.vcxproj` template), with `OutDir = ..\Bin\`.
+- **Solution / project**: add an Application project to `Demos.sln` (use the `DemoNinePatchBg.vcxproj` template), with `OutDir = ..\Bin\`.
 - **Preprocessor**: `WIN32;_WINDOWS;BUI_USE_DLL;_CRT_SECURE_NO_WARNINGS` (`BUI_USE_DLL` makes `BUI_API` resolve to `__declspec(dllimport)` for linking against balloonui.dll).
 - **Include directories**: `..\balloonui;..\wtl10.1`
 - **Linked libs**: `balloonui.lib;gdiplus.lib;comctl32.lib` (`AdditionalLibraryDirectories=..\Bin`)
@@ -5206,11 +5230,11 @@ The 5 layout examples only differ in their <u>client-area control tree</u>; the 
 #include "DuiDpi.h"
 #include "DuiHost.h"
 #include "DuiNotify.h"
-#include "Controls/DuiFrameWindow.h"
-#include "Controls/DuiLayout.h"
-#include "Controls/DuiLabel.h"
-#include "Controls/DuiButton.h"
-#include "Controls/DuiEdit.h"
+#include "Controls/Window/DuiFrameWindow.h"
+#include "Controls/Layout/DuiLayout.h"
+#include "Controls/Basic/DuiLabel.h"
+#include "Controls/Basic/DuiButton.h"
+#include "Controls/Input/DuiEdit.h"
 // ...include other control headers as the example requires...
 
 using namespace balloonwjui;
@@ -5294,7 +5318,7 @@ int WINAPI _tWinMain(HINSTANCE hInst, HINSTANCE, LPTSTR, int nCmdShow)
     }
 
     // g) Show the window + run the message loop.
-    frame.ResizeClient(800, 600);          // Target client-area size
+    frame.ResizeClient(800, 600);          // Whole-window size, title bar included
     frame.CenterWindow();                  // Centered on screen
     frame.ShowWindow(nCmdShow);
     frame.UpdateWindow();
@@ -5317,12 +5341,12 @@ int WINAPI _tWinMain(HINSTANCE hInst, HINSTANCE, LPTSTR, int nCmdShow)
 
 ```
 # Inside VS 2022:
-# 1. Open third-party\balloonui\Demos.sln
+# 1. Open Demos.sln at the repository root
 # 2. Add the new project (or clone DemoNinePatchBg.vcxproj and rename it)
 # 3. Pick Debug | Win32 → Build solution
 # 4. Run Bin\MyApp.exe
 
-# Command line (from third-party\balloonui\):
+# Command line (from the repository root):
 "%MSBuild%" Demos.sln /t:MyApp /p:Configuration=Debug /p:Platform=Win32
 .\Bin\MyApp.exe
 ```
@@ -5409,7 +5433,7 @@ frame.SetClientContent(std::move(root));
 
 ```
 <hbox>
-  <control weight="1"/>          <!-- Left spacer for centering -->
+  <vbox weight="1"/>             <!-- Left spacer for centering -->
   <vbox padding="20" gap="10" fixedWidth="320">
     <logo  fixedHeight="48"/>     <!-- App-side custom tag -->
     <label text="FlamingoNewUI" textAlign="center" fixedHeight="28"/>
@@ -5423,7 +5447,7 @@ frame.SetClientContent(std::move(root));
     </hbox>
     <button id="104" text="Login" fixedHeight="36"/>
   </vbox>
-  <control weight="1"/>
+  <vbox weight="1"/>
 </hbox>
 ```
 
@@ -5627,10 +5651,10 @@ col->AddChild(std::move(buttons), DuiLayout::Hint().Fixed(32));
     <edit id="103" weight="1"/>
   </hbox>
 
-  <control weight="1"/>            <!-- Flex spacer pushes buttons to the bottom -->
+  <vbox weight="1"/>               <!-- Flex spacer pushes buttons to the bottom -->
 
   <hbox fixedHeight="32" gap="8">
-    <control weight="1"/>         <!-- Flex spacer pushes buttons to the right -->
+    <vbox weight="1"/>            <!-- Flex spacer pushes buttons to the right -->
     <button id="200" buttonType="icon" text="Cancel" fixedWidth="80"/>
     <button id="201" text="Save" fixedWidth="80"/>
   </hbox>
@@ -5800,13 +5824,13 @@ root->AddChild(std::move(right), DuiLayout::Hint().Weight(1));
     <button id="201" buttonType="icon" fixedHeight="36"/>
     <button id="202" buttonType="icon" fixedHeight="36"/>
     <button id="203" buttonType="icon" fixedHeight="36"/>
-    <control weight="1"/>
+    <vbox weight="1"/>
   </vbox>
 
   <!-- Middle list -->
   <vbox fixedWidth="240">
-    <search-box id="100" placeholder="Search" fixedHeight="36"/>
-    <listbox    id="101" itemHeight="48" weight="1"/>
+    <searchbox id="100" placeholder="Search" fixedHeight="36"/>
+    <listbox    id="101" itemHeight="48" weight="1"/>   <!-- not a built-in tag: register it via CustomFactory (see 3.6) -->
   </vbox>
 
   <!-- Right content -->
@@ -5990,8 +6014,8 @@ root->AddChild(std::move(content), DuiLayout::Hint().Weight(1));
 <hbox>
   <!-- Left nav -->
   <listbox id="100" fixedWidth="160" itemHeight="32">
-    <!-- Note: listbox items must be added in code (AddItem); XML does not
-         support <item> children yet — a future enhancement. -->
+    <!-- Note: DuiXmlBuilder has no built-in <listbox> tag; register one via CustomFactory
+         (see 3.6) that returns a DuiListBox. Items are added in code (AddItem); XML has no <item> children -->
   </listbox>
 
   <!-- Right content -->
@@ -6008,7 +6032,7 @@ root->AddChild(std::move(content), DuiLayout::Hint().Weight(1));
       <combo-box id="201" fixedWidth="120"/>
     </hbox>
 
-    <control weight="1"/>
+    <vbox weight="1"/>
   </vbox>
 </hbox>
 ```
@@ -6153,14 +6177,7 @@ frame.SetClientContent(std::move(dock));
 
 #### XML mode
 
-```
-<dock>
-  <toolbar    dockSide="top"    dockSize="32"/>
-  <statusbar  dockSide="bottom" dockSize="24"/>
-  <left-nav   dockSide="left"   dockSize="140"/>
-  <content    dockSide="fill"/>
-</dock>
-```
+`DuiXmlBuilder` currently has <u>no</u> `<dock>` tag, so `DuiDock` can only be built in C++ as above. If you really need to describe it in XML, register a custom `<dock>` tag through `DuiXmlBuilder::CustomFactory` that parses the dock side and size itself and calls `AddDocked`.
 
 The order in which children are added to a DuiDock <u>matters</u>: earlier-added children take the outer ring; later-added ones take the inner ring. The final `DockFill` takes the remaining space. If you want the left nav to run all the way from top to bottom (rather than stopping between the toolbar and statusbar), swap the "left before top/bottom" order.
 
@@ -6343,9 +6360,9 @@ public:
 ```
 // === main.cpp ===
 balloonwjui::DuiFrameWindow frame;
-frame.SetTitle(_T("BuddyInfo"));
 frame.Create(NULL, CWindow::rcDefault, _T("BuddyInfo"),
              WS_OVERLAPPEDWINDOW, 0);
+frame.SetTitle(_T("BuddyInfo"));
 
 // Load the background PNG (caller owns the HBITMAP)
 HBITMAP hbm = LoadBgPng(_T("BuddyInfoDlgBg.png"));
@@ -6480,7 +6497,6 @@ public:
 
 ```
 balloonwjui::DuiFrameWindow frame;
-frame.SetTitle(_T("Buddy info"));
 
 // Key dimensions
 const int kSrcGradientH = 69;   // Actual source-pixel height of the gradient band (measured)
@@ -6495,6 +6511,7 @@ frame.SetMinSize(320, 240);
 frame.SetResizable(true);
 
 frame.Create(NULL, CWindow::rcDefault, _T("MyApp"), WS_OVERLAPPEDWINDOW, 0);
+frame.SetTitle(_T("Buddy info"));
 
 // 9-grid bg: source 69 px gradient band → destination 40 px title bar (proportional compression; gradient renders fully)
 HBITMAP hbm = LoadBgPng(_T("BuddyInfoDlgBg.png"));
@@ -6522,7 +6539,7 @@ frame.ShowWindow(SW_SHOW);
 
 ### 10.9 Full demo
 
-A standalone runnable demo lives at `third-party/balloonui/DemoNinePatchBg/`:
+A standalone runnable demo lives at `DemoNinePatchBg/`:
 
 | File | Purpose |
 | --- | --- |
@@ -6539,7 +6556,7 @@ msbuild Demos.sln /p:Configuration=Debug /p:Platform=Win32 /t:DemoNinePatchBg
 Bin\DemoNinePatchBg.exe
 
 # Capture mode — regenerate this section's images
-Bin\DemoNinePatchBg.exe --capture-all third-party\balloonui\docs\images
+Bin\DemoNinePatchBg.exe --capture-all docs\images
 ```
 
 ---
@@ -6646,7 +6663,7 @@ public:
     static CString ResolveAssetPath(LPCTSTR userPath);
 };
 
-// Controls/DuiFrameWindow.h
+// Controls/Window/DuiFrameWindow.h
 class BUI_API DuiFrameWindow : public DuiHost
 {
     ...
@@ -6742,7 +6759,7 @@ All switches are defined in `balloonui/BalloonUiFeatures.h`. <u>Default is fully
 | Switch | Control | Effect when off | Dependents (also turned off) |
 | --- | --- | --- | --- |
 | `BUI_DISABLE_LAYOUT` | DuiVBox / DuiHBox / DuiGrid | **Not allowed** (foundational container; intercepted with `#error`). |  |
-| `BUI_DISABLE_DOCK` | DuiDock | `<dock>` XML disabled | — |
+| `BUI_DISABLE_DOCK` | DuiDock | The `DuiDock` class is unavailable (it has no built-in XML tag) | — |
 | `BUI_DISABLE_SPLITTER` | DuiSplitter | `<splitter>` XML disabled | — |
 | `BUI_DISABLE_LABEL` | DuiLabel | `<label>` XML disabled | — |
 | `BUI_DISABLE_BUTTON` | DuiButton | `<button>` XML disabled | — |
@@ -6758,8 +6775,8 @@ All switches are defined in `balloonui/BalloonUiFeatures.h`. <u>Default is fully
 | `BUI_DISABLE_SLIDER` | DuiSlider | `<slider>` XML disabled | — |
 | `BUI_DISABLE_SWITCH` | DuiSwitch | `<switch>` XML disabled | — |
 | `BUI_DISABLE_SCROLLBAR` | DuiScrollBar | — | LISTBOX, TREEVIEW |
-| `BUI_DISABLE_LISTBOX` | DuiListBox | `<listbox>` XML disabled | COMBOBOX |
-| `BUI_DISABLE_COMBOBOX` | DuiComboBox | `<combobox>` XML disabled | — |
+| `BUI_DISABLE_LISTBOX` | DuiListBox | The `DuiListBox` class is unavailable (it has no built-in XML tag) | COMBOBOX |
+| `BUI_DISABLE_COMBOBOX` | DuiComboBox | The `DuiComboBox` class is unavailable (it has no built-in XML tag) | — |
 | `BUI_DISABLE_TREEVIEW` | DuiTreeView | `<treeview>` XML disabled | — |
 | `BUI_DISABLE_TAB` | DuiTab | — | TABPAGE |
 | `BUI_DISABLE_TABPAGE` | DuiTabPage | `<tab-page>` CustomFactory disabled | — |
@@ -6837,7 +6854,7 @@ When diagnosing, route the OutputDebugString stream into DebugView (SysInternals
 
 ## 13. Case study: DemoTaskManager
 
-`third_party/DemoTaskManager/` uses balloonui to clone the Win10 Task Manager UI; it is the most complete demo, stitching together many of the library's controls, the XML-driven path, custom-drawn controls, and event routing. This chapter walks through its structure — **with a focus on the layout**, because that is what newly onboarded developers most want to "copy from."
+`DemoTaskManager/` uses balloonui to clone the Win10 Task Manager UI; it is the most complete demo, stitching together many of the library's controls, the XML-driven path, custom-drawn controls, and event routing. This chapter walks through its structure — **with a focus on the layout**, because that is what newly onboarded developers most want to "copy from."
 
 ![DemoTaskManager Processes page overview](images/demo-taskmgr-processes.png)
 
@@ -7129,7 +7146,7 @@ The overall feel is roughly 80% close to the real Win10 Task Manager; the remain
 
 ## 14. Case study: XChat (a Weixin PC clone)
 
-`third_party/XChat/` uses balloonui to clone the Weixin Windows PC client UI; it is, alongside DemoTaskManager, the second full "reference-grade" case study. Its emphasis: <u>switching between multi-view main panes (chat / contacts / official accounts / empty-chat watermark)</u>, <u>session-list-driven right-pane view selection</u>, <u>windowless text boxes (search bar / chat input field)</u>, <u>ChatScrollBar auto-hide</u>, plus a large amount of <u>custom stroke icons / chat bubbles / file cards / procedurally drawn "fake images"</u>. It complements DemoTaskManager — the latter targets the "utility UI" of menus / tabs / lists, while this one targets the "consumer UI" of message streams + overlays + lots of custom visual elements.
+`XChat/` uses balloonui to clone the Weixin Windows PC client UI; it is, alongside DemoTaskManager, the second full "reference-grade" case study. Its emphasis: <u>switching between multi-view main panes (chat / contacts / official accounts / empty-chat watermark)</u>, <u>session-list-driven right-pane view selection</u>, <u>windowless text boxes (search bar / chat input field)</u>, <u>ChatScrollBar auto-hide</u>, plus a large amount of <u>custom stroke icons / chat bubbles / file cards / procedurally drawn "fake images"</u>. It complements DemoTaskManager — the latter targets the "utility UI" of menus / tabs / lists, while this one targets the "consumer UI" of message streams + overlays + lots of custom visual elements.
 
 ![XChat main pane, chat view](images/xchat/main_chat.png)
 
@@ -7153,7 +7170,7 @@ The overall feel is roughly 80% close to the real Win10 Task Manager; the remain
 | `DuiLabel` | chat-title (id=300); the "Scan to log in" / "File transfer only" texts in the login window (manually center-aligned via SetTextAlign); the two-line label/value rows of info-field. |
 | `DuiMenu` | The bottom-left hamburger nav-icon pops a 5-item menu (Chat files / Chat history management / Lock / Feedback / Settings). |
 | `DuiAA / GDI+` | Every non-axis-aligned path (rounded-rect avatars / unread-badge pills / mute-bell ring / chevron triangle / chat round avatar / DuiSwitch pill / 8 kinds of "fake images" / file ext-icon / double-bubble watermark) goes through GDI+ AntiAlias. |
-| `DuiAnim` | The login spinner (rotating 240° arc) + DuiSwitch toggle + DuiScrollBar fade in/out all go through DuiAnimMgr. DuiAnimMgr owns a shared 16 ms pulse timer, so neither LoginFrame nor XChatMainFrame runs a host pulse — they only call `DuiAnimMgr::Inst().Clear()` in `OnDestroy`. |
+| `DuiAnim` | The login spinner (rotating 240° arc) + DuiSwitch toggle + DuiScrollBar fade in/out all go through DuiAnimMgr. DuiAnimMgr owns a shared ~60 Hz pulse timer, so neither LoginFrame nor XChatMainFrame runs a host pulse — they only call `DuiAnimMgr::Inst().Clear()` in `OnDestroy`. |
 
 <a id="xchat-files"></a>
 
@@ -7459,9 +7476,9 @@ All data is hard-coded in cpp, lazy-inited at process level as a static, and alw
 
 ## 15. Case study: CloudMelodyDesktop (music-app demo)
 
-`third_party/CloudMelodyDesktop/` uses balloonui to clone a music app ("FangMusic"); the design comes from `third_party/cloud_melody_desktop/stitch_cloud_melody_desktop/music_*/` — 8 mockups in total. It complements DemoTaskManager / XChat — those two target "information-dense UIs" (menus / lists / tables); this demo targets the "card- / media-content + animation" <u>consumer UI</u>, demonstrating: <u>multi-page routing (ContentRouter)</u>, <u>real mock playback timing</u>, <u>GDI+ anti-aliased custom controls (rotating vinyl / circular play button / palette-gradient covers)</u>, <u>UpdateLayeredWindow per-pixel-alpha desktop overlays (desktop lyrics)</u>, <u>full-screen immersive mode</u>, and <u>the DuiEdit inline-icon API in action (rounded search box)</u>.
+`CloudMelodyDesktop/` uses balloonui to clone a music app ("FangMusic"); it follows a set of 8 design mockups (the design files are not in this repository). It complements DemoTaskManager / XChat — those two target "information-dense UIs" (menus / lists / tables); this demo targets the "card- / media-content + animation" <u>consumer UI</u>, demonstrating: <u>multi-page routing (ContentRouter)</u>, <u>real mock playback timing</u>, <u>GDI+ anti-aliased custom controls (rotating vinyl / circular play button / palette-gradient covers)</u>, <u>UpdateLayeredWindow per-pixel-alpha desktop overlays (desktop lyrics)</u>, <u>full-screen immersive mode</u>, and <u>the DuiEdit inline-icon API in action (rounded search box)</u>.
 
-**Note**: the screenshots below come from the <u>design files</u> (`cloud_melody_desktop/stitch_cloud_melody_desktop/music_*/screen.png`). The actual runtime (`third_party/Bin/CloudMelodyDesktop.exe`) matches the design — same palette, same layout, same type scale; details (card hover / button active state, etc.) follow the design's semantics.
+**Note**: the screenshots below come from the <u>design files</u> (which are not in this repository). The actual runtime (`Bin/CloudMelodyDesktop.exe`) matches the design — same palette, same layout, same type scale; details (card hover / button active state, etc.) follow the design's semantics.
 
 <a id="cmd-stack"></a>
 
@@ -7994,13 +8011,13 @@ The "front-to-back order" of Windows windows. Controlled by `SetWindowPos` with 
 
 ### A. Full project example
 
-See `third-party/balloonui/NewChatDemo/`: built entirely on balloonui, it demonstrates 13 business-specific custom-drawn controls + XML descriptions, chat bubbles, and custom-paint layout (`chat-thread` manages its own children's positions).
+See `NewChatDemo/`: built entirely on balloonui, it demonstrates 13 business-specific custom-drawn controls + XML descriptions, chat bubbles, and custom-paint layout (`chat-thread` manages its own children's positions).
 
 ![NewChatDemo screenshot](images/NewChatDemo_final.png)
 
 ### B. Build & packaging
 
-All projects live in `third-party/balloonui/Demos.sln`:
+All projects live in `Demos.sln`:
 
 - `balloonui` → `Bin/balloonui.dll` + `Bin/balloonui.lib` (Win32) / `Bin/x64/...` (x64)
 - `NewChatDemo` → `Bin/NewChatDemo.exe`, linked against `balloonui.lib`
