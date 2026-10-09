@@ -4213,7 +4213,7 @@ bool OnMouseWheel(POINT pt, short z, UINT mk) override {
 
 <div class="control" id="DuiResMgr">
   <h3>DuiResMgr — resource manager</h3>
-  <p>Singleton. Wraps <code>CSkinManager</code> (images) + the process-level shared UI fonts (face name from <code>DuiTheme::GetDefaultFontFace()</code>, Microsoft YaHei by default; YaHei uses the GB2312 charset, any other face DEFAULT_CHARSET; cached separately per (DPI, point size, bold) and created lazily). The cache key does <u>not</u> include the face name, so call <code>SetDefaultFontFace</code> before the first font is fetched; changing the face afterwards does not update fonts already created. <code>SetDpi</code> only switches the global DPI and <b>never destroys</b> a font it has handed out &mdash; controls may still hold the handle; switching back to a DPI used before reuses its fonts, and every font is released at process exit.</p>
+  <p>Singleton. Wraps <code>CSkinManager</code> (images) + the process-level shared UI fonts (face name from <code>DuiTheme::GetDefaultFontFace()</code>, Microsoft YaHei by default; YaHei uses the GB2312 charset, any other face DEFAULT_CHARSET; cached separately per (face, DPI, point size, bold) and created lazily, with faces compared case-insensitively; the default size comes from <code>DuiTheme::GetDefaultFontPt()</code>, 9 pt unless changed). After the default face or size changes, fonts fetched from then on use the new values, and handles handed out earlier are not destroyed; UI already shown changes on its next repaint, and <code>DuiRichEdit</code> / <code>DuiEdit</code> keep the default font they gave the text engine at construction until the text color or DPI changes, so set them before creating controls. <code>SetDpi</code> only switches the global DPI and <b>never destroys</b> a font it has handed out &mdash; controls may still hold the handle; switching back to a DPI used before reuses its fonts, and every font is released at process exit.</p>
 <pre><code>// Inside a control: fetch for the DPI of the control's window (recommended)
 HFONT f = GetDefaultFont();   // DuiControl member
 ::SelectObject(hdc, f);
@@ -5204,7 +5204,7 @@ Bin\DemoFileTypeIcon.exe    --capture-all docs\images
 <!-- ============================================================== -->
 <h2 id="layouts">9. Full layout examples</h2>
 
-<p>This chapter walks through five complete demos of common UI layouts — <b>each rendered with real balloonui controls</b> (not mocks) — and provides equivalent XML for each. Screenshots come from DuiGallery's <code>Layouts</code> tab; rerun <code>DuiGallery.exe --capture-all docs\images</code> to regenerate them.</p>
+<p>This chapter walks through five complete demos of common UI layouts — <b>each rendered with real balloonui controls</b> (not mocks) — and provides equivalent XML for each. Screenshots come from DuiGallery's <code>Layouts</code> tab; rerun <code>DuiGallery.exe --lang en --capture-all docs\images</code> to regenerate them (both guides share one set of screenshots, all taken with the English UI; without <code>--lang</code> the UI is Chinese).</p>
 
 <p class="note">The goal of this chapter is <b>"after reading, you can assemble a real window"</b> — focusing on the Hint usage (<code>Fixed</code>/<code>Weight</code>) for <code>DuiVBox/HBox/Dock/Splitter</code> + how to combine the stock controls (<code>DuiLabel</code>/<code>DuiEdit</code>/<code>DuiButton</code>/<code>DuiListBox</code>/<code>DuiSearchBox</code>/<code>DuiAvatar</code>/<code>DuiComboBox</code>).</p>
 

@@ -159,12 +159,14 @@ inside the library.
 ## Theme and palette
 
 `DuiTheme` / `DuiResMgr` centrally manage colors, fonts, and spacing.
-The default UI font is **Microsoft YaHei 9pt**. The face name is kept by
-`DuiTheme`; a host can switch it for the UI language at startup with
-`DuiTheme::Inst().SetDefaultFontFace()` (call it before the first font is
-fetched). Fonts are cached per DPI in `DuiResMgr`, and every control fetches
-them through `DuiControl::GetDefaultFont()` with the DPI of its own window,
-so text resizes when a window moves to a monitor with a different scale.
+The default UI font is **Microsoft YaHei 9pt**. The face name and size are
+kept by `DuiTheme`; a host can switch them for the UI language with
+`DuiTheme::Inst().SetDefaultFontFace()` / `SetDefaultFontPt()` (preferably at
+startup, before creating controls: UI already shown picks up the change only
+when it repaints). Fonts are cached per face and DPI in `DuiResMgr`, and every
+control fetches them through `DuiControl::GetDefaultFont()` with the DPI of its
+own window, so text resizes when a window moves to a monitor with a different
+scale.
 
 ![Theme swatches](docs/images/ctl-theme-swatches.png)
 

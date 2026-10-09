@@ -4205,7 +4205,7 @@ The base class of every DUI control. A logical node (no HWND), hosted by `DuiHos
 
 ### DuiResMgr — resource manager
 
-Singleton. Wraps `CSkinManager` (images) + the process-level shared UI fonts (face name from `DuiTheme::GetDefaultFontFace()`, Microsoft YaHei by default; YaHei uses the GB2312 charset, any other face DEFAULT_CHARSET; cached separately per (DPI, point size, bold) and created lazily). The cache key does <u>not</u> include the face name, so call `SetDefaultFontFace` before the first font is fetched; changing the face afterwards does not update fonts already created. `SetDpi` only switches the global DPI and **never destroys** a font it has handed out — controls may still hold the handle; switching back to a DPI used before reuses its fonts, and every font is released at process exit.
+Singleton. Wraps `CSkinManager` (images) + the process-level shared UI fonts (face name from `DuiTheme::GetDefaultFontFace()`, Microsoft YaHei by default; YaHei uses the GB2312 charset, any other face DEFAULT_CHARSET; cached separately per (face, DPI, point size, bold) and created lazily, with faces compared case-insensitively; the default size comes from `DuiTheme::GetDefaultFontPt()`, 9 pt unless changed). After the default face or size changes, fonts fetched from then on use the new values, and handles handed out earlier are not destroyed; UI already shown changes on its next repaint, and `DuiRichEdit` / `DuiEdit` keep the default font they gave the text engine at construction until the text color or DPI changes, so set them before creating controls. `SetDpi` only switches the global DPI and **never destroys** a font it has handed out — controls may still hold the handle; switching back to a DPI used before reuses its fonts, and every font is released at process exit.
 
 ```
 // Inside a control: fetch for the DPI of the control's window (recommended)
@@ -5289,7 +5289,7 @@ Bin\DemoFileTypeIcon.exe    --capture-all docs\images
 
 ## 9. Full layout examples
 
-This chapter walks through five complete demos of common UI layouts — **each rendered with real balloonui controls** (not mocks) — and provides equivalent XML for each. Screenshots come from DuiGallery's `Layouts` tab; rerun `DuiGallery.exe --capture-all docs\images` to regenerate them.
+This chapter walks through five complete demos of common UI layouts — **each rendered with real balloonui controls** (not mocks) — and provides equivalent XML for each. Screenshots come from DuiGallery's `Layouts` tab; rerun `DuiGallery.exe --lang en --capture-all docs\images` to regenerate them (both guides share one set of screenshots, all taken with the English UI; without `--lang` the UI is Chinese).
 
 The goal of this chapter is **"after reading, you can assemble a real window"** — focusing on the Hint usage (`Fixed`/`Weight`) for `DuiVBox/HBox/Dock/Splitter` + how to combine the stock controls (`DuiLabel`/`DuiEdit`/`DuiButton`/`DuiListBox`/`DuiSearchBox`/`DuiAvatar`/`DuiComboBox`).
 

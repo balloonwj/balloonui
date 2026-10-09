@@ -137,9 +137,10 @@ min / max / close 按钮、`WM_NCHITTEST` 边角拖拽 resize、客户区 layout
 ## 主题与配色
 
 `DuiTheme` / `DuiResMgr` 把颜色、字体、间距集中托管。默认 UI 字体为
-**微软雅黑 9pt**，字体名由 `DuiTheme` 管理，宿主可以在启动时用
-`DuiTheme::Inst().SetDefaultFontFace()` 按界面语言改换（须在第一次取字体之前
-调用）。字体按 DPI 缓存在 `DuiResMgr` 里，控件经 `DuiControl::GetDefaultFont()`
+**微软雅黑 9pt**，字体名与字号由 `DuiTheme` 管理，宿主可以用
+`DuiTheme::Inst().SetDefaultFontFace()` / `SetDefaultFontPt()` 按界面语言改换
+（建议在启动时、创建控件之前设置：之后再改，已显示的界面要等下次重画才换字体）。
+字体按字体名与 DPI 缓存在 `DuiResMgr` 里，控件经 `DuiControl::GetDefaultFont()`
 按自己所在窗口的 DPI 取用，窗口移到缩放比例不同的显示器后字号随之变化。
 
 ![主题色板](docs/images/ctl-theme-swatches.png)

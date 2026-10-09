@@ -4203,7 +4203,7 @@ bool OnMouseWheel(POINT pt, short z, UINT mk) override {
 
 <div class="control" id="DuiResMgr">
   <h3>DuiResMgr — 资源管理器</h3>
-  <p>单例。包装 <code>CSkinManager</code>（图片）+ 进程级共享 UI 字体（字体名取自 <code>DuiTheme::GetDefaultFontFace()</code>，默认 Microsoft YaHei；微软雅黑用 GB2312 字符集，其它字体用 DEFAULT_CHARSET。按 (DPI, 磅值, 是否加粗) 分别缓存、惰性创建）。缓存的键里<u>没有</u>字体名，所以 <code>SetDefaultFontFace</code> 必须在第一次取字体之前调用，之后再改字体名，已经建好的字体不会更新。<code>SetDpi</code> 只切换全局 DPI，<b>不销毁</b>任何已创建的字体 —— 控件可能还保存着它们的句柄；切回用过的 DPI 时直接复用，全部字体在进程退出时统一释放。</p>
+  <p>单例。包装 <code>CSkinManager</code>（图片）+ 进程级共享 UI 字体（字体名取自 <code>DuiTheme::GetDefaultFontFace()</code>，默认 Microsoft YaHei；微软雅黑用 GB2312 字符集，其它字体用 DEFAULT_CHARSET。按 (字体名, DPI, 磅值, 是否加粗) 分别缓存、惰性创建，字体名比较不区分大小写；默认字号取自 <code>DuiTheme::GetDefaultFontPt()</code>，缺省 9 磅）。改了默认字体名或字号之后，再取到的字体就按新值建，已经交出去的旧句柄不销毁；已显示的界面要等下次重画才换字体，<code>DuiRichEdit</code> / <code>DuiEdit</code> 构造时交给排版引擎的默认字体要等改文字颜色或 DPI 变化时才重新取，所以建议在创建控件之前设好。<code>SetDpi</code> 只切换全局 DPI，<b>不销毁</b>任何已创建的字体 —— 控件可能还保存着它们的句柄；切回用过的 DPI 时直接复用，全部字体在进程退出时统一释放。</p>
 <pre><code>// 控件内：按控件所在窗口的 DPI 取（推荐）
 HFONT f = GetDefaultFont();   // DuiControl 成员
 ::SelectObject(hdc, f);
@@ -5193,7 +5193,7 @@ Bin\DemoFileTypeIcon.exe    --capture-all docs\images
 <!-- ============================================================== -->
 <h2 id="layouts">9. 完整布局示例</h2>
 
-<p>本章给 5 个常见 UI 布局的完整 demo — <b>每个都是 balloonui 真控件渲染</b>（不是 mock），并附等价 XML 描述。截图来自 DuiGallery 的 <code>Layouts</code> tab，运行 <code>DuiGallery.exe --capture-all docs\images</code> 可重新生成。</p>
+<p>本章给 5 个常见 UI 布局的完整 demo — <b>每个都是 balloonui 真控件渲染</b>（不是 mock），并附等价 XML 描述。截图来自 DuiGallery 的 <code>Layouts</code> tab，运行 <code>DuiGallery.exe --lang en --capture-all docs\images</code> 可重新生成（中英文两份指南共用一套配图，配图统一用英文界面；不带 <code>--lang</code> 时是中文界面）。</p>
 
 <p class="note">本章的目标是<b>"看完就会拼一个真窗口"</b> — 重点演示 <code>DuiVBox/HBox/Dock/Splitter</code> 的 Hint 用法（<code>Fixed</code>/<code>Weight</code>）+ 现成控件（<code>DuiLabel</code>/<code>DuiEdit</code>/<code>DuiButton</code>/<code>DuiListBox</code>/<code>DuiSearchBox</code>/<code>DuiAvatar</code>/<code>DuiComboBox</code>）的组合方式。</p>
 

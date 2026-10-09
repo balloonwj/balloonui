@@ -4197,7 +4197,7 @@ bool OnMouseWheel(POINT pt, short z, UINT mk) override {
 
 ### DuiResMgr — 资源管理器
 
-单例。包装 `CSkinManager`（图片）+ 进程级共享 UI 字体（字体名取自 `DuiTheme::GetDefaultFontFace()`，默认 Microsoft YaHei；微软雅黑用 GB2312 字符集，其它字体用 DEFAULT_CHARSET。按 (DPI, 磅值, 是否加粗) 分别缓存、惰性创建）。缓存的键里<u>没有</u>字体名，所以 `SetDefaultFontFace` 必须在第一次取字体之前调用，之后再改字体名，已经建好的字体不会更新。`SetDpi` 只切换全局 DPI，**不销毁**任何已创建的字体 —— 控件可能还保存着它们的句柄；切回用过的 DPI 时直接复用，全部字体在进程退出时统一释放。
+单例。包装 `CSkinManager`（图片）+ 进程级共享 UI 字体（字体名取自 `DuiTheme::GetDefaultFontFace()`，默认 Microsoft YaHei；微软雅黑用 GB2312 字符集，其它字体用 DEFAULT_CHARSET。按 (字体名, DPI, 磅值, 是否加粗) 分别缓存、惰性创建，字体名比较不区分大小写；默认字号取自 `DuiTheme::GetDefaultFontPt()`，缺省 9 磅）。改了默认字体名或字号之后，再取到的字体就按新值建，已经交出去的旧句柄不销毁；已显示的界面要等下次重画才换字体，`DuiRichEdit` / `DuiEdit` 构造时交给排版引擎的默认字体要等改文字颜色或 DPI 变化时才重新取，所以建议在创建控件之前设好。`SetDpi` 只切换全局 DPI，**不销毁**任何已创建的字体 —— 控件可能还保存着它们的句柄；切回用过的 DPI 时直接复用，全部字体在进程退出时统一释放。
 
 ```
 // 控件内：按控件所在窗口的 DPI 取（推荐）
@@ -5280,7 +5280,7 @@ Bin\DemoFileTypeIcon.exe    --capture-all docs\images
 
 ## 9. 完整布局示例
 
-本章给 5 个常见 UI 布局的完整 demo — **每个都是 balloonui 真控件渲染**（不是 mock），并附等价 XML 描述。截图来自 DuiGallery 的 `Layouts` tab，运行 `DuiGallery.exe --capture-all docs\images` 可重新生成。
+本章给 5 个常见 UI 布局的完整 demo — **每个都是 balloonui 真控件渲染**（不是 mock），并附等价 XML 描述。截图来自 DuiGallery 的 `Layouts` tab，运行 `DuiGallery.exe --lang en --capture-all docs\images` 可重新生成（中英文两份指南共用一套配图，配图统一用英文界面；不带 `--lang` 时是中文界面）。
 
 本章的目标是**"看完就会拼一个真窗口"** — 重点演示 `DuiVBox/HBox/Dock/Splitter` 的 Hint 用法（`Fixed`/`Weight`）+ 现成控件（`DuiLabel`/`DuiEdit`/`DuiButton`/`DuiListBox`/`DuiSearchBox`/`DuiAvatar`/`DuiComboBox`）的组合方式。
 
