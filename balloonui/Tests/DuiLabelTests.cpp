@@ -322,6 +322,78 @@ static Result Test_MeasureWidthZero()
     return OK(_T("MeasureWidthZero"));
 }
 
+// 折行文字里有比一行还宽的长词（典型是网址）时，MeasureHeight 量出的高度要容得下 OnPaint 实际画出的全部行
+//
+// 2026-10-10：DT_CALCRECT 遇到放不下的长词会把矩形加宽、整词放在一行里量，
+// 而 OnPaint 在原宽度内画时把长词拆到几行，实测量出 5 行、画了 7 行，按量出的高度排版时最后两行被截掉。
+// 这里把标签画到足够高的白底位图上，找出最下面一行有墨迹的位置，量出的高度不得小于它。
+static Result Test_MeasureWrapLongWord()
+{
+    const int kW = 120;          // 标签宽，单位：像素；比文字里的网址窄
+    const int kTall = 400;       // 位图高，足够画下全部行
+    const int kInkLevel = 160;   // 三个分量都低于该值的像素算作墨迹（黑字白底，抗锯齿边缘较浅）
+    DuiLabel l;
+    l.SetText(_T("Web: https://test.mingyuan.example/portal\r\n")
+              _T("API: https://test.mingyuan.example/api\r\n")
+              _T("last line"));
+    l.SetWordWrap(true);
+    l.SetTextColor(RGB(0, 0, 0));
+    l.SetTextAlign(DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+    const RECT rc = { 0, 0, kW, kTall };
+    l.SetRect(rc);
+
+    BITMAPINFO bi;
+    ZeroMemory(&bi, sizeof(bi));
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = kW;
+    bi.bmiHeader.biHeight = -kTall;   // 负值表示自上而下
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HDC dc = ::CreateCompatibleDC(NULL);
+    HBITMAP bmp = ::CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
+    if (dc == NULL || bmp == NULL || bits == nullptr)
+    {
+        return Fail(_T("MeasureWrapLongWord"), _T("create dib failed"));
+    }
+    HGDIOBJ old = ::SelectObject(dc, bmp);
+    ::FillRect(dc, &rc, (HBRUSH)::GetStockObject(WHITE_BRUSH));
+    l.OnPaint(dc, rc);
+    ::GdiFlush();
+
+    int lastInkRow = -1;
+    const DWORD* px = (const DWORD*)bits;
+    for (int y = 0; y < kTall; ++y)
+    {
+        for (int x = 0; x < kW; ++x)
+        {
+            const DWORD v = px[y * kW + x];
+            if (((v >> 16) & 0xFF) < kInkLevel && ((v >> 8) & 0xFF) < kInkLevel && (v & 0xFF) < kInkLevel)
+            {
+                lastInkRow = y;
+                break;
+            }
+        }
+    }
+    ::SelectObject(dc, old);
+    ::DeleteObject(bmp);
+    ::DeleteDC(dc);
+
+    const int measured = l.MeasureHeight(kW);
+    if (lastInkRow < 0)
+    {
+        return Fail(_T("MeasureWrapLongWord"), _T("nothing painted"));
+    }
+    if (measured <= lastInkRow)
+    {
+        CString d;
+        d.Format(_T("measured=%d but ink reaches row %d"), measured, lastInkRow);
+        return Fail(_T("MeasureWrapLongWord"), d);
+    }
+    return OK(_T("MeasureWrapLongWord"));
+}
+
 // Wrap mode preserves text content (sanity).
 static Result Test_WrapPreservesText()
 {
@@ -527,6 +599,7 @@ CString RunAll()
         { _T("MeasureWrapNarrows"),     &Test_MeasureWrapNarrows    },
         { _T("MeasureExplicitNewlines"),&Test_MeasureExplicitNewlines },
         { _T("MeasureWidthZero"),       &Test_MeasureWidthZero      },
+        { _T("MeasureWrapLongWord"),    &Test_MeasureWrapLongWord   },
         { _T("WrapPreservesText"),      &Test_WrapPreservesText     },
         // ---- 选中模式（SetSelectable） ----
         { _T("CharIndexFromCumulativeWidths"), &Test_CharIndexFromCumulativeWidths },

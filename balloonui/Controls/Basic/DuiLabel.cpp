@@ -10,6 +10,25 @@
 
 namespace balloonwjui {
 
+namespace {
+
+// 折行模式下 OnPaint 实际使用的 DrawText 标志：在 SetTextAlign 设的标志上去掉单行与垂直居中 / 靠下，
+// 加上 DT_WORDBREAK | DT_TOP。MeasureHeight 量折行文字时用同一组标志，保证量出的高度与画出来的一致。
+DWORD WrapPaintFlags(DWORD dtFlags)
+{
+    // DT_WORDBREAK + DT_SINGLELINE is undefined behavior; drop the
+    // single-line bit and add wordbreak. DT_TOP is enforced because
+    // DT_VCENTER is meaningless with multi-line text.
+    dtFlags &= ~(DT_SINGLELINE | DT_VCENTER | DT_BOTTOM | DT_CALCRECT);
+    dtFlags |= DT_WORDBREAK | DT_TOP;
+    return dtFlags;
+}
+
+// 量折行文字时给绘制矩形的高度（逻辑像素）：足够容纳任何标签的全部行，DrawText 的返回值不受它限制
+const int kMeasureDrawHeight = 0x7FFF;
+
+} // anonymous namespace
+
 DuiLabel::DuiLabel()
 {
     // Text labels are not focusable; links are (so keyboard users can Tab to them).
@@ -153,11 +172,7 @@ void DuiLabel::OnPaint(HDC hdc, const RECT& /*rcDirty*/)
     DWORD dtFlags = m_dtFlags;
     if (m_wordWrap)
     {
-        // DT_WORDBREAK + DT_SINGLELINE is undefined behavior; drop the
-        // single-line bit and add wordbreak. DT_TOP is enforced because
-        // DT_VCENTER is meaningless with multi-line text.
-        dtFlags &= ~(DT_SINGLELINE | DT_VCENTER | DT_BOTTOM);
-        dtFlags |= DT_WORDBREAK | DT_TOP;
+        dtFlags = WrapPaintFlags(dtFlags);
     }
 
     // 选中模式 + 单行 + 选区非空时，先把选区高亮画在文本下层。
@@ -202,6 +217,30 @@ int DuiLabel::MeasureHeight(int width) const
         return 0;
     }
     HFONT use = BaseFont();
+
+    if (m_wordWrap && width > 0)
+    {
+        // 折行且给定宽度时，在内存 DC 上按 OnPaint 的同一组标志实际画一次，取 DrawText 返回的文字高度。
+        // 不用 DT_CALCRECT：文字里有比一行还宽的长词（典型是网址）时，DT_CALCRECT 会把矩形加宽、整词放在一行里量，
+        // 而 OnPaint 在原宽度内把长词拆到几行，量出的高度比画出来的少，按它排版时最后几行被截掉。
+        // 内存 DC 里只有默认的 1×1 单色位图，画上去的内容不会出现在任何地方。
+        int h = 0;
+        HDC mem = ::CreateCompatibleDC(hdc);
+        if (mem)
+        {
+            HFONT oldMem = use ? (HFONT)::SelectObject(mem, use) : nullptr;
+            RECT rc = { 0, 0, width, kMeasureDrawHeight };
+            h = ::DrawText(mem, m_text, -1, &rc, WrapPaintFlags(m_dtFlags));
+            if (oldMem)
+            {
+                ::SelectObject(mem, oldMem);
+            }
+            ::DeleteDC(mem);
+        }
+        ::ReleaseDC(nullptr, hdc);
+        return h;
+    }
+
     HFONT old = use ? (HFONT)::SelectObject(hdc, use) : nullptr;
 
     DWORD flags = DT_CALCRECT | DT_LEFT | DT_TOP | DT_NOPREFIX;
