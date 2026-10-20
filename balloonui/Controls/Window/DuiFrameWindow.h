@@ -159,7 +159,8 @@ struct DuiFrameWindowConfig
 //   · 三按钮 min/max/close 点击 → 内部转 WM_SYSCOMMAND（SC_MINIMIZE /
 //     SC_MAXIMIZE / SC_RESTORE / SC_CLOSE），业务<u>不需要</u>手动监听。
 //     想阻止关闭按 WM_CLOSE 处理。
-//   · 客户区子控件的 WM_DUI_NOTIFY 自动路由到本 frame 自身（即 m_hWnd）。
+//   · 客户区子控件的 WM_DUI_NOTIFY 自动路由到本 frame 自身（即 m_hWnd）；有所有者的 WS_POPUP
+//     窗口也是如此（2026-10-14 起，此前会被发到所有者）。只有以 WS_CHILD 嵌在别的窗口里时才发给父窗口。
 //   · WM_SIZE 内部更新 m_isMaximized 并把状态推给 max button —— 最大化
 //     时按钮 glyph 自动切到 restore（双方块）样式。
 //

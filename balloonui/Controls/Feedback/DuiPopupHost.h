@@ -58,6 +58,10 @@ namespace balloonwjui {
 //
 // 事件：通过 SetDismissCallback 回调（Reason 标识为何关闭）。<u>不</u>
 // 通过 WM_DUI_NOTIFY。
+//
+// 内容的控件通知：浮层内容里的控件发出的 WM_DUI_NOTIFY 先到浮层自身（子类可以在自己的消息映射里先处理），
+// 子类与本类都没处理的原样转给 Show 时传入的所有者，所有者照常按 ctrlId 处理；没有所有者时不转（2026-10-14 起，
+// 见 OnPopupNotify。此前由 DuiHost::SendNotify 按 GetParent 直接发给所有者，子类收不到）。
 class BUI_API DuiPopupHost : public DuiHost
 {
 public:
@@ -129,12 +133,15 @@ public:
     BEGIN_MSG_MAP(DuiPopupHost)
         MSG_WM_KEYDOWN(OnPopupKeyDown)
         MSG_WM_ACTIVATE(OnActivate)
+        MESSAGE_HANDLER(WM_DUI_NOTIFY, OnPopupNotify)
         CHAIN_MSG_MAP(DuiHost)
     END_MSG_MAP()
 
 protected:
     void  OnPopupKeyDown(TCHAR vk, UINT nRepCnt, UINT nFlags);
     void  OnActivate    (UINT nState, BOOL bMin, CWindow other);
+    // 浮层内容的控件通知（本类与子类都没处理的）原样转给所有者；没有所有者时不处理（2026-10-14）
+    LRESULT OnPopupNotify(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
 
 private:
     void  EnsureCreated(HWND hOwner);

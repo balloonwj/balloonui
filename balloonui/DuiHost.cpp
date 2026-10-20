@@ -67,17 +67,20 @@ LRESULT DuiHost::SendNotify(DuiControl* ctrl, UINT code, LPARAM extra)
     n.pCtrl  = ctrl;
     n.extra  = extra;
 
-    // Notification target. Normally the host's parent HWND (i.e. the
-    // dialog or frame embedding the host as a child). When the host is
-    // the top-level window itself (no parent — e.g. DuiFrameWindow),
-    // self-route so a subclass's WM_DUI_NOTIFY handler can still react
-    // to its own children's events. Without this fallback, caption
-    // buttons inside DuiFrameWindow (min/max/close) fire DUIN_CLICK
-    // into the void and the window stops responding to them.
-    HWND hTarget = ::GetParent(m_hWnd);
-    if (!hTarget)
+    // 通知的投递目标（2026-10-14 起）：只有嵌在别的窗口里的宿主（带 WS_CHILD）发给父窗口，即嵌入它的对话框或框架；
+    // 其余宿主——顶层窗口（如 DuiFrameWindow）、有所有者的 WS_POPUP 弹窗与浮层——一律发回宿主自身，由宿主或其子类
+    // 的 WM_DUI_NOTIFY 处理函数处理（DuiFrameWindow 标题栏的最小化、最大化、关闭按钮也靠这条路径响应）。
+    // 此前按 GetParent 判断：Windows 对有所有者的 WS_POPUP 窗口，GetParent 返回的是所有者，于是这类弹窗所有按钮的
+    // 通知都被发到所有者，弹窗自己一条也收不到，表现为点了没反应、窗口也关不掉。浮层要把内容的通知交给所有者时，
+    // 由 DuiPopupHost 自己转交（见 DuiPopupHost::OnPopupNotify）。
+    HWND hTarget = m_hWnd;
+    if (m_hWnd && (::GetWindowLongPtr(m_hWnd, GWL_STYLE) & WS_CHILD) != 0)
     {
-        hTarget = m_hWnd;
+        HWND hParent = ::GetParent(m_hWnd);
+        if (hParent)
+        {
+            hTarget = hParent;
+        }
     }
     if (!hTarget)
     {
@@ -942,7 +945,7 @@ void DuiHost::OnMouseLeave()
 #if BUI_FEATURE_TOOLTIP
     else
     {
-        // No hover or held by capture; still hide any visible tip.
+        // 没有 hover 目标，或控件持有鼠标捕获：仍收起提示（关闭已显示的，也停掉还在等延时的）
         DuiToolTipMgr::Inst().HideNow();
     }
 #endif
@@ -951,6 +954,7 @@ void DuiHost::OnMouseLeave()
 void DuiHost::OnLButtonDown(UINT mkFlags, CPoint pt)
 {
 #if BUI_FEATURE_TOOLTIP
+    // 按下即收起提示，连同还在等延时的，免得它随后弹在点开的菜单上面
     DuiToolTipMgr::Inst().HideNow();
 #endif
     DuiControl* tgt = m_pCapture ? m_pCapture : HitTopMost(pt);
@@ -1007,6 +1011,10 @@ void DuiHost::OnLButtonDblClk(UINT mkFlags, CPoint pt)
 
 void DuiHost::OnRButtonDown(UINT mkFlags, CPoint pt)
 {
+#if BUI_FEATURE_TOOLTIP
+    // 与左键相同：按下即收起提示，连同还在等延时的，免得它随后弹在右键菜单上面
+    DuiToolTipMgr::Inst().HideNow();
+#endif
     DuiControl* tgt = m_pCapture ? m_pCapture : HitTopMost(pt);
     if (tgt)
     {
@@ -1032,6 +1040,11 @@ BOOL DuiHost::OnMouseWheel(UINT mkFlags, short zDelta, CPoint pt)
     DuiControl* tgt = HitTopMost(ptClient);
     if (DispatchMouseWheel(tgt, ptClient, zDelta, mkFlags))
     {
+#if BUI_FEATURE_TOOLTIP
+        // 内容滚动之后光标下已是别的控件，而 hover 目标要等下一次鼠标移动才更新：收起提示，
+        // 免得原控件的提示留在原处，或随后用原控件的文字弹出
+        DuiToolTipMgr::Inst().HideNow();
+#endif
         return TRUE;
     }
     SetMsgHandled(FALSE);
@@ -1091,6 +1104,10 @@ void DuiHost::OnChar(TCHAR ch, UINT, UINT)
 
 void DuiHost::OnKeyDown(TCHAR vk, UINT, UINT flags)
 {
+#if BUI_FEATURE_TOOLTIP
+    // 开始用键盘操作（如悬停在按钮上时开始打字）：收起提示
+    DuiToolTipMgr::Inst().HideNow();
+#endif
     if (vk == VK_TAB)
     {
         bool back = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -1124,6 +1141,11 @@ void DuiHost::OnSetFocus(CWindow /*wndOldFocus*/)
 
 void DuiHost::OnKillFocus(CWindow /*wndNewFocus*/)
 {
+#if BUI_FEATURE_TOOLTIP
+    // 失去焦点（典型如 Alt+Tab 切到别的程序）：收起提示，免得置顶的提示框留在别的程序上面。
+    // 从未获得过焦点的宿主收不到 WM_KILLFOCUS，那种情况仍靠鼠标离开来收起
+    DuiToolTipMgr::Inst().HideNow();
+#endif
     if (m_pFocus)
     {
         m_pFocus->OnKillFocus();

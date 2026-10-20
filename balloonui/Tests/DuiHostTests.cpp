@@ -1,5 +1,6 @@
 /**
  *  Unit tests for DuiHost::DispatchMouseWheel — the wheel-bubbling rule.
+ *  2026-10-14 起另含控件通知投递目标的用例（DUI-N1、DUI-N2）：这两条会建真实窗口。
  *  balloonwj@qq.com   2026-08-14
  */
 
@@ -290,6 +291,160 @@ static Result Test_ScrollViewAtBottomStillConsumes()
 
 #endif // BUI_FEATURE_SCROLLBAR
 
+// ----- 控件通知的投递目标（DUI-N1、DUI-N2，2026-10-14） -----
+//
+// SendNotify 只在宿主带 WS_CHILD 时把 WM_DUI_NOTIFY 发给父窗口，其余（顶层窗口、有所有者的 WS_POPUP 窗口）一律发回
+// 宿主自身。此前按 GetParent 判断，而 Windows 对有所有者的 WS_POPUP 窗口，GetParent 返回的是所有者，于是这类弹窗的
+// 按钮通知都被发到所有者，弹窗自己一条也收不到。
+
+// 用例里控件的 id（避开 DuiFrameWindow 标题栏保留的 1 / 2 / 3）
+static const UINT kRouteCtrlId = 77;
+
+// 一个窗口收到的 WM_DUI_NOTIFY 记录
+struct NotifyLog
+{
+    int  m_count;      // 收到的次数
+    UINT m_lastCode;   // 最近一次的通知码
+    UINT m_lastId;     // 最近一次的控件 id
+};
+
+// 记录 WM_DUI_NOTIFY 的窗口过程：记录写进 GWLP_USERDATA 指向的 NotifyLog（不拥有）
+static LRESULT CALLBACK NotifyLogWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_DUI_NOTIFY)
+    {
+        NotifyLog* log = reinterpret_cast<NotifyLog*>(::GetWindowLongPtr(hWnd, GWLP_USERDATA));
+        const DuiNotify* n = reinterpret_cast<const DuiNotify*>(lParam);
+        if (log != nullptr && n != nullptr)
+        {
+            ++log->m_count;
+            log->m_lastCode = n->code;
+            log->m_lastId = n->ctrlId;
+        }
+        return 0;
+    }
+    return ::DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+// 建一个不显示的重叠窗口，充当所有者或父窗口，收到的通知记进 log（不拥有，须比窗口活得久）
+static HWND CreateNotifyLogWindow(NotifyLog* log)
+{
+    static const TCHAR kClass[] = _T("BuiHostTestsNotifyLog");
+    WNDCLASS wc = {};
+    wc.lpfnWndProc = &NotifyLogWndProc;
+    wc.hInstance = ::GetModuleHandle(nullptr);
+    wc.lpszClassName = kClass;
+    //第二次注册会失败，类已存在，不影响建窗
+    ::RegisterClass(&wc);
+    HWND hWnd = ::CreateWindowEx(0, kClass, _T(""), WS_OVERLAPPEDWINDOW, 0, 0, 200, 200,
+                                 nullptr, nullptr, wc.hInstance, nullptr);
+    if (hWnd != nullptr)
+    {
+        ::SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(log));
+    }
+    return hWnd;
+}
+
+// 记录自己收到的 WM_DUI_NOTIFY 的宿主
+class NotifyLogHost : public DuiHost
+{
+public:
+    NotifyLogHost()
+    {
+        m_log.m_count = 0;
+        m_log.m_lastCode = 0;
+        m_log.m_lastId = 0;
+    }
+
+    BEGIN_MSG_MAP(NotifyLogHost)
+        MESSAGE_HANDLER(WM_DUI_NOTIFY, OnNotify)
+        CHAIN_MSG_MAP(DuiHost)
+    END_MSG_MAP()
+
+    LRESULT OnNotify(UINT, WPARAM, LPARAM lParam, BOOL&)
+    {
+        const DuiNotify* n = reinterpret_cast<const DuiNotify*>(lParam);
+        if (n != nullptr)
+        {
+            ++m_log.m_count;
+            m_log.m_lastCode = n->code;
+            m_log.m_lastId = n->ctrlId;
+        }
+        return 0;
+    }
+
+    NotifyLog m_log;   // 本宿主收到的通知
+};
+
+// DUI-N1：有所有者的 WS_POPUP 宿主，控件通知发回自身，不发给所有者；没有所有者时同样发回自身
+static Result Test_OwnedPopupNotifiesItself()
+{
+    NotifyLog ownerLog = {};
+    HWND owner = CreateNotifyLogWindow(&ownerLog);
+    EXPECT_TRUE(owner != nullptr, _T("OwnedPopup/ownerCreated"));
+    DuiControl ctrl;
+    ctrl.SetCtrlId(kRouteCtrlId);
+
+    NotifyLogHost owned;
+    RECT rc = { 0, 0, 40, 40 };
+    owned.Create(owner, rc, nullptr, WS_POPUP, WS_EX_TOOLWINDOW);
+    const bool ownedCreated = owned.m_hWnd != nullptr;
+    const bool ownerLinked = ownedCreated && ::GetWindow(owned.m_hWnd, GW_OWNER) == owner;
+    if (ownedCreated)
+    {
+        owned.SendNotify(&ctrl, DUIN_CLICK);
+        owned.DestroyWindow();
+    }
+
+    NotifyLogHost ownerless;
+    ownerless.Create(nullptr, rc, nullptr, WS_POPUP, WS_EX_TOOLWINDOW);
+    const bool ownerlessCreated = ownerless.m_hWnd != nullptr;
+    if (ownerlessCreated)
+    {
+        ownerless.SendNotify(&ctrl, DUIN_CLICK);
+        ownerless.DestroyWindow();
+    }
+    ::DestroyWindow(owner);
+
+    EXPECT_TRUE(ownedCreated, _T("OwnedPopup/created"));
+    EXPECT_TRUE(ownerLinked, _T("OwnedPopup/hasOwner"));
+    EXPECT_INT(owned.m_log.m_count, 1, _T("OwnedPopup/selfCount"));
+    EXPECT_INT(owned.m_log.m_lastCode, DUIN_CLICK, _T("OwnedPopup/selfCode"));
+    EXPECT_INT(owned.m_log.m_lastId, kRouteCtrlId, _T("OwnedPopup/selfId"));
+    EXPECT_INT(ownerLog.m_count, 0, _T("OwnedPopup/ownerUntouched"));
+    EXPECT_TRUE(ownerlessCreated, _T("OwnedPopup/ownerlessCreated"));
+    EXPECT_INT(ownerless.m_log.m_count, 1, _T("OwnedPopup/ownerlessSelfCount"));
+    return OK(_T("OwnedPopupNotifiesItself"));
+}
+
+// DUI-N2：WS_CHILD 宿主（嵌在别的窗口里），控件通知仍发给父窗口
+static Result Test_ChildHostNotifiesParent()
+{
+    NotifyLog parentLog = {};
+    HWND parent = CreateNotifyLogWindow(&parentLog);
+    EXPECT_TRUE(parent != nullptr, _T("ChildHost/parentCreated"));
+    DuiControl ctrl;
+    ctrl.SetCtrlId(kRouteCtrlId);
+
+    NotifyLogHost child;
+    RECT rc = { 0, 0, 40, 40 };
+    child.Create(parent, rc, nullptr, WS_CHILD, 0);
+    const bool created = child.m_hWnd != nullptr;
+    if (created)
+    {
+        child.SendNotify(&ctrl, DUIN_VALUECHANGED, 5);
+        child.DestroyWindow();
+    }
+    ::DestroyWindow(parent);
+
+    EXPECT_TRUE(created, _T("ChildHost/created"));
+    EXPECT_INT(parentLog.m_count, 1, _T("ChildHost/parentCount"));
+    EXPECT_INT(parentLog.m_lastCode, DUIN_VALUECHANGED, _T("ChildHost/parentCode"));
+    EXPECT_INT(parentLog.m_lastId, kRouteCtrlId, _T("ChildHost/parentId"));
+    EXPECT_INT(child.m_log.m_count, 0, _T("ChildHost/selfUntouched"));
+    return OK(_T("ChildHostNotifiesParent"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_TRUE
 
@@ -304,7 +459,9 @@ CString RunAll()
         { _T("BubblesPastMiddleLevels"),    &Test_BubblesPastMiddleLevels    },
         { _T("HandledHitDoesNotBubble"),    &Test_HandledHitDoesNotBubble    },
         { _T("NoHandlerReachesRoot"),       &Test_NoHandlerReachesRootAndReturnsFalse },
-        { _T("NullHitIsSafe"),              &Test_NullHitIsSafe              }
+        { _T("NullHitIsSafe"),              &Test_NullHitIsSafe              },
+        { _T("OwnedPopupNotifiesItself"),   &Test_OwnedPopupNotifiesItself   },
+        { _T("ChildHostNotifiesParent"),    &Test_ChildHostNotifiesParent    }
 #if BUI_FEATURE_SCROLLBAR
       , { _T("ScrollViewScrollsWhenChildIsHit"), &Test_ScrollViewScrollsWhenChildIsHit },
         { _T("ScrollViewAtTopStillConsumes"),     &Test_ScrollViewAtTopStillConsumes    },

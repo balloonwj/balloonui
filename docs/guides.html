@@ -1205,7 +1205,7 @@ auto root = balloonwjui::DuiXmlBuilder::FromString(xml.c_str(), fac);</code></pr
 │   → <b>::SendMessage(targetHWND, WM_DUI_NOTIFY,                       │
 │                    ctrlId, (LPARAM)&amp;notify);</b>                     │
 │                                                                 │
-│   targetHWND = ::GetParent(host) ? : host (回路到自己)          │
+│   targetHWND = (host 带 WS_CHILD) ? ::GetParent(host) : host    │
 └──────┬──────────────────────────────────────────────────────────┘
        │
        ▼
@@ -1250,12 +1250,12 @@ auto root = balloonwjui::DuiXmlBuilder::FromString(xml.c_str(), fac);</code></pr
   <tr>
     <td><b>顶层 DuiFrameWindow</b><br>（无父）</td>
     <td><code>DuiFrameWindow</code> 的子类（你扩展的那个）</td>
-    <td><code>GetParent</code> 为空时，<b>路由回到 host 自身</b> — 你在子类里加 <code>WM_DUI_NOTIFY</code> handler 即可</td>
+    <td>host 不带 <code>WS_CHILD</code>，<b>路由回到 host 自身</b> — 你在子类里加 <code>WM_DUI_NOTIFY</code> handler 即可；有所有者的 <code>WS_POPUP</code> 弹窗也是如此（2026-10-14 起，此前会被发到所有者）</td>
   </tr>
   <tr>
     <td><b>弹层 DuiPopupHost</b></td>
     <td><code>Show(anchor, ownerHwnd)</code> 传入的所有者窗口所属类</td>
-    <td>浮层是带所有者的 <code>WS_POPUP</code> 窗口，<code>GetParent</code> 返回所有者，事件发给它</td>
+    <td>通知先到浮层自身（子类可以先处理），子类与 <code>DuiPopupHost</code> 都没处理的原样转给所有者（<code>DuiPopupHost::OnPopupNotify</code>）</td>
   </tr>
   <tr>
     <td><b>DuiMenu</b></td>
@@ -1365,7 +1365,7 @@ private:
 
 <h3 id="event-routing-frame">6.4 顶层 DuiFrameWindow 的事件回路</h3>
 
-<p><code>DuiFrameWindow</code> 是顶层窗口，没有 HWND 父。<code>DuiHost::SendNotify</code> 检测到 <code>::GetParent(m_hWnd) == NULL</code> 时，<b>会把 <code>WM_DUI_NOTIFY</code> 发给 host 自己</b>，所以你在 <code>DuiFrameWindow</code> 子类里加消息映射即可：</p>
+<p><code>DuiFrameWindow</code> 是顶层窗口，不带 <code>WS_CHILD</code>。<code>DuiHost::SendNotify</code> 只在 host 带 <code>WS_CHILD</code> 时发给父窗口，其余情况<b>把 <code>WM_DUI_NOTIFY</code> 发给 host 自己</b>（有所有者的 <code>WS_POPUP</code> 弹窗也一样，2026-10-14 起；此前按 <code>GetParent</code> 判断，而 Windows 对有所有者的 <code>WS_POPUP</code> 窗口 <code>GetParent</code> 返回所有者，弹窗的通知会被发到所有者），所以你在 <code>DuiFrameWindow</code> 子类里加消息映射即可：</p>
 
 <pre><code>class MyMainWindow : public balloonwjui::DuiFrameWindow
 {
@@ -3750,7 +3750,7 @@ m_pop.Show(anchorScreen, m_hWnd);     // owner = m_hWnd，事件冒到对话框
   <p><b>自动关闭与阴影</b>：按 Esc、或浮层失去激活（如点到浮层外面）时自动关闭，并以 <code>ReasonEscape</code> / <code>ReasonLostFocus</code> 调用关闭回调；程序调 <code>Hide()</code> 时原因为 <code>ReasonProgrammatic</code>。关闭只是隐藏，窗口与内容保留，下次 <code>Show</code> 直接复用。浮层注册自己的窗口类 <code>__DuiPopupHost__</code>（带 <code>CS_DROPSHADOW</code> 与 <code>CS_SAVEBITS</code>），四周有系统阴影；关闭后被盖住的像素由系统恢复，底下的窗口不必重画。</p>
   <p class="note"><b>无 XML 路径</b>：popup 自身（边缘 / 阴影 / anchor）走 C++；其内部 content 子树<u>可以</u>用 <code>builder.FromString(...)</code> 解析后传给 <code>SetContent</code>。</p>
   <h4>事件</h4>
-  <p>本身不发事件 — 它只是个浮层壳。<u>其内部 <code>Content</code> 子控件</u>的事件按常规通过 <code>WM_DUI_NOTIFY</code> 冒到 popup 的 owner HWND（即 <code>Show(anchor, owner)</code> 传入的那个窗口）。所以业务收到的还是 <code>DUIN_CLICK</code> / <code>DUIN_VALUECHANGED</code> 等 — 路由透明。</p>
+  <p>本身不发事件 — 它只是个浮层壳。<u>其内部 <code>Content</code> 子控件</u>的事件按常规通过 <code>WM_DUI_NOTIFY</code> 冒到 popup 的 owner HWND（即 <code>Show(anchor, owner)</code> 传入的那个窗口）。所以业务收到的还是 <code>DUIN_CLICK</code> / <code>DUIN_VALUECHANGED</code> 等 — 路由透明。通知先到浮层自身，派生子类可以在自己的消息映射里先处理，没处理的才转给 owner（2026-10-14 起）。</p>
 </div>
 
 <div class="control" id="DuiToolTip">
@@ -4305,7 +4305,7 @@ enum {
     // ... 其它通知码见 DuiNotify.h
 };
 </code></pre>
-  <p>子控件触发：<code>NotifyParent(DUIN_CLICK, 0);</code> — 自动经由 <code>DuiHost::SendNotify</code> 把消息送给 HWND 父窗口。当宿主自身就是顶层窗口（如 <code>DuiFrameWindow</code>），通知自路由到自己的 WM_DUI_NOTIFY 处理函数。</p>
+  <p>子控件触发：<code>NotifyParent(DUIN_CLICK, 0);</code> — 自动经由 <code>DuiHost::SendNotify</code> 把消息送给 HWND 父窗口（宿主带 <code>WS_CHILD</code> 时）。宿主不带 <code>WS_CHILD</code> 时（顶层窗口如 <code>DuiFrameWindow</code>、有所有者的 <code>WS_POPUP</code> 弹窗），通知自路由到自己的 WM_DUI_NOTIFY 处理函数。</p>
 </div>
 
 <hr>

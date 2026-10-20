@@ -264,7 +264,8 @@ void OnTipDelaySlow(FnButton* /*pButton*/)
     ApplyTipDelay(kTipSlowDelayMs);
 }
 
-// 立刻关闭正在显示的提示浮窗。宿主窗口在改变大小、切换鼠标捕获时也是这么做的。
+// 立刻收起提示：关闭正在显示的浮窗，连同还在等延时的弹出计时。宿主窗口在按下鼠标左键或右键、
+// 按键、失去焦点、滚轮滚动了内容时也是这么做的。
 void OnTipHideNow(FnButton* /*pButton*/)
 {
     DuiToolTipMgr::Inst().HideNow();
@@ -591,12 +592,12 @@ std::unique_ptr<DuiControl> Build_ToolTip()
                Txt(_T("DuiToolTipMgr 是进程级单例，业务侧把控件指针和一段文字登记进去，")
                    _T("鼠标在该控件上停留到设定的延时（默认 500 毫秒）就会弹出一个淡黄色浮窗。")
                    _T("提示浮窗出现在鼠标位置的右下方，不随控件移动。")
-                   _T("把鼠标依次移过下面三个按钮，提示会换成各自的文字；按下鼠标左键会立刻关闭当前提示。"),
+                   _T("把鼠标依次移过下面三个按钮，提示会换成各自的文字；按下鼠标左键或右键会立刻关闭当前提示。"),
                    _T("DuiToolTipMgr is a process-wide singleton: register a control pointer together with ")
                    _T("a string, and hovering that control for the configured delay (500 ms by default) pops ")
                    _T("a pale-yellow tip window. The tip appears below and right of the cursor and does not ")
                    _T("follow the control. Move across the three buttons below to see each tip in turn; ")
-                   _T("pressing the left mouse button hides the current one immediately.")));
+                   _T("pressing the left or right mouse button hides the current one immediately.")));
     {
         std::unique_ptr<DuiHBox> row(new DuiHBox());
         row->SetGap(kRowGap);
@@ -628,15 +629,17 @@ std::unique_ptr<DuiControl> Build_ToolTip()
 
     AddSection(page.get(),
                Txt(_T("提示文字的长度"), _T("Length of the tip text")),
-               Txt(_T("浮窗的宽度是按文字实际测出来的宽度算的，绘制时用的是 DT_SINGLELINE，")
-                   _T("也就是说文字不换行，写多长浮窗就有多宽，长到一定程度会横跨整个屏幕。")
+               Txt(_T("浮窗的宽度按文字实际测出来的宽度算，但不超过最大宽度（96 DPI 下 400 像素，")
+                   _T("随显示器 DPI 缩放，也不超过屏幕工作区）。文字更长时自动换行：在词与词之间断开，")
+                   _T("比一行还宽的长词（如没有空格的文件名、路径）按字符断开。")
                    _T("下面三个按钮分别注册了短、中、长三段文字，把鼠标依次移过去就能看出差别：")
                    _T("一句话说不完的内容不适合放进提示里，应当放到界面上或者帮助文档里。"),
-                   _T("The tip window is sized from the measured width of its text and drawn with ")
-                   _T("DT_SINGLELINE, so the text never wraps - a long string produces a very wide window, ")
-                   _T("wide enough to span the screen. The three buttons below carry a short, a medium and a ")
-                   _T("long string. Anything that does not fit in one sentence belongs on the page itself or ")
-                   _T("in the documentation, not in a tooltip.")));
+                   _T("The tip window is sized from the measured width of its text, up to a maximum width ")
+                   _T("(400 pixels at 96 DPI, scaled with the monitor DPI and never wider than the work area). ")
+                   _T("Longer text wraps between words, and a word wider than a line - a file name or a path ")
+                   _T("without spaces - is broken between characters. The three buttons below carry a short, ")
+                   _T("a medium and a long string. Anything that does not fit in one sentence belongs on the ")
+                   _T("page itself or in the documentation, not in a tooltip.")));
     {
         std::unique_ptr<DuiHBox> row(new DuiHBox());
         row->SetGap(kRowGap);
@@ -674,15 +677,18 @@ std::unique_ptr<DuiControl> Build_ToolTip()
                Txt(_T("弹出延时与消失时机"), _T("Delay and dismissal")),
                Txt(_T("SetDelay 调整的是鼠标停下到浮窗出现之间的等待时间，默认 500 毫秒。")
                    _T("这个设置对整个进程生效，所以每次进入本页面都会先把它恢复成默认值。")
-                   _T("提示弹出之后不会自己超时消失，只有在鼠标移到别的控件上、移出窗口、")
-                   _T("按下鼠标键，或者业务代码调用 HideNow 时才会关闭。")
+                   _T("已有提示正在显示、或刚离开一个正在显示的提示时，移到下一个带提示的控件只等五分之一的延时。")
+                   _T("提示弹出之后不会自己超时消失，只有在鼠标移到别的控件上、移出窗口、按下鼠标左键或右键、")
+                   _T("按键、窗口失去焦点、滚轮滚动了内容，或者业务代码调用 HideNow 时才会关闭。")
                    _T("下面第一行切换延时，第二行是一个带提示的控件和一个立即关闭提示的按钮。"),
                    _T("SetDelay controls how long the cursor must rest before the tip appears; the default ")
                    _T("is 500 ms. The setting is process-wide, so this page restores the default every time ")
-                   _T("it is opened. Once shown, a tip never times out on its own - it closes when the cursor ")
-                   _T("moves to another control, leaves the window, a mouse button goes down, or the ")
-                   _T("application calls HideNow. The first row below switches the delay; the second row ")
-                   _T("carries a hover target and a button that closes the tip at once.")));
+                   _T("it is opened. While a tip is showing, or just after leaving one, moving on to another ")
+                   _T("control with a tip waits only a fifth of the delay. Once shown, a tip never times out ")
+                   _T("on its own - it closes when the cursor moves to another control, leaves the window, the ")
+                   _T("left or right mouse button goes down, a key is pressed, the window loses the focus, the wheel ")
+                   _T("scrolls the content, or the application calls HideNow. The first row below switches ")
+                   _T("the delay; the second row carries a hover target and a button that closes the tip at once.")));
     {
         std::unique_ptr<DuiHBox> row(new DuiHBox());
         row->SetGap(kRowGap);

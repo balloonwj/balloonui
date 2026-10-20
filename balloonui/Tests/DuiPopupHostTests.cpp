@@ -203,6 +203,160 @@ static Result Test_WindowClassHasDropShadow()
     return OK(_T("WindowClassHasDropShadow"));
 }
 
+// ----- 浮层内容的控件通知（DUI-N3、DUI-N4，2026-10-14） -----
+//
+// DuiHost::SendNotify 自 2026-10-14 起只在宿主带 WS_CHILD 时发给父窗口，其余发回宿主自身；浮层是有所有者的 WS_POPUP
+// 窗口，通知先到浮层自己。DuiPopupHost 把自己（含子类）没处理的通知转给所有者，「浮层内容的通知发给所有者」的约定
+// 因此不变；子类自己处理了的通知不再转。
+
+// 用例里控件的 id、浮层边长（像素）、DUIN_VALUECHANGED 带的值
+static const UINT kNotifyCtrlId = 88;
+static const int  kNotifyProbeSize = 40;
+static const int  kNotifyValue = 55;
+
+// 一个窗口收到的 WM_DUI_NOTIFY 记录
+struct NotifyLog
+{
+    int    m_count;      // 收到的次数
+    UINT   m_lastCode;   // 最近一次的通知码
+    UINT   m_lastId;     // 最近一次的控件 id
+    LPARAM m_lastExtra;  // 最近一次的附加值
+};
+
+// 记录 WM_DUI_NOTIFY 的窗口过程：记录写进 GWLP_USERDATA 指向的 NotifyLog（不拥有）
+static LRESULT CALLBACK NotifyLogWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_DUI_NOTIFY)
+    {
+        NotifyLog* log = reinterpret_cast<NotifyLog*>(::GetWindowLongPtr(hWnd, GWLP_USERDATA));
+        const DuiNotify* n = reinterpret_cast<const DuiNotify*>(lParam);
+        if (log != nullptr && n != nullptr)
+        {
+            ++log->m_count;
+            log->m_lastCode = n->code;
+            log->m_lastId = n->ctrlId;
+            log->m_lastExtra = n->extra;
+        }
+        return 0;
+    }
+    return ::DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+// 建一个不显示的重叠窗口充当浮层的所有者，收到的通知记进 log（不拥有，须比窗口活得久）
+static HWND CreateNotifyLogOwner(NotifyLog* log)
+{
+    static const TCHAR kClass[] = _T("BuiPopupTestsNotifyLog");
+    WNDCLASS wc = {};
+    wc.lpfnWndProc = &NotifyLogWndProc;
+    wc.hInstance = ::GetModuleHandle(nullptr);
+    wc.lpszClassName = kClass;
+    //第二次注册会失败，类已存在，不影响建窗
+    ::RegisterClass(&wc);
+    HWND hWnd = ::CreateWindowEx(0, kClass, _T(""), WS_OVERLAPPEDWINDOW, 0, 0, 200, 200,
+                                 nullptr, nullptr, wc.hInstance, nullptr);
+    if (hWnd != nullptr)
+    {
+        ::SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(log));
+    }
+    return hWnd;
+}
+
+// 自己处理 DUIN_CLICK、其余通知交给基类的浮层子类（与客户端里 DuiPopupHost 子类的写法相同）
+class ClickHandlingPopup : public DuiPopupHost
+{
+public:
+    ClickHandlingPopup()
+        : m_clicks(0)
+    {
+    }
+
+    BEGIN_MSG_MAP(ClickHandlingPopup)
+        MESSAGE_HANDLER(WM_DUI_NOTIFY, OnNotify)
+        CHAIN_MSG_MAP(DuiPopupHost)
+    END_MSG_MAP()
+
+    LRESULT OnNotify(UINT, WPARAM, LPARAM lParam, BOOL& bHandled)
+    {
+        const DuiNotify* n = reinterpret_cast<const DuiNotify*>(lParam);
+        if (n != nullptr && n->code == static_cast<UINT>(DUIN_CLICK))
+        {
+            ++m_clicks;
+            return 0;
+        }
+        bHandled = FALSE;
+        return 0;
+    }
+
+    int m_clicks;   // 自己处理了的点击次数
+};
+
+// DUI-N3：浮层（直接用 DuiPopupHost，不派生子类）内容的通知转给所有者，通知码、控件 id 与附加值原样带过去
+static Result Test_UnhandledNotifyGoesToOwner()
+{
+    NotifyLog ownerLog = {};
+    HWND owner = CreateNotifyLogOwner(&ownerLog);
+    EXPECT_TRUE(owner != nullptr, _T("N3/ownerCreated"));
+    const RECT anchor = { 0, 0, kNotifyProbeSize, kNotifyProbeSize };
+    DuiPopupHost p;
+    std::unique_ptr<DuiControl> content(new DuiControl());
+    DuiControl* raw = content.get();
+    raw->SetCtrlId(kNotifyCtrlId);
+    p.SetContent(std::move(content));
+    p.SetSize(kNotifyProbeSize, kNotifyProbeSize);
+    p.Show(anchor, owner);
+    const bool created = p.m_hWnd != nullptr;
+    const bool ownerLinked = created && ::GetWindow(p.m_hWnd, GW_OWNER) == owner;
+    if (created)
+    {
+        p.SendNotify(raw, DUIN_VALUECHANGED, kNotifyValue);
+        p.Hide();
+        p.DestroyWindow();
+    }
+    ::DestroyWindow(owner);
+
+    EXPECT_TRUE(created, _T("N3/created"));
+    EXPECT_TRUE(ownerLinked, _T("N3/hasOwner"));
+    EXPECT_INT(ownerLog.m_count, 1, _T("N3/ownerCount"));
+    EXPECT_INT((int)ownerLog.m_lastCode, (int)DUIN_VALUECHANGED, _T("N3/ownerCode"));
+    EXPECT_INT((int)ownerLog.m_lastId, (int)kNotifyCtrlId, _T("N3/ownerId"));
+    EXPECT_INT((int)ownerLog.m_lastExtra, kNotifyValue, _T("N3/ownerExtra"));
+    return OK(_T("UnhandledNotifyGoesToOwner"));
+}
+
+// DUI-N4：浮层子类自己处理了的通知留在浮层，不再转给所有者；没处理的照样转
+static Result Test_HandledNotifyStaysInPopup()
+{
+    NotifyLog ownerLog = {};
+    HWND owner = CreateNotifyLogOwner(&ownerLog);
+    EXPECT_TRUE(owner != nullptr, _T("N4/ownerCreated"));
+    const RECT anchor = { 0, 0, kNotifyProbeSize, kNotifyProbeSize };
+    ClickHandlingPopup p;
+    std::unique_ptr<DuiControl> content(new DuiControl());
+    DuiControl* raw = content.get();
+    raw->SetCtrlId(kNotifyCtrlId);
+    p.SetContent(std::move(content));
+    p.SetSize(kNotifyProbeSize, kNotifyProbeSize);
+    p.Show(anchor, owner);
+    const bool created = p.m_hWnd != nullptr;
+    int ownerAfterClick = -1;
+    if (created)
+    {
+        p.SendNotify(raw, DUIN_CLICK);
+        ownerAfterClick = ownerLog.m_count;
+        p.SendNotify(raw, DUIN_VALUECHANGED, kNotifyValue);
+        p.Hide();
+        p.DestroyWindow();
+    }
+    ::DestroyWindow(owner);
+
+    EXPECT_TRUE(created, _T("N4/created"));
+    EXPECT_INT(p.m_clicks, 1, _T("N4/popupHandledClick"));
+    EXPECT_INT(ownerAfterClick, 0, _T("N4/ownerNoClick"));
+    EXPECT_INT(ownerLog.m_count, 1, _T("N4/ownerGotUnhandled"));
+    EXPECT_INT((int)ownerLog.m_lastCode, (int)DUIN_VALUECHANGED, _T("N4/ownerCode"));
+    return OK(_T("HandledNotifyStaysInPopup"));
+}
+
 #undef EXPECT_INT
 #undef EXPECT_TRUE
 #undef EXPECT_RECT
@@ -225,6 +379,8 @@ CString RunAll()
         { _T("DismissCallbackStores"),  &Test_DismissCallbackStores  },
         { _T("SetContentBeforeShow"),   &Test_SetContentBeforeShow   },
         { _T("WindowClassHasDropShadow"), &Test_WindowClassHasDropShadow },
+        { _T("UnhandledNotifyGoesToOwner"), &Test_UnhandledNotifyGoesToOwner },
+        { _T("HandledNotifyStaysInPopup"),  &Test_HandledNotifyStaysInPopup  },
     };
 
     CString out;

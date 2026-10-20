@@ -20,6 +20,9 @@ namespace balloonwjui {
 // built out of stub controls (plus one real DuiScrollView for the
 // "self-scrolling control at its boundary" case).
 //
+// 2026-10-14 起另含 DuiHost::SendNotify 投递目标的用例（DUI-N1 有所有者的 WS_POPUP 宿主发回自身、DUI-N2 WS_CHILD
+// 宿主发给父窗口）：这两条建不显示的真实窗口，不需要消息循环（SendMessage 发给本线程的窗口是直接调用）。
+//
 // Returns a multi-line CString report; the last line is the summary.
 namespace DuiHostTests {
     CString RunAll();

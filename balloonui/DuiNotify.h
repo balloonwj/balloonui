@@ -10,8 +10,12 @@
 //
 // 流程：控件触发交互（如 LButton-up 在按钮内）→ 调
 // DuiControl::NotifyParent(code, extra) → 经 host 同步 SendMessage(
-// WM_DUI_NOTIFY, ctrlId, &DuiNotify) 到 host 父 HWND。父按 ctrlId +
+// WM_DUI_NOTIFY, ctrlId, &DuiNotify) 到接收窗口。接收方按 ctrlId +
 // code 派发到具体处理函数。详见 guides.html §6 事件处理与路由。
+//
+// 接收窗口（DuiHost::SendNotify，2026-10-14 起）：host 带 WS_CHILD（嵌在对话框或框架里）时是它的父窗口；
+// 其余 host（顶层窗口、有所有者的 WS_POPUP 弹窗与浮层）是 host 自身。DuiPopupHost 再把自己没处理的通知
+// 转给所有者。
 
 #include <windows.h>
 
@@ -48,7 +52,7 @@ struct DuiNotify
 };
 #pragma pack(pop)
 
-// 父 HWND 收到的消息布局：WPARAM = (UINT)ctrlId，LPARAM = (DuiNotify*)。
+// 接收窗口收到的消息布局：WPARAM = (UINT)ctrlId，LPARAM = (DuiNotify*)。
 // SendMessage 是同步的，所以 DuiNotify 在发送方的栈上即可。
 
 } // namespace balloonwjui

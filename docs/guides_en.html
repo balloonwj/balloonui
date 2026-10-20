@@ -1208,7 +1208,7 @@ auto root = balloonwjui::DuiXmlBuilder::FromString(xml.c_str(), fac);</code></pr
 │   → <b>::SendMessage(targetHWND, WM_DUI_NOTIFY,                       │
 │                    ctrlId, (LPARAM)&amp;notify);</b>                     │
 │                                                                 │
-│   targetHWND = ::GetParent(host) ? : host (loop back to self)   │
+│   targetHWND = (host has WS_CHILD) ? ::GetParent(host) : host   │
 └──────┬──────────────────────────────────────────────────────────┘
        │
        ▼
@@ -1253,12 +1253,12 @@ auto root = balloonwjui::DuiXmlBuilder::FromString(xml.c_str(), fac);</code></pr
   <tr>
     <td><b>Top-level DuiFrameWindow</b><br>(no parent)</td>
     <td>The subclass you derive from <code>DuiFrameWindow</code></td>
-    <td>When <code>GetParent</code> is null, <b>the event loops back to the host itself</b> — just add a <code>WM_DUI_NOTIFY</code> handler in your subclass</td>
+    <td>The host has no <code>WS_CHILD</code> style, so <b>the event loops back to the host itself</b> — just add a <code>WM_DUI_NOTIFY</code> handler in your subclass. Owned <code>WS_POPUP</code> windows behave the same (since 2026-10-14; before that their events went to the owner)</td>
   </tr>
   <tr>
     <td><b>Popup DuiPopupHost</b></td>
     <td>The class that owns the owner window passed to <code>Show(anchor, ownerHwnd)</code></td>
-    <td>The popup is an owned <code>WS_POPUP</code> window, so <code>GetParent</code> returns the owner and events go there</td>
+    <td>Events reach the popup itself first (a subclass may handle them); whatever neither the subclass nor <code>DuiPopupHost</code> handles is forwarded unchanged to the owner (<code>DuiPopupHost::OnPopupNotify</code>)</td>
   </tr>
   <tr>
     <td><b>DuiMenu</b></td>
@@ -1368,7 +1368,7 @@ private:
 
 <h3 id="event-routing-frame">6.4 Event loopback for top-level DuiFrameWindow</h3>
 
-<p><code>DuiFrameWindow</code> is a top-level window with no HWND parent. When <code>DuiHost::SendNotify</code> detects <code>::GetParent(m_hWnd) == NULL</code>, it <b>sends <code>WM_DUI_NOTIFY</code> to the host itself</b>, so all you need is a message map in your <code>DuiFrameWindow</code> subclass:</p>
+<p><code>DuiFrameWindow</code> is a top-level window without the <code>WS_CHILD</code> style. <code>DuiHost::SendNotify</code> sends to the parent only when the host has <code>WS_CHILD</code>; otherwise it <b>sends <code>WM_DUI_NOTIFY</code> to the host itself</b> (owned <code>WS_POPUP</code> windows included, since 2026-10-14; before that the decision used <code>GetParent</code>, which returns the owner for an owned <code>WS_POPUP</code> window, so such a window's events went to its owner), so all you need is a message map in your <code>DuiFrameWindow</code> subclass:</p>
 
 <pre><code>class MyMainWindow : public balloonwjui::DuiFrameWindow
 {
@@ -3760,7 +3760,7 @@ m_pop.Show(anchorScreen, m_hWnd);     // owner = m_hWnd; events bubble to the di
   <p><b>Auto-close and shadow</b>: Esc, or the popup losing activation (e.g. a click outside it), closes it automatically and calls the dismiss callback with <code>ReasonEscape</code> / <code>ReasonLostFocus</code>; <code>Hide()</code> from code reports <code>ReasonProgrammatic</code>. Closing only hides the window: the window and its content stay alive and the next <code>Show</code> reuses them. The popup registers its own window class <code>__DuiPopupHost__</code> (with <code>CS_DROPSHADOW</code> and <code>CS_SAVEBITS</code>), so it has a system drop shadow, and the pixels it covered are restored by the system when it closes, so windows below need no repaint.</p>
   <p class="note"><b>No XML path</b>: the popup itself (border / shadow / anchor) goes through C++; its internal content subtree <u>can</u> be parsed by <code>builder.FromString(...)</code> and handed to <code>SetContent</code>.</p>
   <h4>Events</h4>
-  <p>The popup itself does not fire events — it's just a floating shell. <u>Its internal <code>Content</code> child controls</u>' events bubble through <code>WM_DUI_NOTIFY</code> to the popup's owner HWND (the one passed to <code>Show(anchor, owner)</code>) as usual. So the app still receives <code>DUIN_CLICK</code> / <code>DUIN_VALUECHANGED</code> etc. — routing is transparent.</p>
+  <p>The popup itself does not fire events — it's just a floating shell. <u>Its internal <code>Content</code> child controls</u>' events bubble through <code>WM_DUI_NOTIFY</code> to the popup's owner HWND (the one passed to <code>Show(anchor, owner)</code>) as usual. So the app still receives <code>DUIN_CLICK</code> / <code>DUIN_VALUECHANGED</code> etc. — routing is transparent. The notification reaches the popup first, so a derived popup can handle it in its own message map; only what it leaves unhandled goes on to the owner (since 2026-10-14).</p>
 </div>
 
 <div class="control" id="DuiToolTip">
@@ -4316,7 +4316,7 @@ enum {
     // ... see DuiNotify.h for the other codes
 };
 </code></pre>
-  <p>How a child fires it: <code>NotifyParent(DUIN_CLICK, 0);</code> — automatically routed through <code>DuiHost::SendNotify</code> to the HWND parent. When the host itself is a top-level window (e.g. <code>DuiFrameWindow</code>), the notification self-routes back to its own WM_DUI_NOTIFY handler.</p>
+  <p>How a child fires it: <code>NotifyParent(DUIN_CLICK, 0);</code> — automatically routed through <code>DuiHost::SendNotify</code> to the HWND parent (when the host has <code>WS_CHILD</code>). When the host has no <code>WS_CHILD</code> style (a top-level window such as <code>DuiFrameWindow</code>, or an owned <code>WS_POPUP</code> window), the notification self-routes back to its own WM_DUI_NOTIFY handler.</p>
 </div>
 
 <hr>

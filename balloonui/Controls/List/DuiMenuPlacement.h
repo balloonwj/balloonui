@@ -16,6 +16,9 @@
  *  balloonmain::PopupMenuPlacement，它给托盘浮窗算落点）能直接复用同一份
  *  实现，而不必各写一份必然会走样的副本。全部函数为 inline，无需单独的 .cpp。
  *
+ *  提示浮窗（DuiToolTip）贴着光标弹出，展开方式与菜单不同，落点运算 ClampToolTipOrigin
+ *  也放在本文件（2026-10-14），与菜单共用同一个可放置矩形。
+ *
  *  典型用法：
  *      SIZE  sz     = menu.MeasureSize();
  *      POINT anchor = ...;                                  // 光标点 / 按钮锚点
@@ -115,6 +118,48 @@ inline POINT ClampSubMenuOrigin(RECT parentRect, POINT preferred, SIZE subSize, 
     // 垂直：只做上移，不翻转 —— 子菜单必须留在父项附近。
     if (pt.y + subSize.cy > area.bottom)
         pt.y = area.bottom - subSize.cy;
+    if (pt.y < area.top)
+        pt.y = area.top;
+
+    return pt;
+}
+
+/**
+ *  计算提示浮窗（tooltip）的左上角落点（2026-10-14）。
+ *
+ *  提示浮窗的展开方式与菜单<u>不同</u>：它的期望落点是「光标热点 + 让开光标箭头的偏移」，
+ *  若照搬 ClampMenuOriginToRect 以这个点为轴翻转，翻过去的浮窗会压在光标箭头上。
+ *  策略与 Windows 自带的提示一致：
+ *    · 水平：默认放在 preferred；右边放不下则向左平移、贴住右边缘（不翻到光标左侧）；
+ *      最后保证不越过左边缘（浮窗比矩形还宽时取左边缘）。
+ *    · 垂直：默认放在 preferred（光标下方）；下边放不下则整体移到光标上方，下边缘与
+ *      光标热点相距 gapAbove；上方也放不下时贴住下边缘；最后保证不越过上边缘。
+ *
+ *    cursor：    光标热点的屏幕坐标。
+ *    preferred： 期望的浮窗左上角（屏幕坐标），一般为光标热点加上让开光标箭头的偏移。
+ *    gapAbove：  移到光标上方时，浮窗下边缘与光标热点之间的间隙，单位像素。
+ *    tipSize：   浮窗尺寸，单位像素。
+ *    area：      允许显示的矩形（屏幕坐标，一般为 GetMenuPlacementArea 的产物）。
+ *
+ *  返回：修正后的浮窗左上角屏幕坐标。
+ */
+inline POINT ClampToolTipOrigin(POINT cursor, POINT preferred, int gapAbove, SIZE tipSize, RECT area)
+{
+    POINT pt = preferred;
+
+    // 水平：右边放不下就向左平移贴住右边缘；最后保证不越过左边缘。
+    if (pt.x + tipSize.cx > area.right)
+        pt.x = area.right - tipSize.cx;
+    if (pt.x < area.left)
+        pt.x = area.left;
+
+    // 垂直：下边放不下 → 移到光标上方；上方也放不下 → 贴住下边缘；最后保证不越过上边缘。
+    if (pt.y + tipSize.cy > area.bottom)
+    {
+        pt.y = cursor.y - gapAbove - tipSize.cy;
+        if (pt.y < area.top)
+            pt.y = area.bottom - tipSize.cy;
+    }
     if (pt.y < area.top)
         pt.y = area.top;
 

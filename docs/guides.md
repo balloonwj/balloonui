@@ -757,7 +757,7 @@ ATL CWindowImpl<DuiHost, CWindow>
 │   → ::SendMessage(targetHWND, WM_DUI_NOTIFY,                       │
 │                    ctrlId, (LPARAM)&notify);                     │
 │                                                                 │
-│   targetHWND = ::GetParent(host) ? : host (回路到自己)          │
+│   targetHWND = (host 带 WS_CHILD) ? ::GetParent(host) : host    │
 └──────┬──────────────────────────────────────────────────────────┘
        │
        ▼
@@ -796,8 +796,8 @@ struct DuiNotify {
 | --- | --- | --- |
 | **子窗口 host** `m_host.Create(m_hWnd, ...)` | 包含 `m_host` 的对话框 / 框架窗类 | `::GetParent(host)` = 你的对话框 HWND |
 | **SubclassWindow** `m_host.SubclassWindow(m_hWnd)` | 同上 — host 与对话框共用一个 HWND | 对话框自身 HWND |
-| **顶层 DuiFrameWindow** （无父） | `DuiFrameWindow` 的子类（你扩展的那个） | `GetParent` 为空时，**路由回到 host 自身** — 你在子类里加 `WM_DUI_NOTIFY` handler 即可 |
-| **弹层 DuiPopupHost** | `Show(anchor, ownerHwnd)` 传入的所有者窗口所属类 | 浮层是带所有者的 `WS_POPUP` 窗口，`GetParent` 返回所有者，事件发给它 |
+| **顶层 DuiFrameWindow** （无父） | `DuiFrameWindow` 的子类（你扩展的那个） | host 不带 `WS_CHILD`，**路由回到 host 自身** — 你在子类里加 `WM_DUI_NOTIFY` handler 即可；有所有者的 `WS_POPUP` 弹窗也是如此（2026-10-14 起，此前会被发到所有者） |
+| **弹层 DuiPopupHost** | `Show(anchor, ownerHwnd)` 传入的所有者窗口所属类 | 通知先到浮层自身（子类可以先处理），子类与 `DuiPopupHost` 都没处理的原样转给所有者（`DuiPopupHost::OnPopupNotify`） |
 | **DuiMenu** | 调 `TrackPopup` 的那段代码（同步返回所选项的 id） | 不发 `WM_DUI_NOTIFY` |
 
 **三个常见误解**：
@@ -908,7 +908,7 @@ private:
 
 ### 6.4 顶层 DuiFrameWindow 的事件回路
 
-`DuiFrameWindow` 是顶层窗口，没有 HWND 父。`DuiHost::SendNotify` 检测到 `::GetParent(m_hWnd) == NULL` 时，**会把 `WM_DUI_NOTIFY` 发给 host 自己**，所以你在 `DuiFrameWindow` 子类里加消息映射即可：
+`DuiFrameWindow` 是顶层窗口，不带 `WS_CHILD`。`DuiHost::SendNotify` 只在 host 带 `WS_CHILD` 时发给父窗口，其余情况**把 `WM_DUI_NOTIFY` 发给 host 自己**（有所有者的 `WS_POPUP` 弹窗也一样，2026-10-14 起；此前按 `GetParent` 判断，而 Windows 对有所有者的 `WS_POPUP` 窗口 `GetParent` 返回所有者，弹窗的通知会被发到所有者），所以你在 `DuiFrameWindow` 子类里加消息映射即可：
 
 ```
 class MyMainWindow : public balloonwjui::DuiFrameWindow
@@ -3666,7 +3666,7 @@ m_pop.Show(anchorScreen, m_hWnd);     // owner = m_hWnd，事件冒到对话框
 
 #### 事件
 
-本身不发事件 — 它只是个浮层壳。<u>其内部 `Content` 子控件</u>的事件按常规通过 `WM_DUI_NOTIFY` 冒到 popup 的 owner HWND（即 `Show(anchor, owner)` 传入的那个窗口）。所以业务收到的还是 `DUIN_CLICK` / `DUIN_VALUECHANGED` 等 — 路由透明。
+本身不发事件 — 它只是个浮层壳。<u>其内部 `Content` 子控件</u>的事件按常规通过 `WM_DUI_NOTIFY` 冒到 popup 的 owner HWND（即 `Show(anchor, owner)` 传入的那个窗口）。所以业务收到的还是 `DUIN_CLICK` / `DUIN_VALUECHANGED` 等 — 路由透明。通知先到浮层自身，派生子类可以在自己的消息映射里先处理，没处理的才转给 owner（2026-10-14 起）。
 
 <a id="DuiToolTip"></a>
 
@@ -4316,7 +4316,7 @@ enum {
 };
 ```
 
-子控件触发：`NotifyParent(DUIN_CLICK, 0);` — 自动经由 `DuiHost::SendNotify` 把消息送给 HWND 父窗口。当宿主自身就是顶层窗口（如 `DuiFrameWindow`），通知自路由到自己的 WM_DUI_NOTIFY 处理函数。
+子控件触发：`NotifyParent(DUIN_CLICK, 0);` — 自动经由 `DuiHost::SendNotify` 把消息送给 HWND 父窗口（宿主带 `WS_CHILD` 时）。宿主不带 `WS_CHILD` 时（顶层窗口如 `DuiFrameWindow`、有所有者的 `WS_POPUP` 弹窗），通知自路由到自己的 WM_DUI_NOTIFY 处理函数。
 
 ---
 

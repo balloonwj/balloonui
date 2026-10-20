@@ -123,8 +123,9 @@ public:
     void        SetRoot(std::unique_ptr<DuiControl> root);
     DuiControl* GetRoot() const { return m_root.get(); }
 
-    // Bubble a DuiNotify to the parent HWND (synchronous).
-    // ctrl may be nullptr; in that case ctrlId comes from `notify.ctrlId`.
+    // 同步发出一条 WM_DUI_NOTIFY（lParam 指向 DuiNotify）。投递目标（2026-10-14 起）：宿主带 WS_CHILD 时发给父窗口，
+    // 其余（顶层窗口、有所有者的 WS_POPUP 弹窗与浮层）发回宿主自身；DuiPopupHost 再把自己没处理的通知转给所有者。
+    // ctrl 可以为 nullptr，此时 ctrlId 为 0。返回接收方处理函数的返回值；宿主没有窗口时返回 0。
     LRESULT     SendNotify(DuiControl* ctrl, UINT code, LPARAM extra = 0);
 
     // 请求重新排版整棵 DUI 树 —— 异步执行，本函数立即返回。

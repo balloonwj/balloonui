@@ -758,7 +758,7 @@ This section answers the two most frequently asked questions:
 │   → ::SendMessage(targetHWND, WM_DUI_NOTIFY,                       │
 │                    ctrlId, (LPARAM)&notify);                     │
 │                                                                 │
-│   targetHWND = ::GetParent(host) ? : host (loop back to self)   │
+│   targetHWND = (host has WS_CHILD) ? ::GetParent(host) : host   │
 └──────┬──────────────────────────────────────────────────────────┘
        │
        ▼
@@ -797,8 +797,8 @@ Depends on how you're using `DuiHost`:
 | --- | --- | --- |
 | **Child-window host** `m_host.Create(m_hWnd, ...)` | The dialog / frame-window class that owns `m_host` | `::GetParent(host)` = your dialog HWND |
 | **SubclassWindow** `m_host.SubclassWindow(m_hWnd)` | Same as above — the host and the dialog share one HWND | The dialog's own HWND |
-| **Top-level DuiFrameWindow** (no parent) | The subclass you derive from `DuiFrameWindow` | When `GetParent` is null, **the event loops back to the host itself** — just add a `WM_DUI_NOTIFY` handler in your subclass |
-| **Popup DuiPopupHost** | The class that owns the owner window passed to `Show(anchor, ownerHwnd)` | The popup is an owned `WS_POPUP` window, so `GetParent` returns the owner and events go there |
+| **Top-level DuiFrameWindow** (no parent) | The subclass you derive from `DuiFrameWindow` | The host has no `WS_CHILD` style, so **the event loops back to the host itself** — just add a `WM_DUI_NOTIFY` handler in your subclass. Owned `WS_POPUP` windows behave the same (since 2026-10-14; before that their events went to the owner) |
+| **Popup DuiPopupHost** | The class that owns the owner window passed to `Show(anchor, ownerHwnd)` | Events reach the popup itself first (a subclass may handle them); whatever neither the subclass nor `DuiPopupHost` handles is forwarded unchanged to the owner (`DuiPopupHost::OnPopupNotify`) |
 | **DuiMenu** | The code that calls `TrackPopup` (it returns the chosen item id synchronously) | No `WM_DUI_NOTIFY` is sent |
 
 **Three common misconceptions**:
@@ -909,7 +909,7 @@ private:
 
 ### 6.4 Event loopback for top-level DuiFrameWindow
 
-`DuiFrameWindow` is a top-level window with no HWND parent. When `DuiHost::SendNotify` detects `::GetParent(m_hWnd) == NULL`, it **sends `WM_DUI_NOTIFY` to the host itself**, so all you need is a message map in your `DuiFrameWindow` subclass:
+`DuiFrameWindow` is a top-level window without the `WS_CHILD` style. `DuiHost::SendNotify` sends to the parent only when the host has `WS_CHILD`; otherwise it **sends `WM_DUI_NOTIFY` to the host itself** (owned `WS_POPUP` windows included, since 2026-10-14; before that the decision used `GetParent`, which returns the owner for an owned `WS_POPUP` window, so such a window's events went to its owner), so all you need is a message map in your `DuiFrameWindow` subclass:
 
 ```
 class MyMainWindow : public balloonwjui::DuiFrameWindow
@@ -3674,7 +3674,7 @@ m_pop.Show(anchorScreen, m_hWnd);     // owner = m_hWnd; events bubble to the di
 
 #### Events
 
-The popup itself does not fire events — it's just a floating shell. <u>Its internal `Content` child controls</u>' events bubble through `WM_DUI_NOTIFY` to the popup's owner HWND (the one passed to `Show(anchor, owner)`) as usual. So the app still receives `DUIN_CLICK` / `DUIN_VALUECHANGED` etc. — routing is transparent.
+The popup itself does not fire events — it's just a floating shell. <u>Its internal `Content` child controls</u>' events bubble through `WM_DUI_NOTIFY` to the popup's owner HWND (the one passed to `Show(anchor, owner)`) as usual. So the app still receives `DUIN_CLICK` / `DUIN_VALUECHANGED` etc. — routing is transparent. The notification reaches the popup first, so a derived popup can handle it in its own message map; only what it leaves unhandled goes on to the owner (since 2026-10-14).
 
 <a id="DuiToolTip"></a>
 
@@ -4325,7 +4325,7 @@ enum {
 };
 ```
 
-How a child fires it: `NotifyParent(DUIN_CLICK, 0);` — automatically routed through `DuiHost::SendNotify` to the HWND parent. When the host itself is a top-level window (e.g. `DuiFrameWindow`), the notification self-routes back to its own WM_DUI_NOTIFY handler.
+How a child fires it: `NotifyParent(DUIN_CLICK, 0);` — automatically routed through `DuiHost::SendNotify` to the HWND parent (when the host has `WS_CHILD`). When the host has no `WS_CHILD` style (a top-level window such as `DuiFrameWindow`, or an owned `WS_POPUP` window), the notification self-routes back to its own WM_DUI_NOTIFY handler.
 
 ---
 

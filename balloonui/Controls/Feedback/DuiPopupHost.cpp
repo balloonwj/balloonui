@@ -267,6 +267,20 @@ void DuiPopupHost::OnActivate(UINT nState, BOOL, CWindow)
     SetMsgHandled(FALSE);
 }
 
+LRESULT DuiPopupHost::OnPopupNotify(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+{
+    // 浮层内容的控件通知交给所有者（2026-10-14）：DuiHost::SendNotify 把有所有者的 WS_POPUP 窗口的通知发回宿主自身，
+    // 子类在自己的消息映射里先处理，没处理的才链到这里；本类再原样转给所有者，所有者照常按 ctrlId 处理。
+    // 没有所有者时不处理，交给默认处理。SendMessage 是同步的，lParam 指向的 DuiNotify 在转交期间一直有效。
+    HWND hOwner = ::GetWindow(m_hWnd, GW_OWNER);
+    if (hOwner == nullptr)
+    {
+        bHandled = FALSE;
+        return 0;
+    }
+    return ::SendMessage(hOwner, uMsg, wParam, lParam);
+}
+
 } // namespace balloonwjui
 
 #endif // BUI_FEATURE_POPUPHOST
